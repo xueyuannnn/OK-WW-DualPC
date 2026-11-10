@@ -158,7 +158,7 @@ def main() -> None:
         "- [源码构建](source/docs/development.md)\n\n"
         "配置保存在 `native-full-data/`，首次运行自动生成。"
         "更新前建议备份此目录。\n\n"
-        "反馈邮箱：[3485575458@qq.com](mailto:3485575458@qq.com)。"
+        "反馈邮箱：[lidada0202@gmail.com](mailto:lidada0202@gmail.com)。"
         "请附软件版本、设备型号、复现步骤和相关日志。\n", encoding="utf-8")
 
     files = write_manifest(stage, executable_hash)

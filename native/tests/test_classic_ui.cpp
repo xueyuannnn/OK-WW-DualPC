@@ -304,7 +304,7 @@ class ClassicUiTests final : public QObject {
         QTRY_VERIFY(card(*window, "AutoCombatTask"));
         navigate(*window, "about");
         auto email = window->findChild<QLabel *>("authorEmail");
-        QVERIFY(email && email->text() == "3485575458@qq.com");
+        QVERIFY(email && email->text() == "lidada0202@gmail.com");
         auto contact = window->findChild<QPushButton *>("contactAuthor");
         QVERIFY(contact);
         const QUrl url(contact->property("linkUrl").toString());
@@ -523,10 +523,10 @@ class ClassicUiTests final : public QObject {
             dialog->findChild<QPushButton *>("workshopCopyFeedback")->click();
             const auto copied = QApplication::clipboard()->text();
             verified = hiddenForKnown && shownForUnknown && recorder.count == 1 &&
-                recorder.opened.scheme() == "mailto" && recorder.opened.path() == "3485575458@qq.com" &&
+                recorder.opened.scheme() == "mailto" && recorder.opened.path() == "lidada0202@gmail.com" &&
                 query.queryItems().size() == 2 && body.contains("FutureCharacter") &&
                 body.contains("测试 & 方案") && body.contains("WorkshopAuthor") && body.contains("2.0") &&
-                copied.contains("3485575458@qq.com") && copied.contains(body);
+                copied.contains("lidada0202@gmail.com") && copied.contains(body);
             table->selectRow(0);
             verified &= !notice->isVisible();
             dialog->accept();

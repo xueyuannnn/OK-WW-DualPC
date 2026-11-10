@@ -37,7 +37,7 @@ setuptools.setup(
     name="ok-ww-dualpc",
     version="0.2.0",
     author="xueyuannnn",
-    author_email="3485575458@qq.com",
+    author_email="lidada0202@gmail.com",
     description="Dual-PC automation for Wuthering Waves",
     url="https://github.com/xueyuannnn/OK-WW-DualPC",
     packages=setuptools.find_packages(),

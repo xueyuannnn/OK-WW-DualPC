@@ -3,7 +3,7 @@ from .kmbox import KMBoxNet
 
 SUPPORTED = {
     "kmbox_net": "KMBox Net · UDP",
-    "makcu_serial": "MAKCU V4 · Serial",
+    "makcu_serial": "MAKCU · Serial",
 }
 
 

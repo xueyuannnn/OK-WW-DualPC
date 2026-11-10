@@ -1,10 +1,32 @@
 #include "backend.hpp"
+#include "makcu_protocol.hpp"
 #include <QTcpSocket>
 #include <QtTest>
 using namespace okww;
 class NativeTests : public QObject {
     Q_OBJECT
   private slots:
+    void makcuLegacyRepliesConfirmMouseWithoutInventingKeyboardSupport() {
+        const QString identity = "km.MAKCU\r\n>>> ";
+        const QString sample = "km.left()\n0\r\n>>> " + identity;
+        QVERIFY(!makcuV4Keyboard(identity).has_value());
+        QVERIFY(makcuLegacyMouseReply(sample));
+        QVERIFY(!makcuLegacyMouseReply(identity));
+        QVERIFY(!makcuLegacyMouseReply("km.left()\r\n>>> "+identity));
+        QVERIFY(!makcuLegacyMouseReply("0\r\n>>> "+identity));
+        QCOMPARE(*makcuV4Keyboard("R:MK;M:8uf;K:8uf;C:0uf\r\n"+identity), true);
+        QCOMPARE(*makcuV4Keyboard("R:M;M:8uf;K:0uf;C:0uf\r\n"+identity), false);
+        QVERIFY_EXCEPTION_THROWN(makcuV4Keyboard("R:K;M:0uf;K:8uf;C:0uf"), std::runtime_error);
+    }
+    void makcuLegacyVersionBarrierCannotHideAnIgnoredCommand() {
+        const QString identity = "km.MAKCU\r\n>>> ";
+        checkMakcuLegacyAcknowledgements("km.move(40,40)\r\n>>> "+identity, {"km.move(40,40)"});
+        checkMakcuLegacyAcknowledgements("km.ms1(0)\n>>> \nkm.ms2(0)\r\n>>> "+identity,
+                                         {"km.ms1(0)", "km.ms2(0)"});
+        QVERIFY_EXCEPTION_THROWN(checkMakcuLegacyAcknowledgements(identity, {"km.move(40,40)"}), std::runtime_error);
+        QVERIFY_EXCEPTION_THROWN(checkMakcuLegacyAcknowledgements("km.ms1(0)\r\n>>> "+identity,
+                                                                   {"km.ms1(0)", "km.side2(0)"}), std::runtime_error);
+    }
     void boxMoveTestRetainsArmedInputAndHeldControls_data() {
         QTest::addColumn<QString>("protocol");
         QTest::newRow("KMBox Net") << QString("kmbox_net");
@@ -196,6 +218,7 @@ class NativeTests : public QObject {
     void settingsRoundTrip() {
         QTemporaryDir dir;
         auto c = Config::defaults();
+        c.set("kmbox.dry_run", true);
         c.set("capture.device_path", "unique-path");
         c.set("kmbox.counts_per_pixel_x", 1.25);
         c.json["extension"] = QJsonObject{{"retained", true}};
@@ -215,6 +238,7 @@ class NativeTests : public QObject {
     }
     void netReports() {
         auto c = Config::defaults();
+        c.set("kmbox.dry_run", true);
         Controller box(c);
         box.connect();
         box.key(0xe1, true);
@@ -253,6 +277,7 @@ class NativeTests : public QObject {
             QTemporaryDir data;
             auto config = Config::defaults();
             config.set("kmbox.protocol", protocol);
+            config.set("kmbox.dry_run", true);
             config.set("kmbox.serial_port", "COM_TEST");
             config.set("kmbox.hid_vid", 16701);
             config.set("kmbox.hid_pid", 8455);
@@ -271,6 +296,7 @@ class NativeTests : public QObject {
     }
     void makcuReports() {
         auto c = Config::defaults();
+        c.set("kmbox.dry_run", true);
         c.set("kmbox.protocol", "makcu_serial");
         Controller box(c);
         box.connect();

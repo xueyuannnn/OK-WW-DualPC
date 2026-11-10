@@ -37,6 +37,7 @@
 | --- | --- | --- |
 | KMBox Net 协议示例 | [厂家公开 C++ 示例](https://github.com/kvmaibox/kmboxnet/blob/main/c%2B%2B_demo/NetConfig/kmboxNet.cpp) | 可访问，文件地址有效 |
 | MAKCU 协议 | [API](https://makcu.com/en/api/) · [开发者资料](https://makcu.com/en/developers/) | 均可访问；API 页标示 KM Host Protocol v3.9 与 V4.108 兼容信息 |
+| MAKCU 3.2／3.7 实测协议 | [SDK 作者资料](https://makcu.k4tech.net/native/) | 旧固件鼠标命令、应答与侧键名称，用于 3.x 兼容检测 |
 | 双机架构参考 | [DualPC-TensorRT-Aim-KMBOX](https://github.com/ai123lj/DualPC-TensorRT-Aim-KMBOX) | 仓库可访问，地址未变 |
 | GC573 驱动 | [AVerMedia 官方下载页](https://www.avermedia.com/support/download?model_number=GC573) | 可访问，型号参数保留 |
 | Media Foundation 异步采集 | [Microsoft OnReadSample 文档](https://learn.microsoft.com/en-us/windows/win32/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onreadsample) | 文档可访问 |

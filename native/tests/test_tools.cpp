@@ -100,7 +100,8 @@ class ToolTests final : public QObject {
         config.set("capture.output_width", 1280);
         config.set("capture.output_height", 720);
         config.set("capture.crop", QJsonArray{100, 100, 1600, 900});
-        config.save(data.path() + "/dualpc.json");
+        config.set("kmbox.dry_run", true);
+        config.save(data.path()+"/dualpc.json");
         auto created = scriptManage(root, data.path(), {{"op", "create"}, {"name", "Example"}});
         const auto id = created["selected"].toString();
         const QString code =

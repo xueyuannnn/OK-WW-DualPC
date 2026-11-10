@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
         data = QDir(data).absolutePath();
         QDir().mkpath(data);
         if (!QFile::exists(data + "/dualpc.json"))
-            Config::defaults().save(data + "/dualpc.json");
+            writeJson(data + "/dualpc.json", Config::defaults().json);
         QLockFile lock(data + "/.native-session.lock");
         lock.setStaleLockTime(0);
         if (!lock.tryLock())

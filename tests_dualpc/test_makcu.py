@@ -53,6 +53,23 @@ class SerialFirmware:
         self.closed = True
 
 
+class LegacySerialFirmware(SerialFirmware):
+    """3.2/3.7 captured query format; unknown commands remain silent."""
+    omit_ack = False
+
+    def write(self, packet):
+        self.writes.append(packet)
+        for command in packet.decode('ascii').splitlines():
+            if command == 'km.version()':
+                self.rx += b'km.MAKCU\r\n>>> '
+            elif command == 'km.left()':
+                self.rx += b'km.left()\n0\r\n>>> '
+            elif not self.omit_ack and re.fullmatch(
+                    r'km\.(?:(?:left|right|middle|ms1|ms2)\([012]\)|move\(-?\d+,-?\d+\)|wheel\(-?\d+\))', command):
+                self.rx += command.encode('ascii') + b'\r\n>>> '
+        return len(packet)
+
+
 def connected(firmware=None):
     firmware = firmware or SerialFirmware()
     options = {}
@@ -99,6 +116,43 @@ def test_mouse_only_route_blocks_keyboard_but_allows_connection_test():
     with pytest.raises(KMBoxError, match="仅鼠标"):
         client.key(4, True)
     client.close()
+
+
+def test_legacy_32_37_connects_mouse_uses_ms_buttons_and_never_sends_keys():
+    client, serial, _ = connected(LegacySerialFirmware())
+    assert client.connected and client.legacy and not client.supports_keyboard
+    assert client.route == 'legacy3-mouse'
+    client.move(40, 40)
+    client.button('x1', True)
+    client.button('x2', False)
+    writes_before_key = len(serial.writes)
+    with pytest.raises(KMBoxError, match='不支持键盘'):
+        client.key(4, True)
+    assert len(serial.writes) == writes_before_key
+    client.close()
+    combined = b''.join(serial.writes)
+    assert b'km.ms1(1)' in combined and b'km.ms2(0)' in combined
+    assert not any(token in combined for token in (b'km.side', b'km.down', b'km.up(', b'km.baud', b'\xde\xad'))
+
+
+def test_legacy_identity_does_not_hide_a_lost_move_ack_or_replay_input():
+    client, serial, _ = connected(LegacySerialFirmware())
+    serial.omit_ack = True
+    before = len(serial.writes)
+    with pytest.raises(KMBoxError, match='未确认指令'):
+        client.move(40, 40)
+    assert len(serial.writes) == before + 1 and not client.connected
+    serial.omit_ack = False
+    client.close()
+
+
+def test_legacy_baud_probe_is_read_only():
+    serial = LegacySerialFirmware()
+    result = probe_serial('COM_TEST', lambda *args, **kwargs: serial)
+    assert result['legacy'] and result['mouse'] and not result['keyboard']
+    assert result['route'] == 'legacy3-mouse' and serial.closed
+    assert all(set(packet.decode().splitlines()) <= {'km.version()', 'km.device()', 'km.left()'}
+               for packet in serial.writes)
 
 
 @pytest.mark.parametrize("route", ["R:K;M:0uf;K:8uf;C:0uf", "keyboard", "R:MK;M:0uf;K:8uf;C:0uf"])

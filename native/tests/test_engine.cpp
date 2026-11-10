@@ -4,13 +4,18 @@
 #include <QtTest>
 using namespace okww;
 using namespace okww::runtime;
+static Config simulationConfig() {
+    auto config = Config::defaults();
+    config.set("kmbox.dry_run", true);
+    return config;
+}
 class EngineTests final : public QObject {
     Q_OBJECT
   private slots:
     void workshopModeSwitchKeepsTheEventLoopResponsiveAndSerializesTaskStart() {
         const QString root = OKWW_SOURCE_ROOT;
         QTemporaryDir data;
-        Config::defaults().save(data.path()+"/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
         const QJsonArray team{"Baizhi", "Mortefi", "Verina"};
         const auto folder = data.path()+"/configs-dualpc/custom_teams/Baizhi__Mortefi__Verina";
         QDir().mkpath(folder);
@@ -61,7 +66,7 @@ class EngineTests final : public QObject {
     void liveTriggerSettingsSaveWithoutInterruptingTheCurrentIteration() {
         const QString root = OKWW_SOURCE_ROOT;
         QTemporaryDir data;
-        Config::defaults().save(data.path()+"/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
         const auto created = scriptManage(root, data.path(), {{"op", "create"}, {"name", "LiveSettings"}});
         const auto id = created["selected"].toString();
         const auto marker = data.path()+"/values.txt";
@@ -112,7 +117,7 @@ class EngineTests final : public QObject {
         if (workshopPython(root).isEmpty())
             QSKIP("Python SDK absent");
         QTemporaryDir data;
-        Config::defaults().save(data.path() + "/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
         const auto created = scriptManage(root, data.path(), {{"op", "create"}, {"name", "Counter"}});
         const auto id = created["selected"].toString();
         const auto marker = data.path() + "/counter.txt";
@@ -171,7 +176,7 @@ class EngineTests final : public QObject {
         if (workshopPython(root).isEmpty())
             QSKIP("Workshop Python SDK absent");
         QTemporaryDir data;
-        Config::defaults().save(data.path() + "/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
         const QStringList names{"Baizhi", "Mortefi", "Verina"};
         const auto folder = data.path() + "/configs-dualpc/custom_teams/" + names.join("__");
         const auto marker = data.path() + "/validation-started.txt";
@@ -208,7 +213,7 @@ class EngineTests final : public QObject {
     void modelPreparationIsAsynchronousAndPausePreventsRearming() {
         QTemporaryDir data;
         const QString root = OKWW_SOURCE_ROOT;
-        Config::defaults().save(data.path() + "/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
         Profile profile(data.path() + "/configs-dualpc", root + "/native/resources/catalog.json");
         for (auto value : profile.catalog()["tasks"].toArray()) {
             const auto task = value.toObject();

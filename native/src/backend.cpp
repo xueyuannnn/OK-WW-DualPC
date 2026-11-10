@@ -50,12 +50,13 @@ void Backend::start(const Config &cfg, bool simulation) {
     std::lock_guard lock(mutex_);
     stop();
     cfg_ = cfg;
+    if (simulation)
+        cfg_.set("kmbox.dry_run", true);
     cfg_.validateCapture();
     cfg_.validateBox();
     simulation_ = simulation;
     try {
         if (simulation) {
-            cfg_.set("kmbox.dry_run", true);
             auto f = std::make_shared<Frame>();
             f->width = 1280;
             f->height = 720;
@@ -86,7 +87,10 @@ void Backend::start(const Config &cfg, bool simulation) {
 }
 bool Backend::configurationMatches(const Config &cfg) const {
     std::lock_guard lock(mutex_);
-    return running_ && cfg_.json == cfg.json;
+    auto expected = cfg;
+    if (simulation_)
+        expected.set("kmbox.dry_run", true);
+    return running_ && cfg_.json == expected.json;
 }
 void Backend::stop() {
     std::lock_guard lock(mutex_);
@@ -131,7 +135,7 @@ void Backend::arm(bool enabled) {
         if (!frameLocked() || !box_ || !box_->connected())
             fail("请先启动采集与盒子连接线程");
         if (!box_->state()["keyboard"].toBool())
-            fail("盒子没有可用键盘路由");
+            fail(box_->state()["capability"].toString("盒子没有可用键盘路由"));
         heartbeat_ = nowNs();
     }
     armed_ = enabled;

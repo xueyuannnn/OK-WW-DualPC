@@ -7,7 +7,7 @@ class Controller {
     HANDLE device_ = INVALID_HANDLE_VALUE;
     std::recursive_mutex mutex_;
     uint32_t index_ = 0, uuid_ = 0;
-    bool connected_ = false, keyboard_ = true;
+    bool connected_ = false, keyboard_ = true, legacyMakcu_ = false;
     int buttons_ = 0, modifiers_ = 0;
     std::set<int> keys_;
     QString capability_;

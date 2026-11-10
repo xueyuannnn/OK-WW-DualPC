@@ -95,6 +95,10 @@ Window::Window(QString root, QString data, QString python,
             }
         } catch (const std::exception &error) { draftError = errorText(error); }
     }
+    // User sessions always connect the selected device. Old profiles may still
+    // carry the removed practice switch; only explicit offline tests use it.
+    config_.set("kmbox.dry_run", false);
+    deviceDraftConfig_.set("kmbox.dry_run", false);
     deviceSaveTimer_.setSingleShot(true);
     deviceSaveTimer_.setInterval(350);
     connect(&deviceSaveTimer_, &QTimer::timeout, this, &Window::saveDeviceSettings);
@@ -443,7 +447,7 @@ QWidget *Window::devicePage() {
                 [this](auto result) {
                     const auto error = result["test_error"].toString();
                     const auto message = !error.isEmpty() ? "测试失败：" + error
-                        : result["dry_run"].toBool() ? QString("演练完成：已记录向右、向下各 40 px，不向实物发送。")
+                        : result["dry_run"].toBool() ? QString("离线测试完成：已记录向右、向下各 40 px，不向实物发送。")
                         : QString("测试指令已发送：向右、向下各 40 px。任务保持当前运行状态。");
                     boxTestStatus_->setText(message);
                     log(message);
@@ -562,7 +566,7 @@ QWidget *Window::devicePage() {
     protocol_ = new classic::ComboBox;
     protocol_->setObjectName("boxProtocol");
     protocol_->addItem("KMBox Net · 网络", "kmbox_net");
-    protocol_->addItem("MAKCU V4 · 串口", "makcu_serial");
+    protocol_->addItem("MAKCU · 串口", "makcu_serial");
     protocol_->setCurrentIndex(std::max(0, protocol_->findData(deviceDraftConfig_.s("kmbox.protocol"))));
     auto protocolRow = new QHBoxLayout;
     auto protocolLabel = new QLabel("控制器类型");
@@ -700,6 +704,10 @@ QWidget *Window::devicePage() {
     serial_->setEditable(true);
     serial_->addItem(deviceDraftConfig_.s("kmbox.serial_port"));
     sf->addRow("串口", serial_);
+    auto serialHint = new QLabel("请选择 CH343 串口；波特率需与盒子一致。支持 3.x 鼠标兼容与 V4 路由检测；3.x 不能输出键盘，自动任务需要键鼠均可用。");
+    serialHint->setProperty("caption", true);
+    serialHint->setWordWrap(true);
+    sf->addRow(serialHint);
     addField(sf, "波特率", "kmbox.baudrate", true, 1, 4000000);
     sf->addRow(button(
         "检测串口",
@@ -722,12 +730,7 @@ QWidget *Window::devicePage() {
     };
     connect(protocol_, &QComboBox::currentIndexChanged, this, switchProtocol);
     switchProtocol();
-    auto dry = new QCheckBox("演练模式");
-    dry->setObjectName("kmbox.dry_run");
-    dry->setChecked(deviceDraftConfig_.b("kmbox.dry_run"));
-    settings_["kmbox.dry_run"] = dry;
     auto testBar = new QHBoxLayout;
-    testBar->addWidget(dry);
     testBar->addStretch();
     testBar->addWidget(moveTest);
     box->addLayout(testBar);
@@ -737,11 +740,11 @@ QWidget *Window::devicePage() {
     boxTestStatus_->setWordWrap(true);
     boxTestStatus_->hide();
     box->addWidget(boxTestStatus_);
-    auto dryHint =
-        new QLabel("演练模式只记录指令，不连接实物。实际测试距离受游戏机鼠标速度、指针加速和下方倍率影响。");
-    dryHint->setObjectName("caption");
-    dryHint->setWordWrap(true);
-    box->addWidget(dryHint);
+    auto moveHint = new QLabel("连接盒子后可测试鼠标向右、向下各移动 40 px。实际移动距离受游戏机鼠标速度、指针加速和移动倍率影响。");
+    moveHint->setObjectName("boxMoveHint");
+    moveHint->setProperty("caption", true);
+    moveHint->setWordWrap(true);
+    box->addWidget(moveHint);
     auto expand = new QPushButton("鼠标定位与移动倍率");
     classic::setDisclosureButton(expand);
     box->addWidget(expand);
@@ -790,9 +793,9 @@ QWidget *Window::devicePage() {
             connect(field, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     }
     manualCapture_->setChecked(deviceUiState_["manual_capture"].toBool());
+    connect(serial_, &QComboBox::currentTextChanged, this, &Window::queueDeviceSave);
     for (auto choice : {backendChoice_, deviceChoice_, resolution_, format_, fps_, protocol_, inferenceResolution_})
         connect(choice, &QComboBox::currentIndexChanged, this, &Window::queueDeviceSave);
-    connect(serial_, &QComboBox::currentTextChanged, this, &Window::queueDeviceSave);
     connect(manualCapture_, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     connect(cropToggle, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     for (auto spin : cropSpins)
@@ -1018,6 +1021,7 @@ void Window::filterModes() {
 }
 Config Window::deviceConfiguration(bool requireSelection) const {
     auto current = deviceDraftConfig_;
+    current.set("kmbox.dry_run", false);
     auto d = QJsonObject::fromVariantMap(deviceChoice_->currentData().toMap());
     current.set("capture.backend", backendChoice_->currentData().toString());
     current.set("capture.device_name", d["name"].toString());
@@ -1300,7 +1304,7 @@ void Window::continueStart() {
         return;
     }
     if (!box["keyboard"].toBool()) {
-        failStartup("盒子没有可用键盘路由，请检查连接后重试。");
+        failStartup(box["capability"].toString("盒子没有可用键盘路由，请检查连接后重试。"));
         return;
     }
     if (!engineReady_) {
@@ -1522,7 +1526,7 @@ void Window::updateStatus() {
     captureConnection_->setText(
         captured ? QString("已连接 · 实测 %1 FPS").arg(actual["measured_fps"].toDouble(), 0, 'f', 1)
                  : "未连接");
-    boxConnection_->setText(s["dry_run"].toBool()       ? "演练 · 未连接实物"
+    boxConnection_->setText(s["dry_run"].toBool()       ? "离线测试 · 未连接实物"
                             : box["connected"].toBool() ? "已连接"
                                                         : "未连接");
     if (!s["dry_run"].toBool() && box["transport_samples"].toInt() > 0) {
@@ -1554,7 +1558,7 @@ void Window::updateStatus() {
             QString("PC版 %1：%2 / %3 + %4  %5×%6")
                 .arg(captured ? "已连接" : "已断开", config_.s("capture.device_name"),
                      config_.s("capture.backend"),
-                     s["dry_run"].toBool() ? "演练模式，不输出键鼠" : protocol_->currentText())
+                     s["dry_run"].toBool() ? "离线测试，不输出键鼠" : protocol_->currentText())
                 .arg(config_.n("capture.width"))
                 .arg(config_.n("capture.height")));
     if (previewRateClock_.isValid() && previewRateClock_.elapsed() >= 1000) {

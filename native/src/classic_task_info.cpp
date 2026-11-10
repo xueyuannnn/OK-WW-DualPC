@@ -102,7 +102,7 @@ void Window::refreshTaskInfo() {
             .arg(seconds / 3600, 2, 10, QChar('0')).arg(seconds / 60 % 60, 2, 10, QChar('0'))
             .arg(seconds % 60, 2, 10, QChar('0')));
         taskInfoValues_[index][1]->setText(snapshot["capture_connected"].toBool() ? "已连接" : "未连接");
-        taskInfoValues_[index][2]->setText(snapshot["dry_run"].toBool() ? "演练模式"
+        taskInfoValues_[index][2]->setText(snapshot["dry_run"].toBool() ? "离线测试"
             : snapshot["box"].toObject()["connected"].toBool() ? "已连接" : "未连接");
     }
 }

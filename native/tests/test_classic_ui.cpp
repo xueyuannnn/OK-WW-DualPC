@@ -20,6 +20,9 @@ class ClassicUiTests final : public QObject {
     std::unique_ptr<Window> create(QTemporaryDir &data,
                                    std::function<void(Backend &, const Config &)> connector = {}) {
         auto config = Config::defaults();
+        config.set("kmbox.host", "127.0.0.1");
+        config.set("kmbox.port", 12345);
+        config.set("kmbox.uuid", "12345678");
         config.set("kmbox.dry_run", true);
         config.save(data.path() + "/dualpc.json");
         auto window = std::make_unique<Window>(root, data.path(), QString{}, std::move(connector));
@@ -42,7 +45,45 @@ class ClassicUiTests final : public QObject {
         return runtime::Profile(data.path() + "/configs-dualpc", root + "/native/resources/catalog.json");
     }
   private slots:
-    void boxMoveTestKeepsTheRunningConnectionAndShowsDryRunFeedback() {
+    void legacyPracticeFlagsCannotSuppressInputAfterTheSwitchIsRemoved() {
+        QTemporaryDir data;
+        auto old = Config::defaults();
+        QVERIFY(!old.b("kmbox.dry_run"));
+        old.set("kmbox.host", "127.0.0.1");
+        old.set("kmbox.port", 12345);
+        old.set("kmbox.uuid", "12345678");
+        old.set("kmbox.dry_run", true);
+        old.save(data.path()+"/dualpc.json");
+        writeJson(data.path()+"/native-device-settings.json", {{"config", old.json}, {"manual_capture", true}});
+        int connections = 0;
+        Config applied;
+        Backend *connected = nullptr;
+        auto window = std::make_unique<Window>(root, data.path(), QString{},
+            [&](Backend &backend, const Config &config) {
+                applied = config;
+                backend.start(config, true);
+                connected = &backend;
+                ++connections;
+            });
+        window->show();
+        QTRY_VERIFY(card(*window, "AutoCombatTask"));
+        QVERIFY(!window->findChild<QCheckBox *>("kmbox.dry_run"));
+        auto hint = window->findChild<QLabel *>("boxMoveHint");
+        QVERIFY(hint && hint->text().contains("40 px") && !hint->text().contains("演练"));
+        QCOMPARE(connections, 0);
+        window->findChild<QPushButton *>("previewConnection")->click();
+        QTRY_COMPARE(connections, 1);
+        QTRY_VERIFY(window->findChild<QPushButton *>("previewConnection")->isEnabled());
+        QVERIFY(!applied.b("kmbox.dry_run"));
+        QVERIFY(!Config::load(data.path()+"/dualpc.json").b("kmbox.dry_run"));
+        QVERIFY(connected->snapshot()["dry_run"].toBool()); // Explicit offline connector remains inert.
+        navigate(*window, "dualpc");
+        const auto artifacts = qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!artifacts.isEmpty()) window->grab().save(artifacts+"/dualpc-devices.png");
+        window->findChild<QPushButton *>("stopThread")->click();
+        QTRY_VERIFY(!connected->snapshot()["running"].toBool());
+    }
+    void boxMoveTestKeepsTheRunningConnectionAndShowsOfflineFeedback() {
         QTemporaryDir data;
         Backend *connected = nullptr;
         int connections = 0;
@@ -65,7 +106,7 @@ class ClassicUiTests final : public QObject {
         QVERIFY(!test->isEnabled());
         auto feedback = window->findChild<QLabel *>("boxTestStatus");
         QVERIFY(feedback);
-        QTRY_VERIFY(feedback->text().contains("演练完成"));
+        QTRY_VERIFY(feedback->text().contains("离线测试完成"));
         QVERIFY(feedback->text().contains("不向实物发送"));
         QTRY_VERIFY(test->isEnabled());
         const auto after = connected->snapshot();
@@ -182,7 +223,7 @@ class ClassicUiTests final : public QObject {
             else if (auto input = qobject_cast<QSpinBox *>(widget)) input->setValue(it.value().toInt());
             else if (auto input = qobject_cast<QDoubleSpinBox *>(widget)) input->setValue(it.value().toDouble());
         }
-        window->findChild<QCheckBox *>("kmbox.dry_run")->setChecked(false);
+        QVERIFY(!window->findChild<QCheckBox *>("kmbox.dry_run"));
         window->findChild<QComboBox *>("boxSerialPort")->setCurrentText("COM9");
         auto protocol = window->findChild<QComboBox *>("boxProtocol");
         protocol->setCurrentIndex(protocol->findData("makcu_serial"));

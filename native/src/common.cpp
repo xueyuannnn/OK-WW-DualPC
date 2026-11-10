@@ -43,7 +43,7 @@ Config Config::defaults() {
                                    {"port", 0},
                                    {"uuid", ""},
                                    {"timeout", 0.3},
-                                   {"dry_run", true},
+                                   {"dry_run", false},
                                    {"desktop_width", 1920},
                                    {"desktop_height", 1080},
                                    {"counts_per_pixel_x", 1.0},

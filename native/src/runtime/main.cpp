@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
             data = root + "/native-full-data";
         QDir().mkpath(data);
         if (!QFile::exists(data + "/dualpc.json"))
-            Config::defaults().save(data + "/dualpc.json");
+            writeJson(data + "/dualpc.json", Config::defaults().json);
         data = QDir(data).absolutePath();
         const auto socketName =
             "okww-native-" +

@@ -19,7 +19,7 @@ from .qt_controls import NumberSpinBox, NumberDoubleSpinBox, install_parameter_w
 from .preview_window import FloatingPreview, PreviewImage, PreviewRateCombo, load_preview_options, PREVIEW_RATES
 
 
-PROTOCOL_LABELS = {"kmbox_net": "KMBox Net · 网口", "makcu_serial": "MAKCU V4 · 串口"}
+PROTOCOL_LABELS = {"kmbox_net": "KMBox Net · 网口", "makcu_serial": "MAKCU · 串口"}
 BACKEND_LABELS = [("DirectShow（推荐）", "DSHOW"), ("Media Foundation", "MSMF"), ("FFmpeg · DirectShow", "FFMPEG")]
 FORMAT_LABELS = {"RGB3": "RGB24", "RGB4": "RGB32", "MJPG": "MJPEG"}
 
@@ -421,7 +421,7 @@ class DualPCTab(CustomTab):
         self.homing_wait_row.setVisible(True)
         hints = {
             "kmbox_net": "从盒子屏幕填写 IP、端口和 UUID，推理电脑与盒子需处于可达的局域网。",
-            "makcu_serial": "MAKCU V4：选择 USB2 的 CH343 串口；默认 4000000，也可核对 115200。启动线程时检测身份及键盘路由；未检测到键盘时只能测试鼠标。",
+            "makcu_serial": "MAKCU：选择 USB2 的 CH343 串口，核对 4000000 / 115200 波特率。支持 3.x 鼠标兼容与 V4 路由检测；没有键盘能力时只能测试鼠标。",
         }
         self.protocol_hint.setText(hints[protocol])
         self.calibration_hint.setText(
@@ -529,7 +529,7 @@ class DualPCTab(CustomTab):
             self.message.setText(result["error"])
             return
         self.baudrate.setText(str(result["baudrate"]))
-        self.message.setText(f"已检测到 MAKCU V4 · {result['baudrate']} 波特率 · " +
+        self.message.setText(f"已检测到 MAKCU {'3.x 鼠标兼容' if result.get('legacy') else 'V4'} · {result['baudrate']} 波特率 · " +
                              ("鼠标可用" if result["mouse"] else "未检测到鼠标路由") + " · " +
                              ("键盘可用" if result["keyboard"] else "未检测到键盘路由") +
                              "。点击“启动线程”连接；保存设置用于下次启动。")

@@ -1,12 +1,33 @@
-"""MAKCU V4 text API, using query barriers for silent mutation commands.
+"""MAKCU V4 and legacy 3.2/3.7 mouse protocol.
 
 Reference: https://makcu.com/en/api/ (V4 command table). No baud changes or
 binary opcodes from the incompatible legacy AIO protocol are sent.
+Legacy reference: https://makcu.k4tech.net/native/ . Legacy input requires
+an echoed acknowledgement, and never advertises keyboard support.
 """
 import re
 import time
 
 from .kmbox import KMBoxError, KMBoxNet
+
+
+def legacy_mouse_reply(response):
+    return re.search(r"(?:^|[\r\n]|>>>)\s*km\.left\(\)[\r\n]+[01][\r\n]+>>> ", response) is not None
+
+
+def discover_route(client):
+    response = client._transaction(["km.device()"])
+    route = re.search(r"\bR:([MKC-]+);M:(\d+)uf;K:(\d+)uf;C:(\d+)uf", response)
+    if route:
+        if "M" not in route[1] or int(route[2]) <= 0:
+            raise KMBoxError("MAKCU 未检测到可用鼠标输出，请检查 USB1 游戏机与 USB3 鼠标连接")
+        return dict(route=route.group(0), mouse=True, keyboard="K" in route[1] and int(route[3]) > 0,
+                    legacy=False)
+    # Older firmware silently ignores km.device(). Confirm its distinct
+    # read-only reply, rather than trusting the version barrier alone.
+    if legacy_mouse_reply(client._transaction(["km.left()"])):
+        return dict(route="legacy3-mouse", mouse=True, keyboard=False, legacy=True)
+    raise KMBoxError("未确认 MAKCU V4 路由或 3.x 鼠标协议，请检查固件与 USB 连接")
 
 
 class MakcuSerial(KMBoxNet):
@@ -21,7 +42,8 @@ class MakcuSerial(KMBoxNet):
         self._port_factory = port_factory
         self._port = None
         self.route = ""
-        self.capability_status = "MAKCU V4：尚未检测键盘路由"
+        self.legacy = False
+        self.capability_status = "MAKCU：尚未检测输出能力"
 
     def _transaction(self, commands=()):
         # A version result after the mutation proves the command processor
@@ -48,6 +70,10 @@ class MakcuSerial(KMBoxNet):
                     if identity and ">>>" in text[identity.end():]:
                         if re.search(r"(?:^|[\r\n>\s])ERR\b", text):
                             raise IOError("固件拒绝命令（ERR），请核对 V4 固件和已连接的键鼠设备")
+                        if self.legacy:
+                            for command in commands:
+                                if not re.search(re.escape(command)+r"[\r\n]+>>> ", text):
+                                    raise IOError("MAKCU 3.x 未确认指令，没有重发："+command)
                         return text
             raise TimeoutError("未收到 MAKCU 身份及完整应答，请核对 COM 口、波特率和 V4 固件")
         except (OSError, ValueError) as error:
@@ -61,6 +87,7 @@ class MakcuSerial(KMBoxNet):
             if self._port is not None:
                 self.close()  # Release ambiguous presses before reopening a failed transport.
             self.supports_keyboard = False
+            self.legacy = False
             try:
                 if not self.settings.dry_run:
                     if self._port_factory is None:
@@ -72,16 +99,11 @@ class MakcuSerial(KMBoxNet):
                         bytesize=8, parity="N", stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False)
                     self._port.reset_input_buffer()
                 self._transaction()
-                response = self._transaction(["km.device()"])
-                route = re.search(r"\bR:([MKC-]+);M:(\d+)uf;K:(\d+)uf;C:(\d+)uf", response)
-                if route is None:
-                    raise KMBoxError("未取得 MAKCU V4 路由信息，请核对所用固件协议")
-                self.route = route.group(0)
-                if "M" not in route[1] or int(route[2]) <= 0:
-                    raise KMBoxError("MAKCU 未检测到可用鼠标输出，请检查盒子与游戏机及鼠标的连接")
-                self.supports_keyboard = "K" in route[1] and int(route[3]) > 0
-                self.capability_status = ("MAKCU V4：鼠标与键盘路由已确认" if self.supports_keyboard else
-                                          "MAKCU V4：仅鼠标路由；接入键盘后重新应用配置才能运行自动任务")
+                route = discover_route(self)
+                self.route, self.legacy, self.supports_keyboard = route['route'], route['legacy'], route['keyboard']
+                self.capability_status = ("MAKCU 3.x：仅鼠标兼容，不支持键盘，不能运行自动任务" if self.legacy else
+                                         "MAKCU V4：鼠标与键盘路由已确认" if self.supports_keyboard else
+                                         "MAKCU V4：仅鼠标路由；键盘不可用，暂不能运行自动任务")
                 self.connected = True
                 self.release_all()
             except Exception:
@@ -102,6 +124,8 @@ class MakcuSerial(KMBoxNet):
 
     def button(self, name, down):
         bit, command = self.BUTTONS[name]
+        if self.legacy:
+            command = {"x1": "ms1", "x2": "ms2"}.get(name, command)
         with self._lock:
             # Remember a possibly applied press even when its barrier is lost,
             # so close() still attempts the matching release.
@@ -140,7 +164,8 @@ class MakcuSerial(KMBoxNet):
 
     def release_all(self):
         with self._lock:
-            commands = [f"km.{command}(0)" for _, command in self.BUTTONS.values()]
+            commands = [f"km.{({'x1': 'ms1', 'x2': 'ms2'}.get(name, command) if self.legacy else command)}(0)"
+                        for name, (_, command) in self.BUTTONS.items()]
             # Release only our tracked keyboard presses: km.init() would also
             # reset the user's keyboard policies on V4.
             codes = sorted(self.keys) + [0xE0 + i for i in range(8) if self.modifiers & (1 << i)]
@@ -180,15 +205,9 @@ def probe_serial(port, port_factory=None):
                                    stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False)
             client._port.reset_input_buffer()
             client._transaction()
-            route = client._transaction(["km.device()"])
-            match = re.search(r"\bR:([MKC-]+);M:(\d+)uf;K:(\d+)uf;C:(\d+)uf", route)
-            if match is None:
-                raise KMBoxError("身份已识别，但未取得 V4 路由信息")
-            return {"port": port, "baudrate": baud, "identity": "MAKCU", "route": match.group(0),
-                    "mouse": "M" in match[1] and int(match[2]) > 0,
-                    "keyboard": "K" in match[1] and int(match[3]) > 0}
+            return dict(port=port, baudrate=baud, identity="MAKCU", **discover_route(client))
         except (KMBoxError, OSError, ValueError) as error:
             attempts.append(f"{baud}：{error}")
         finally:
             client.close(release=False)
-    return {"error": "未检测到可用的 MAKCU V4：" + "；".join(attempts)}
+    return {"error": "未检测到可用的 MAKCU：" + "；".join(attempts)}

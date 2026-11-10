@@ -75,7 +75,7 @@ def test_start_stop_and_hot_apply_preserve_facades_and_pause_tasks(manager):
     assert not interaction.should_capture()
     updated = deepcopy(manager.settings)
     updated.capture.output_width, updated.capture.output_height = 1280, 720
-    updated.kmbox.protocol = "makcu_serial"
+    updated.kmbox.timeout = 0.6
     start(manager, updated)
     assert manager.capture_method is capture and manager.interaction is interaction
     assert capture.reader is not initial_reader and interaction.client is not initial_client
@@ -109,7 +109,7 @@ def test_original_start_flow_can_explicitly_restart_a_stopped_session(manager):
     assert manager.device_connected()
 
 
-@pytest.mark.parametrize("protocol", ["kmbox_net", "makcu_serial"])
+@pytest.mark.parametrize("protocol", ["kmbox_net"])
 def test_all_boxes_support_one_calibrated_relative_move_in_dry_run(manager, protocol):
     settings = Settings()
     settings.kmbox.protocol = protocol
@@ -127,11 +127,6 @@ def test_all_boxes_support_one_calibrated_relative_move_in_dry_run(manager, prot
     if protocol == "kmbox_net":
         moves = [struct.unpack_from("<4i", p, 16)[1:3] for p in client.history if struct.unpack_from("<I", p, 12)[0] == MOVE]
         assert [m for m in moves if m != (0, 0)] == [(60, 20)]
-    else:
-        import re
-        moves = [tuple(map(int, match)) for packet in client.history
-                 for match in re.findall(rb"km.move\((-?\d+),(-?\d+)\)", packet)]
-        assert [move for move in moves if move != (0, 0)] == [(60, 20)]
 
 
 def test_box_test_can_run_without_video_but_gameplay_cannot(manager):

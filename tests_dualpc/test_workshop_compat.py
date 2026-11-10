@@ -209,7 +209,7 @@ def test_unadapted_external_input_import_is_explicitly_blocked(remote, tmp_path)
         load_bridged_class(Mortefi, path, 'test_blocked_bridge', bridge)
 
 
-@pytest.mark.parametrize('protocol', ['kmbox_net', 'makcu_serial'])
+@pytest.mark.parametrize('protocol', ['kmbox_net'])
 def test_native_mouse_and_keyboard_bridge_uses_each_existing_controller(protocol):
     from dualpc.capture import CaptureReader
     from dualpc.interaction import KMBoxInteraction

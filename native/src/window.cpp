@@ -55,7 +55,7 @@ static QFrame *card(const QString &name, QVBoxLayout *layout) {
     outer->setSpacing(6);
     outer->addWidget(new QLabel(name));
     const QString subtitle = name.startsWith("01") ? "选择接收游戏机 HDMI 画面的采集卡，一次检测设备及驱动支持的参数。"
-                             : name.startsWith("02") ? "选择盒子类型后，只显示该设备需要的连接参数。"
+                             : name.startsWith("02") ? "填写 KMBox Net 的 IP、端口和 UUID，连接后可测试鼠标移动。"
                                                      : "修改后点击右上角“开始”生效；设备调试可单独应用配置。";
     auto hint = new QLabel(subtitle);
     hint->setWordWrap(true);
@@ -97,6 +97,7 @@ Window::Window(QString root, QString data, QString python,
     }
     // User sessions always connect the selected device. Old profiles may still
     // carry the removed practice switch; only explicit offline tests use it.
+    deviceDraftConfig_.normalizeBox();
     config_.set("kmbox.dry_run", false);
     deviceDraftConfig_.set("kmbox.dry_run", false);
     deviceSaveTimer_.setSingleShot(true);
@@ -566,7 +567,6 @@ QWidget *Window::devicePage() {
     protocol_ = new classic::ComboBox;
     protocol_->setObjectName("boxProtocol");
     protocol_->addItem("KMBox Net · 网络", "kmbox_net");
-    protocol_->addItem("MAKCU · 串口", "makcu_serial");
     protocol_->setCurrentIndex(std::max(0, protocol_->findData(deviceDraftConfig_.s("kmbox.protocol"))));
     auto protocolRow = new QHBoxLayout;
     auto protocolLabel = new QLabel("控制器类型");
@@ -697,39 +697,7 @@ QWidget *Window::devicePage() {
     qobject_cast<QLineEdit *>(settings_["kmbox.uuid"])->setPlaceholderText("盒子屏幕上的 UUID");
     qobject_cast<QSpinBox *>(settings_["kmbox.port"])->setSpecialValueText("未填写");
     boxForms_->addWidget(net);
-    auto ser = new QWidget;
-    auto sf = new QFormLayout(ser);
-    serial_ = new classic::ComboBox;
-    serial_->setObjectName("boxSerialPort");
-    serial_->setEditable(true);
-    serial_->addItem(deviceDraftConfig_.s("kmbox.serial_port"));
-    sf->addRow("串口", serial_);
-    auto serialHint = new QLabel("请选择 CH343 串口；波特率需与盒子一致。支持 3.x 鼠标兼容与 V4 路由检测；3.x 不能输出键盘，自动任务需要键鼠均可用。");
-    serialHint->setProperty("caption", true);
-    serialHint->setWordWrap(true);
-    sf->addRow(serialHint);
-    addField(sf, "波特率", "kmbox.baudrate", true, 1, 4000000);
-    sf->addRow(button(
-        "检测串口",
-        [this] {
-            const auto previous = serial_->currentText();
-            const QSignalBlocker blocker(serial_);
-            serial_->clear();
-            for (const auto &p : Controller::serialDevices())
-                serial_->addItem(p.toString());
-            if (!previous.isEmpty()) serial_->setEditText(previous);
-            queueDeviceSave();
-        },
-        this));
-    boxForms_->addWidget(ser);
     box->addWidget(boxForms_);
-    auto switchProtocol = [this] {
-        auto p = protocol_->currentData().toString();
-        boxForms_->setCurrentIndex(p == "kmbox_net" ? 0 : 1);
-        boxForms_->updateGeometry();
-    };
-    connect(protocol_, &QComboBox::currentIndexChanged, this, switchProtocol);
-    switchProtocol();
     auto testBar = new QHBoxLayout;
     testBar->addStretch();
     testBar->addWidget(moveTest);
@@ -793,7 +761,6 @@ QWidget *Window::devicePage() {
             connect(field, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     }
     manualCapture_->setChecked(deviceUiState_["manual_capture"].toBool());
-    connect(serial_, &QComboBox::currentTextChanged, this, &Window::queueDeviceSave);
     for (auto choice : {backendChoice_, deviceChoice_, resolution_, format_, fps_, protocol_, inferenceResolution_})
         connect(choice, &QComboBox::currentIndexChanged, this, &Window::queueDeviceSave);
     connect(manualCapture_, &QCheckBox::toggled, this, &Window::queueDeviceSave);
@@ -1039,7 +1006,6 @@ Config Window::deviceConfiguration(bool requireSelection) const {
         current.set("capture.fps", fps_->currentData().toDouble());
     }
     current.set("kmbox.protocol", protocol_->currentData().toString());
-    current.set("kmbox.serial_port", serial_->currentText().trimmed());
     if (manualCapture_->isChecked())
         current.set("capture.device_path", "");
     for (auto it = settings_.begin(); it != settings_.end(); ++it) {

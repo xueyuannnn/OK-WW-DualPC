@@ -27,7 +27,6 @@ def tab(qt_app, monkeypatch, tmp_path):
     settings = Settings()
     settings.capture.crop = [0, 0, 1920, 1080]
     settings.kmbox.host, settings.kmbox.port, settings.kmbox.uuid = "192.168.2.2", 12345, "1234abcd"
-    settings.kmbox.serial_port = "COM7"
     monkeypatch.setattr(og, "config", {"dualpc_settings": settings, "dualpc_settings_path": str(tmp_path / "dualpc.json")})
     monkeypatch.setattr(og, "device_manager", None)
     callback_errors = []
@@ -47,17 +46,18 @@ def select(combo, value):
     combo.setCurrentIndex(next(i for i in range(combo.count()) if combo.itemData(i) == value))
 
 
-@pytest.mark.parametrize("protocol,visible", [("kmbox_net", "network"), ("makcu_serial", "serial")])
+@pytest.mark.parametrize("protocol,visible", [("kmbox_net", "network")])
 def test_protocol_only_exposes_its_connection_fields(tab, protocol, visible):
     select(tab.controls["kmbox.protocol"], protocol)
-    for key in ("network", "serial"):
-        assert getattr(tab, key + "_panel").isHidden() == (key != visible)
+    assert not tab.network_panel.isHidden()
+    assert not hasattr(tab, "serial_panel")
+    assert not hasattr(tab, "makcu_probe_button")
     assert tab.calibration.body.isHidden()  # Movement-test calibration stays collapsed for every protocol.
 
 
 def test_protocol_menu_has_only_supported_boxes_and_no_usb_controls(tab):
     combo = tab.controls["kmbox.protocol"]
-    assert [combo.itemData(i) for i in range(combo.count())] == ["kmbox_net", "makcu_serial"]
+    assert [combo.itemData(i) for i in range(combo.count())] == ["kmbox_net"]
     assert not any(key.startswith("kmbox.hid_") for key in tab.controls)
     assert not hasattr(tab, "hid_panel")
 
@@ -91,26 +91,18 @@ def test_numeric_fields_show_their_values_and_accept_keyboard_edits_after_resize
     assert editor.width() > 50
 
 
-def test_protocol_switch_and_save_preserve_other_protocols_and_advanced_settings(tab):
+def test_network_save_preserves_capture_and_advanced_settings(tab):
     original = deepcopy(og.config["dualpc_settings"])
-    for protocol in ("makcu_serial", "kmbox_net"):
+    for protocol in ("kmbox_net",):
         select(tab.controls["kmbox.protocol"], protocol)
     tab.controls["kmbox.host"].setText("192.168.2.3")
     assert tab.save()
     saved = Settings.load(og.config["dualpc_settings_path"])
     assert saved.kmbox.host == "192.168.2.3"
-    assert saved.kmbox.serial_port == "COM7"
     assert saved.capture.crop == original.capture.crop
     assert og.config["dualpc_settings"] == original  # Saving does not silently hot-apply output.
 
 
-def test_makcu_baud_rate_survives_switching_to_network_and_back(tab):
-    select(tab.controls["kmbox.protocol"], "makcu_serial")
-    assert tab.baudrate.currentText() == "4000000"
-    tab.baudrate.setText("115200")
-    select(tab.controls["kmbox.protocol"], "kmbox_net")
-    select(tab.controls["kmbox.protocol"], "makcu_serial")
-    assert tab.baudrate.currentText() == "115200"
 
 
 def test_device_refresh_preserves_missing_selection_and_never_picks_camera_zero(tab):
@@ -119,16 +111,8 @@ def test_device_refresh_preserves_missing_selection_and_never_picks_camera_zero(
                         "serial": [], "hid": [], "warnings": []})
     assert tab.video_device.currentData() is None
     assert tab.collect_settings().capture.device_path == "saved-card-path"
-    assert tab.collect_settings().kmbox.serial_port == "COM7"
 
 
-def test_serial_refresh_preserves_unplugged_port_and_never_autoselects_unrelated_port(tab):
-    tab.serial_port.setText("")
-    tab._devices_ready({"video": [], "serial": [{"port": "COM1", "description": "System port"}],
-                        "hid": [], "warnings": []})
-    assert tab.collect_settings().kmbox.serial_port == ""
-    tab.serial_port.setCurrentIndex(0)
-    assert tab.collect_settings().kmbox.serial_port == "COM1"
 
 
 def test_selected_device_is_saved_by_stable_path_and_old_modes_are_removed(tab):
@@ -271,14 +255,14 @@ def test_running_ui_shows_negotiated_video_and_real_kmbox_status(tab, live_manag
     manager.settings.kmbox.dry_run = False
     tab.dry_run.setChecked(False)
     tab.tick()
-    assert "KMBox 已确认" == tab.controller_state.text()
+    assert "KMBox Net 已确认" == tab.controller_state.text()
     assert tab.actual_state.text() == "1920 × 1080"
     assert "120 FPS" in tab.status.text() and "YUY2" in tab.status.text()
     assert "119.9" in tab.status.text() and "DSHOW" in tab.status.text()
     manager.interaction.client.connected = False
     snapshot["controller_error"] = "ACK timeout"
     tab.tick()
-    assert tab.controller_state.text() == "KMBox 未连接"
+    assert tab.controller_state.text() == "KMBox Net 未连接"
     assert "ACK timeout" in tab.status.text() and not tab.test_move_button.isEnabled()
 
 
@@ -287,36 +271,10 @@ def test_dry_run_ui_does_not_claim_physical_kmbox_is_connected(tab, live_manager
     assert "未连接实物" in tab.controller_state.text()
 
 
-def test_makcu_detection_does_not_open_an_active_session_port(tab, live_manager, monkeypatch):
-    select(tab.controls["kmbox.protocol"], "makcu_serial")
-    monkeypatch.setattr(tab, "_probe", lambda *unused: pytest.fail("Active port must not be probed"))
-    tab.detect_makcu()
-    assert "终止连接线程" in tab.message.text()
 
 
-def test_makcu_detect_applies_only_matching_selection_and_shows_capabilities(tab, monkeypatch):
-    select(tab.controls["kmbox.protocol"], "makcu_serial")
-    calls = []
-    monkeypatch.setattr(tab, "_probe", lambda key, args, callback: calls.append((key, args, callback)))
-    tab.detect_makcu()
-    assert calls[0][:2] == ("makcu", ["makcu", "COM7"])
-    assert not tab.start_thread_button.isEnabled()
-    calls[0][2]({"baudrate": 115200, "mouse": True, "keyboard": False})
-    assert tab.baudrate.currentText() == "115200" and "未检测到键盘" in tab.message.text()
-    assert tab.start_thread_button.isEnabled()
-    tab.serial_port.setText("COM9")
-    tab._makcu_ready("COM7", {"baudrate": 4000000, "mouse": True, "keyboard": True})
-    assert tab.baudrate.currentText() == "115200" and "未应用" in tab.message.text()
 
 
-def test_makcu_route_capability_is_visible_in_running_status(tab, live_manager):
-    manager, snapshot = live_manager
-    manager.settings.kmbox.protocol = "makcu_serial"
-    manager.settings.kmbox.dry_run = False
-    manager.interaction.client.capability_status = "MAKCU V4：仅鼠标路由"
-    tab.tick()
-    assert "仅鼠标" in tab.controller_state.text()
-    assert not tab.makcu_probe_button.isEnabled()
 
 
 def test_one_time_combat_status_shows_the_running_task_instead_of_trigger_waiting(tab, live_manager):
@@ -469,7 +427,7 @@ def test_unlimited_preview_waits_when_connection_is_not_available(tab, qt_app):
     assert tab.preview_timer.interval() > 0
 
 
-@pytest.mark.parametrize("protocol", ["kmbox_net", "makcu_serial"])
+@pytest.mark.parametrize("protocol", ["kmbox_net"])
 def test_corner_wait_control_only_shows_for_kmbox(tab, protocol):
     select(tab.controls["kmbox.protocol"], protocol)
     assert not tab.homing_wait_row.isHidden()

@@ -147,7 +147,7 @@ def main() -> None:
     shutil.copy2(source / "docs/release-notes.md", stage / "ReleaseNotes.md")
     (stage / "README.md").write_text(
         "# OK-WW-DualPC · OK-WW双机版 0.2.0 预览版\n\n"
-        "鸣潮双机自动化工具，使用采集卡读取画面、键鼠盒子发送操作。"
+        "鸣潮双机自动化工具，使用采集卡读取画面、KMBox Net 发送键鼠操作。"
         "C++ 主程序执行内置任务与角色，独立 Python 引擎运行工坊连招。\n\n"
         "解压整个目录，运行 `OKWW-DualPC-Native-Dev.exe`。"
         "配置好采集卡和盒子后点击“开始”，自动连接并运行任务；连接后可用“测试移动”检查鼠标输出。F9 暂停或取消准备。\n\n"

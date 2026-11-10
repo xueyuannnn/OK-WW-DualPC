@@ -165,9 +165,9 @@ def install_native_io(channel, direct_input=False):
         def __init__(self, settings):
             # Reuse only the controller facade/state, never open its UDP socket.
             super().__init__(settings)
-            self.supports_absolute = settings.protocol in {"ch9329", "kvm_card_mini"}
-            self.supports_keyboard = settings.protocol != "makcu_serial"
-            self.max_keys = 10 if settings.protocol == "kmbox_net" else 6
+            self.supports_absolute = False
+            self.supports_keyboard = True
+            self.max_keys = 10
 
         def connect(self):
             state = channel.request("connect")["box"]

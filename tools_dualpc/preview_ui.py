@@ -55,7 +55,7 @@ def main():
         if tab._processes and time.monotonic() - started < 16:
             QTimer.singleShot(100, capture)
             return
-        for key in ("kmbox_net", "makcu_serial"):
+        for key in ("kmbox_net",):
             combo = tab.controls["kmbox.protocol"]
             combo.setCurrentIndex(next(i for i in range(combo.count()) if combo.itemData(i) == key))
             app.processEvents()

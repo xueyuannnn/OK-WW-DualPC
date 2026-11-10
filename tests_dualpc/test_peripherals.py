@@ -7,7 +7,7 @@ from dualpc.controllers import SUPPORTED, create_controller
 from dualpc.settings import Settings
 
 
-@pytest.mark.parametrize("protocol", ["ch9329", "kvm_card_mini", "esp32_legacy", "unknown"])
+@pytest.mark.parametrize("protocol", ["makcu_serial", "ch9329", "kvm_card_mini", "esp32_legacy", "unknown"])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_removed_protocol_is_rejected_before_connecting(protocol, dry_run):
     settings = Settings()
@@ -19,9 +19,9 @@ def test_removed_protocol_is_rejected_before_connecting(protocol, dry_run):
         create_controller(settings.kmbox)
 
 
-@pytest.mark.parametrize("protocol", ["kmbox_net", "makcu_serial"])
+@pytest.mark.parametrize("protocol", ["kmbox_net"])
 def test_protocol_factory_dry_run(protocol):
-    assert set(SUPPORTED) == {"kmbox_net", "makcu_serial"}
+    assert set(SUPPORTED) == {"kmbox_net"}
     settings = Settings()
     settings.kmbox.protocol = protocol
     settings.validate()
@@ -42,14 +42,16 @@ def test_protocol_factory_dry_run(protocol):
 def test_existing_profiles_load_without_retired_usb_fields(tmp_path, protocol):
     path = tmp_path / "dualpc.json"
     settings = Settings()
-    settings.kmbox.protocol = protocol
-    settings.kmbox.serial_port = "COM7"
+    settings.kmbox.host = "192.168.2.188"
+    settings.kmbox.port = 8310
+    settings.kmbox.uuid = "12345678"
     settings.save(path)
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["kmbox"].update(hid_vid=16701, hid_pid=8455, hid_path="retired-device")
+    data["kmbox"].update(protocol=protocol, serial_port="COM7", baudrate=115200,
+                         hid_vid=16701, hid_pid=8455, hid_path="retired-device")
     path.write_text(json.dumps(data), encoding="utf-8")
     loaded = Settings.load(path)
     assert loaded == settings
     loaded.save(path)
     saved = json.loads(path.read_text(encoding="utf-8"))["kmbox"]
-    assert not set(saved) & {"hid_vid", "hid_pid", "hid_path"}
+    assert not set(saved) & {"hid_vid", "hid_pid", "hid_path", "serial_port", "baudrate"}

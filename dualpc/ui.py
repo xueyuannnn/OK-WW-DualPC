@@ -10,7 +10,7 @@ from PySide6.QtCore import QProcess, QSignalBlocker, QTimer, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QGridLayout, QHBoxLayout, QLabel, QLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox, DoubleSpinBox,
-                            EditableComboBox, FluentIcon, LineEdit, PrimaryPushButton, PushButton,
+                            FluentIcon, LineEdit, PrimaryPushButton, PushButton,
                             SpinBox, StrongBodyLabel, SubtitleLabel, TransparentPushButton)
 
 from ok import og
@@ -19,7 +19,7 @@ from .qt_controls import NumberSpinBox, NumberDoubleSpinBox, install_parameter_w
 from .preview_window import FloatingPreview, PreviewImage, PreviewRateCombo, load_preview_options, PREVIEW_RATES
 
 
-PROTOCOL_LABELS = {"kmbox_net": "KMBox Net · 网口", "makcu_serial": "MAKCU · 串口"}
+PROTOCOL_LABELS = {"kmbox_net": "KMBox Net · 网口"}
 BACKEND_LABELS = [("DirectShow（推荐）", "DSHOW"), ("Media Foundation", "MSMF"), ("FFmpeg · DirectShow", "FFMPEG")]
 FORMAT_LABELS = {"RGB3": "RGB24", "RGB4": "RGB32", "MJPG": "MJPEG"}
 
@@ -97,12 +97,8 @@ class DualPCTab(CustomTab):
         self._modes = []
         self._devices = []
         self._processes = {}
-        self._generations = {"devices": 0, "modes": 0, "makcu": 0}
+        self._generations = {"devices": 0, "modes": 0}
         self._building = True
-        self._active_protocol = self.saved_settings.kmbox.protocol
-        self._serial_bauds = {"makcu_serial": 4000000}
-        if self._active_protocol in self._serial_bauds:
-            self._serial_bauds[self._active_protocol] = self.saved_settings.kmbox.baudrate
         self._build_header()
         self._build_status()
         self._build_capture()
@@ -295,7 +291,7 @@ class DualPCTab(CustomTab):
 
     def _build_controller(self):
         b = self.saved_settings.kmbox
-        self.controller_card, layout = self._card("02  键鼠控制", "选择盒子类型后，只显示该设备需要的连接参数。")
+        self.controller_card, layout = self._card("02  键鼠控制", "填写 KMBox Net 的 IP、端口和 UUID，连接后可测试鼠标移动。")
         protocol = self._select("kmbox.protocol", [(label, key) for key, label in PROTOCOL_LABELS.items()])
         layout.addWidget(self._row("控制器类型", protocol))
         self.protocol_hint = _caption("")
@@ -310,20 +306,6 @@ class DualPCTab(CustomTab):
         self.controls["kmbox.uuid"].setMaxLength(8)
         self.controls["kmbox.port"].setSpecialValueText("未填写")
         layout.addWidget(self.network_panel)
-        self.serial_panel = QWidget()
-        serial = QVBoxLayout(self.serial_panel)
-        serial.setContentsMargins(0, 0, 0, 0)
-        self.serial_port = EditableComboBox(self)
-        self.serial_port.addItem(b.serial_port or "")
-        self.baudrate = EditableComboBox(self)
-        self.baudrate.addItems([str(value) for value in sorted({9600, 19200, 38400, 57600, 115200, 1000000, 2000000, 4000000, b.baudrate})])
-        self.baudrate.setCurrentText(str(b.baudrate))
-        serial.addWidget(self._columns((("串口设备 · 可手动输入", self.serial_port), ("波特率", self.baudrate))))
-        self.makcu_probe_button = PushButton(FluentIcon.SEARCH, "检测 MAKCU 波特率", self)
-        self.makcu_probe_button.setToolTip("先终止连接线程；在所选 COM 口查询 4000000 / 115200，只检测身份与路由，不输出键鼠。")
-        self.makcu_probe_button.clicked.connect(self.detect_makcu)
-        serial.addWidget(self.makcu_probe_button)
-        layout.addWidget(self.serial_panel)
         self.dry_run = CheckBox("演练模式", self)
         self.dry_run.setChecked(b.dry_run)
         test_row = QHBoxLayout()
@@ -399,8 +381,6 @@ class DualPCTab(CustomTab):
             else:
                 widget.currentIndexChanged.connect(self._dirty)
         self.dry_run.toggled.connect(self._dirty)
-        self.serial_port.currentTextChanged.connect(self._dirty)
-        self.baudrate.currentTextChanged.connect(self._dirty)
         self.inference_resolution.currentIndexChanged.connect(self._dirty)
 
     def _dirty(self, *unused):
@@ -408,22 +388,9 @@ class DualPCTab(CustomTab):
             self.message.setText("配置有改动 · 点击“启动线程 / 应用配置”立即生效；保存设置用于下次启动。")
 
     def _update_protocol(self, *unused):
-        protocol = self.controls["kmbox.protocol"].currentData()
-        previous = self._active_protocol
-        if previous in self._serial_bauds:
-            self._serial_bauds[previous] = self.baudrate.currentText()
-        if protocol != previous and protocol in self._serial_bauds:
-            self.baudrate.setText(str(self._serial_bauds[protocol]))
-        self._active_protocol = protocol
-        self.network_panel.setVisible(protocol == "kmbox_net")
-        self.serial_panel.setVisible(protocol == "makcu_serial")
-        self.makcu_probe_button.setVisible(protocol == "makcu_serial")
+        self.network_panel.setVisible(True)
         self.homing_wait_row.setVisible(True)
-        hints = {
-            "kmbox_net": "从盒子屏幕填写 IP、端口和 UUID，推理电脑与盒子需处于可达的局域网。",
-            "makcu_serial": "MAKCU：选择 USB2 的 CH343 串口，核对 4000000 / 115200 波特率。支持 3.x 鼠标兼容与 V4 路由检测；没有键盘能力时只能测试鼠标。",
-        }
-        self.protocol_hint.setText(hints[protocol])
+        self.protocol_hint.setText("从盒子屏幕填写 IP、端口和 UUID，控制机与盒子需处于可达的局域网。")
         self.calibration_hint.setText(
             "每次菜单定位先归零并等待，再按倍率移动，不沿用上次位置。若游戏持续锁定光标，需先进入可操作鼠标的界面。"
             " 横向 / 纵向分别表示每个目标像素需要的 HID 位移单位；1.5 × 40 像素 = 60 counts。"
@@ -503,37 +470,6 @@ class DualPCTab(CustomTab):
         self.scan_button.setText("检测中…")
         self._probe("devices", ["devices", self.controls["capture.backend"].currentData()], self._devices_ready)
 
-    def detect_makcu(self):
-        manager = og.device_manager
-        if manager is not None and manager.session_snapshot()["worker_alive"]:
-            self.message.setText("请先终止连接线程，再检测 MAKCU 波特率。")
-            return
-        port = self.serial_port.currentText().split(" · ")[0].strip()
-        if not port or self.controls["kmbox.protocol"].currentData() != "makcu_serial":
-            self.message.setText("请先选择 MAKCU 类型及对应的 COM 口。")
-            return
-        self.makcu_probe_button.setEnabled(False)
-        self.makcu_probe_button.setText("正在检测…")
-        self.start_thread_button.setEnabled(False)
-        self._probe("makcu", ["makcu", port], lambda result: self._makcu_ready(port, result))
-
-    def _makcu_ready(self, port, result):
-        self.makcu_probe_button.setEnabled(True)
-        self.makcu_probe_button.setText("检测 MAKCU 波特率")
-        self.start_thread_button.setEnabled(True)
-        if (self.controls["kmbox.protocol"].currentData() != "makcu_serial" or
-                self.serial_port.currentText().split(" · ")[0].strip() != port):
-            self.message.setText("所选盒子已变化，检测结果未应用。")
-            return
-        if "error" in result:
-            self.message.setText(result["error"])
-            return
-        self.baudrate.setText(str(result["baudrate"]))
-        self.message.setText(f"已检测到 MAKCU {'3.x 鼠标兼容' if result.get('legacy') else 'V4'} · {result['baudrate']} 波特率 · " +
-                             ("鼠标可用" if result["mouse"] else "未检测到鼠标路由") + " · " +
-                             ("键盘可用" if result["keyboard"] else "未检测到键盘路由") +
-                             "。点击“启动线程”连接；保存设置用于下次启动。")
-
     def _devices_ready(self, result):
         self.scan_button.setEnabled(True)
         self.scan_button.setText("刷新设备")
@@ -555,18 +491,6 @@ class DualPCTab(CustomTab):
         items = [(missing if self._devices else "未检测到视频设备 · 保留已保存参数", None)]
         items += [(f"{d['name']}  ·  #{d['index']}", d) for d in self._devices]
         _fill(self.video_device, items, chosen)
-        port = self.serial_port.currentText().split(" · ")[0].strip()
-        blocker = QSignalBlocker(self.serial_port)
-        self.serial_port.clear()
-        ports = [(p["port"], p["description"]) for p in result["serial"]]
-        self.serial_port.addItems([f"{name} · {description}" for name, description in ports])
-        matching_port = next((f"{name} · {description}" for name, description in ports if name == port), port)
-        matching_index = self.serial_port.findText(matching_port)
-        self.serial_port.setCurrentIndex(matching_index)
-        if matching_index < 0:
-            self.serial_port.setText(matching_port)
-        self.serial_port.setPlaceholderText("未发现串口，可输入 COM 口" if not ports else "选择盒子对应的 COM 口")
-        del blocker
         if not self.manual_capture.isChecked():
             self._video_changed()
         if result["warnings"]:
@@ -667,12 +591,6 @@ class DualPCTab(CustomTab):
             setattr(getattr(settings, group), attribute, value)
         size = self.inference_resolution.currentData()
         settings.capture.output_width, settings.capture.output_height = size
-        settings.kmbox.serial_port = self.serial_port.currentText().split(" · ")[0].strip()
-        try:
-            settings.kmbox.baudrate = int(self.baudrate.currentText().strip())
-        except ValueError:
-            if settings.kmbox.protocol == "makcu_serial":
-                raise ValueError("请填写有效的串口波特率")
         settings.kmbox.dry_run = self.dry_run.isChecked()
         if not settings.kmbox.dry_run:
             box = settings.kmbox
@@ -690,8 +608,6 @@ class DualPCTab(CustomTab):
                     int(box.uuid, 16)
                 except ValueError:
                     raise ValueError("请填写盒子屏幕上的 8 位十六进制 UUID") from None
-            elif box.protocol == "makcu_serial" and not box.serial_port:
-                raise ValueError("请选择或填写控制器对应的 COM 口")
         return settings
 
     def save(self):
@@ -710,8 +626,6 @@ class DualPCTab(CustomTab):
 
     def start_connection(self):
         try:
-            if "makcu" in self._processes:
-                raise ValueError("MAKCU 检测尚未完成，请稍候再启动线程")
             settings = self.collect_settings().validate()
             revision = og.device_manager.start_session(settings)
             self.message.setText("正在后台应用当前配置并连接设备… 自动任务将保持暂停。")
@@ -922,18 +836,13 @@ class DualPCTab(CustomTab):
         phase_labels = {"idle": "未启动", "starting": "正在连接 / 应用配置", "running": "运行中", "stopping": "正在释放设备", "stopped": "已终止", "error": "连接异常"}
         self.session_state.setText("连接线程 · " + phase_labels.get(phase, phase))
         self.start_thread_button.setText("正在连接…" if phase == "starting" else "正在终止…" if phase == "stopping" else "应用配置" if phase == "running" else "启动线程")
-        self.start_thread_button.setEnabled(phase not in {"starting", "stopping"} and "makcu" not in self._processes)
-        self.makcu_probe_button.setEnabled(not snapshot["worker_alive"] and "makcu" not in self._processes)
+        self.start_thread_button.setEnabled(phase not in {"starting", "stopping"})
         self.stop_thread_button.setEnabled(snapshot["worker_alive"] and phase != "stopping")
         age, connected = reader.age_ms, reader.connected()
         box = manager.interaction.client
         self.capture_state.setText("正在接收帧" if connected else "未连接")
-        protocol = manager.settings.kmbox.protocol
         self.controller_state.setText("演练 · 未连接实物" if manager.settings.kmbox.dry_run else
-                                      ("KMBox 已确认" if protocol == "kmbox_net" else "串口已确认") if box.connected else
-                                      ("KMBox 未连接" if protocol == "kmbox_net" else "控制器未连接"))
-        if protocol == "makcu_serial" and box.connected and not manager.settings.kmbox.dry_run:
-            self.controller_state.setText(getattr(box, "capability_status", "MAKCU 串口已确认"))
+                                      "KMBox Net 已确认" if box.connected else "KMBox Net 未连接")
         try:
             matches = self.collect_settings().kmbox == manager.settings.kmbox
         except Exception:

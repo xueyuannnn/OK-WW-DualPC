@@ -1,36 +1,13 @@
 #include "backend.hpp"
-#include "makcu_protocol.hpp"
 #include <QTcpSocket>
 #include <QtTest>
 using namespace okww;
 class NativeTests : public QObject {
     Q_OBJECT
   private slots:
-    void makcuLegacyRepliesConfirmMouseWithoutInventingKeyboardSupport() {
-        const QString identity = "km.MAKCU\r\n>>> ";
-        const QString sample = "km.left()\n0\r\n>>> " + identity;
-        QVERIFY(!makcuV4Keyboard(identity).has_value());
-        QVERIFY(makcuLegacyMouseReply(sample));
-        QVERIFY(!makcuLegacyMouseReply(identity));
-        QVERIFY(!makcuLegacyMouseReply("km.left()\r\n>>> "+identity));
-        QVERIFY(!makcuLegacyMouseReply("0\r\n>>> "+identity));
-        QCOMPARE(*makcuV4Keyboard("R:MK;M:8uf;K:8uf;C:0uf\r\n"+identity), true);
-        QCOMPARE(*makcuV4Keyboard("R:M;M:8uf;K:0uf;C:0uf\r\n"+identity), false);
-        QVERIFY_EXCEPTION_THROWN(makcuV4Keyboard("R:K;M:0uf;K:8uf;C:0uf"), std::runtime_error);
-    }
-    void makcuLegacyVersionBarrierCannotHideAnIgnoredCommand() {
-        const QString identity = "km.MAKCU\r\n>>> ";
-        checkMakcuLegacyAcknowledgements("km.move(40,40)\r\n>>> "+identity, {"km.move(40,40)"});
-        checkMakcuLegacyAcknowledgements("km.ms1(0)\n>>> \nkm.ms2(0)\r\n>>> "+identity,
-                                         {"km.ms1(0)", "km.ms2(0)"});
-        QVERIFY_EXCEPTION_THROWN(checkMakcuLegacyAcknowledgements(identity, {"km.move(40,40)"}), std::runtime_error);
-        QVERIFY_EXCEPTION_THROWN(checkMakcuLegacyAcknowledgements("km.ms1(0)\r\n>>> "+identity,
-                                                                   {"km.ms1(0)", "km.side2(0)"}), std::runtime_error);
-    }
     void boxMoveTestRetainsArmedInputAndHeldControls_data() {
         QTest::addColumn<QString>("protocol");
         QTest::newRow("KMBox Net") << QString("kmbox_net");
-        QTest::newRow("MAKCU") << QString("makcu_serial");
     }
     void boxMoveTestRetainsArmedInputAndHeldControls() {
         QFETCH(QString, protocol);
@@ -260,7 +237,7 @@ class NativeTests : public QObject {
         QVERIFY(s["keys"].toArray().isEmpty());
     }
     void unsupportedProtocolsNeverConnect() {
-        for (const auto &protocol : {"ch9329", "kvm_card_mini", "esp32_legacy", "unknown"}) {
+        for (const auto &protocol : {"makcu_serial", "ch9329", "kvm_card_mini", "esp32_legacy", "unknown"}) {
             for (bool dryRun : {false, true}) {
                 auto config = Config::defaults();
                 config.set("kmbox.protocol", protocol);
@@ -273,7 +250,7 @@ class NativeTests : public QObject {
         }
     }
     void supportedProfilesIgnoreRetiredUsbFields() {
-        for (const auto &protocol : {"kmbox_net", "makcu_serial"}) {
+        for (const auto &protocol : {"kmbox_net"}) {
             QTemporaryDir data;
             auto config = Config::defaults();
             config.set("kmbox.protocol", protocol);
@@ -285,7 +262,7 @@ class NativeTests : public QObject {
             config.save(data.path() + "/dualpc.json");
             auto loaded = Config::load(data.path() + "/dualpc.json");
             QCOMPARE(loaded.s("kmbox.protocol"), QString(protocol));
-            QCOMPARE(loaded.s("kmbox.serial_port"), QString("COM_TEST"));
+            QVERIFY(loaded.get("kmbox.serial_port").isUndefined());
             QVERIFY(loaded.get("kmbox.hid_path").isUndefined());
             QVERIFY(loaded.get("kmbox.hid_vid").isUndefined());
             Controller box(loaded);
@@ -294,20 +271,30 @@ class NativeTests : public QObject {
             QVERIFY_EXCEPTION_THROWN(box.absolute(20, 20, 1920, 1080), std::runtime_error);
         }
     }
-    void makcuReports() {
-        auto c = Config::defaults();
-        c.set("kmbox.dry_run", true);
-        c.set("kmbox.protocol", "makcu_serial");
-        Controller box(c);
-        box.connect();
-        QVERIFY(box.state()["keyboard"].toBool());
-        box.key(4, true);
-        box.button("left", true);
-        box.release();
-        auto p = box.history().back();
-        QVERIFY(p.contains("km.up(4)\r\n"));
-        QVERIFY(p.contains("km.left(0)\r\n"));
-        QVERIFY(p.endsWith("km.version()\r\n"));
+    void retiredSerialProfilePreservesNetworkAndCaptureSettings() {
+        QTemporaryDir data;
+        auto config = Config::defaults();
+        config.set("kmbox.protocol", "makcu_serial");
+        config.set("kmbox.serial_port", "COM4");
+        config.set("kmbox.baudrate", 115200);
+        config.set("kmbox.host", "192.168.2.188");
+        config.set("kmbox.port", 8310);
+        config.set("kmbox.uuid", "12345678");
+        config.set("capture.fps", 240);
+        config.set("extension.saved", "preserved");
+        const auto path = data.path() + "/dualpc.json";
+        writeJson(path, config.json);
+        const auto loaded = Config::load(path);
+        QCOMPARE(loaded.s("kmbox.protocol"), QString("kmbox_net"));
+        QCOMPARE(loaded.s("kmbox.host"), QString("192.168.2.188"));
+        QCOMPARE(loaded.n("kmbox.port"), 8310);
+        QCOMPARE(loaded.s("kmbox.uuid"), QString("12345678"));
+        QCOMPARE(loaded.n("capture.fps"), 240);
+        QCOMPARE(loaded.s("extension.saved"), QString("preserved"));
+        QVERIFY(loaded.get("kmbox.serial_port").isUndefined());
+        QVERIFY(loaded.get("kmbox.baudrate").isUndefined());
+        loaded.save(path);
+        QCOMPARE(Config::load(path).json, loaded.json);
     }
     void bottomUpPreview() {
         Frame f;

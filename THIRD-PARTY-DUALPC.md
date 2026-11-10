@@ -6,8 +6,6 @@
 - ok-script: https://github.com/ok-oldking/ok-script ; commit `428bcd563292ac6451c84c0222e6b790d468215f`. See `vendor/ok-script/LICENSE.txt` and its attribution requirements.
 - Character workshop rescue mirror: https://github.com/yamadafz/ok-ww-char-code ; public snapshot of the unavailable original workshop repository. Downloaded teams retain their original authors and metadata. See `docs/project-links.md` and `docs/workshop.md` in the source tree.
 - KMBox Net protocol reference: https://github.com/kvmaibox/kmboxnet/blob/main/c%2B%2B_demo/NetConfig/kmboxNet.cpp . The Python and C++ adapters implement the publicly documented packet layouts.
-- MAKCU V4 text protocol reference: https://makcu.com/en/api/ and https://makcu.com/en/developers/ . Independently implemented serial transport; no vendor binaries or firmware are bundled. Actual-device validation is pending.
-- MAKCU 3.2/3.7 mouse protocol reference by the Rust SDK author: https://makcu.k4tech.net/native/ . Independently implemented compatibility path; no firmware changes are performed.
 - Dual-PC architecture reference: https://github.com/ai123lj/DualPC-TensorRT-Aim-KMBOX . No FPS model, targeting logic or runtime DLL is included in this adapter.
 - GC573 driver: https://www.avermedia.com/support/download?model_number=GC573 . Install the manufacturer's driver on the inference PC.
 

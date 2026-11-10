@@ -52,8 +52,11 @@ class ClassicUiTests final : public QObject {
         old.set("kmbox.host", "127.0.0.1");
         old.set("kmbox.port", 12345);
         old.set("kmbox.uuid", "12345678");
+        old.set("kmbox.protocol", "makcu_serial");
+        old.set("kmbox.serial_port", "COM4");
+        old.set("kmbox.baudrate", 115200);
         old.set("kmbox.dry_run", true);
-        old.save(data.path()+"/dualpc.json");
+        writeJson(data.path()+"/dualpc.json", old.json);
         writeJson(data.path()+"/native-device-settings.json", {{"config", old.json}, {"manual_capture", true}});
         int connections = 0;
         Config applied;
@@ -75,6 +78,10 @@ class ClassicUiTests final : public QObject {
         QTRY_COMPARE(connections, 1);
         QTRY_VERIFY(window->findChild<QPushButton *>("previewConnection")->isEnabled());
         QVERIFY(!applied.b("kmbox.dry_run"));
+        QCOMPARE(applied.s("kmbox.protocol"), QString("kmbox_net"));
+        QCOMPARE(applied.s("kmbox.uuid"), QString("12345678"));
+        QVERIFY(applied.get("kmbox.serial_port").isUndefined());
+        QVERIFY(applied.get("kmbox.baudrate").isUndefined());
         QVERIFY(!Config::load(data.path()+"/dualpc.json").b("kmbox.dry_run"));
         QVERIFY(connected->snapshot()["dry_run"].toBool()); // Explicit offline connector remains inert.
         navigate(*window, "dualpc");
@@ -212,7 +219,7 @@ class ClassicUiTests final : public QObject {
         const QJsonObject values{{"capture.device_name", "Saved Capture"}, {"capture.device_index", 3},
             {"capture.width", 2560}, {"capture.height", 1440}, {"capture.fps", 165.}, {"capture.fourcc", "NV12"},
             {"capture.stale_after", .35}, {"kmbox.host", "192.168."}, {"kmbox.port", 12345}, {"kmbox.uuid", "12"},
-            {"kmbox.baudrate", 2000000}, {"kmbox.desktop_width", 2560}, {"kmbox.desktop_height", 1440},
+            {"kmbox.desktop_width", 2560}, {"kmbox.desktop_height", 1440},
             {"kmbox.home_counts", 16000}, {"kmbox.move_chunk", 256}, {"kmbox.home_wait", .08},
             {"kmbox.move_interval", .003}, {"kmbox.timeout", .45},
             {"kmbox.counts_per_pixel_x", 1.25}, {"kmbox.counts_per_pixel_y", 1.5}};
@@ -224,9 +231,7 @@ class ClassicUiTests final : public QObject {
             else if (auto input = qobject_cast<QDoubleSpinBox *>(widget)) input->setValue(it.value().toDouble());
         }
         QVERIFY(!window->findChild<QCheckBox *>("kmbox.dry_run"));
-        window->findChild<QComboBox *>("boxSerialPort")->setCurrentText("COM9");
         auto protocol = window->findChild<QComboBox *>("boxProtocol");
-        protocol->setCurrentIndex(protocol->findData("makcu_serial"));
         protocol->setCurrentIndex(protocol->findData("kmbox_net"));
         auto inference = window->findChild<QComboBox *>("inferenceResolution");
         inference->setCurrentIndex(inference->findData(QSize(1280, 720)));
@@ -245,7 +250,7 @@ class ClassicUiTests final : public QObject {
         for (auto it = values.begin(); it != values.end(); ++it) QCOMPARE(saved.get(it.key()), it.value());
         QCOMPARE(saved.get("capture.crop").toArray(), QJsonArray({50, 20, 1280, 720}));
         QCOMPARE(saved.n("capture.output_width"), 1280);
-        QCOMPARE(saved.s("kmbox.serial_port"), QString("COM9"));
+        QVERIFY(saved.get("kmbox.serial_port").isUndefined());
         QVERIFY(!saved.b("kmbox.dry_run"));
         QVERIFY(host && host->hasFocus());
         QVERIFY(window->findChild<QLabel *>("deviceSaveStatus")->text().contains("草稿已自动保存"));
@@ -273,7 +278,7 @@ class ClassicUiTests final : public QObject {
             QCOMPARE(actual, it.key() == "kmbox.port" ? QJsonValue(12500) : it.value());
         }
         QCOMPARE(restored->findChild<QComboBox *>("inferenceResolution")->currentData().toSize(), QSize(1280, 720));
-        QCOMPARE(restored->findChild<QComboBox *>("boxSerialPort")->currentText(), QString("COM9"));
+        QVERIFY(!restored->findChild<QComboBox *>("boxSerialPort"));
         QSignalSpy failed(restored.get(), &Window::startupFailed);
         for (auto button : restored->findChildren<QPushButton *>())
             if (button->property("automationControl").toBool()) button->click();
@@ -1427,18 +1432,17 @@ class ClassicUiTests final : public QObject {
         QCOMPARE(daily->mapTo(window.get(), QPoint{}), taskPosition);
         QCOMPARE(statusPanel->height(), 108);
     }
-    void boxConfigurationOnlyOffersMakcuAndKmbox() {
+    void boxConfigurationOnlyOffersKmboxNet() {
         QTemporaryDir data;
         auto window = create(data);
         auto protocols = window->findChild<QComboBox *>("boxProtocol");
         auto forms = window->findChild<QStackedWidget *>("boxConnectionForms");
         QVERIFY(protocols);
         QVERIFY(forms);
-        QCOMPARE(protocols->count(), 2);
-        QCOMPARE(forms->count(), 2);
+        QCOMPARE(protocols->count(), 1);
+        QCOMPARE(forms->count(), 1);
         QCOMPARE(protocols->itemData(0).toString(), QString("kmbox_net"));
-        QCOMPARE(protocols->itemData(1).toString(), QString("makcu_serial"));
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < 1; ++i) {
             protocols->setCurrentIndex(i);
             QCOMPARE(forms->currentIndex(), i);
         }

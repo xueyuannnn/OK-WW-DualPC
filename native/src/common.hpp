@@ -47,6 +47,7 @@ struct Config {
     int n(const QString &p) const { return int(d(p)); }
     bool b(const QString &p) const { return get(p).toBool(); }
     void set(const QString &path, const QJsonValue &value);
+    void normalizeBox();
     void validateCapture() const;
     void validateBox() const;
 };

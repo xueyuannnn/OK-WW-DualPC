@@ -39,8 +39,6 @@ class BoxSettings:
     home_wait: float = 0.05
     move_chunk: int = 512
     move_interval: float = 0.002
-    serial_port: str = ""
-    baudrate: int = 4000000
 
 
 @dataclass
@@ -75,12 +73,8 @@ class Settings:
             raise ValueError("move_interval must be between 0 and 0.1 seconds")
         if not math.isfinite(b.home_wait) or not 0 <= b.home_wait <= 1:
             raise ValueError("home_wait must be between 0 and 1 second")
-        if b.protocol not in {"kmbox_net", "makcu_serial"}:
-            raise ValueError("Unknown input protocol; select MAKCU or KMBox Net")
-        if not 1 <= b.baudrate <= 4000000:
-            raise ValueError("Invalid serial baudrate")
-        if not b.dry_run and b.protocol == "makcu_serial" and not b.serial_port:
-            raise ValueError("Select the controller COM port")
+        if b.protocol != "kmbox_net":
+            raise ValueError("Unknown input protocol; select KMBox Net")
         if not b.dry_run and b.protocol == "kmbox_net":
             import ipaddress
             ipaddress.IPv4Address(b.host)
@@ -98,8 +92,10 @@ class Settings:
         if unknown:
             raise ValueError(f"Unknown configuration fields: {sorted(unknown)}")
         box = dict(data.get("kmbox", {}))
-        # Ignore retired USB fields so existing MAKCU and KMBox profiles still load.
-        for key in ("hid_vid", "hid_pid", "hid_path"):
+        # Reuse retained KMBox network settings from a retired serial profile.
+        if box.get("protocol") == "makcu_serial":
+            box["protocol"] = "kmbox_net"
+        for key in ("hid_vid", "hid_pid", "hid_path", "serial_port", "baudrate"):
             box.pop(key, None)
         return cls(CaptureSettings(**data.get("capture", {})), BoxSettings(**box),
                    data.get("game_language", "zh_CN")).validate()

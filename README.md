@@ -2,7 +2,7 @@
 
 鸣潮双机自动化工具，支持自动战斗、一键日常、声骸副本循环和角色代码工坊。
 
-游戏在游戏机上运行，控制机通过采集卡识别画面，通过 KMBox Net 发送键鼠操作；MAKCU 按固件能力提供鼠标或键鼠输出。主程序、内置任务和角色连招使用 C++，工坊与通用脚本使用独立 Python 环境。
+游戏在游戏机上运行，控制机通过采集卡识别画面，通过 KMBox Net 发送键鼠操作。主程序、内置任务和角色连招使用 C++，工坊与通用脚本使用独立 Python 环境。
 
 基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0 预览版**，支持 Windows x64。
 
@@ -43,11 +43,11 @@
 | --- | --- |
 | 系统 | Windows x64 |
 | 采集 | DirectShow、Media Foundation |
-| 盒子 | KMBox Net；MAKCU 3.x 鼠标兼容与 V4 路由检测 |
+| 盒子 | KMBox Net，填写地址、端口和 UUID |
 | 图像参数 | 按采集卡驱动枚举结果选择 |
 | 预览帧率 | 独立于采集帧率设置 |
 
-MAKCU 3.2／3.7 固件仅支持鼠标兼容、预览与移动测试，不能运行需要键盘的自动任务。V4 的键盘输出取决于设备实际路由，连接时检测。暂不支持 FFmpeg 采集和 P010 格式。盒子发送的是输入指令，无法读取游戏机上的实际鼠标位置。
+当前仅支持 KMBox Net。暂不支持 FFmpeg 采集和 P010 格式。盒子发送的是输入指令，无法读取游戏机上的实际鼠标位置。
 
 采集卡列出的帧率是驱动支持的模式，实际收帧率请以软件状态栏为准。预览帧率、采集帧率和游戏帧率分别设置。
 

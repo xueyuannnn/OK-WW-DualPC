@@ -4,10 +4,9 @@ namespace okww {
 class Controller {
     Config cfg_;
     SOCKET socket_ = INVALID_SOCKET;
-    HANDLE device_ = INVALID_HANDLE_VALUE;
     std::recursive_mutex mutex_;
     uint32_t index_ = 0, uuid_ = 0;
-    bool connected_ = false, keyboard_ = true, legacyMakcu_ = false;
+    bool connected_ = false;
     int buttons_ = 0, modifiers_ = 0;
     std::set<int> keys_;
     QString capability_;
@@ -15,9 +14,8 @@ class Controller {
     std::deque<double> latencyMs_;
     double latencyP50_ = 0, latencyP95_ = 0;
     void noteLatency(i64 began);
-    void write(const QByteArray &data);
+    void recordPacket(const QByteArray &data);
     void exchange(uint32_t command, const QByteArray &payload = {});
-    QString makcu(const QStringList &commands = {});
     void mouse(uint32_t command, int x = 0, int y = 0, int wheel = 0);
     void keyboardReport();
 
@@ -39,6 +37,5 @@ class Controller {
         std::lock_guard lock(mutex_);
         return history_;
     }
-    static QJsonArray serialDevices();
 };
 } // namespace okww

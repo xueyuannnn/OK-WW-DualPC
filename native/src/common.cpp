@@ -51,9 +51,7 @@ Config Config::defaults() {
                                    {"home_counts", 32767},
                                    {"home_wait", 0.05},
                                    {"move_chunk", 512},
-                                   {"move_interval", 0.002},
-                                   {"serial_port", ""},
-                                   {"baudrate", 4000000}}},
+                                   {"move_interval", 0.002}}},
              {"game_language", "zh_CN"}}};
 }
 Config Config::load(const QString &p) {
@@ -69,12 +67,17 @@ Config Config::load(const QString &p) {
         } else
             c.json[it.key()] = it.value();
     }
-    auto box = c.json["kmbox"].toObject();
-    // Older profiles stored inactive USB settings alongside the selected box.
-    for (const auto &key : {"hid_vid", "hid_pid", "hid_path"})
-        box.remove(key);
-    c.json["kmbox"] = box;
+    c.normalizeBox();
     return c;
+}
+void Config::normalizeBox() {
+    auto box = json["kmbox"].toObject();
+    // Restore the retained network settings when opening a retired serial profile.
+    if (box["protocol"].toString() == "makcu_serial")
+        box["protocol"] = "kmbox_net";
+    for (const auto &key : {"hid_vid", "hid_pid", "hid_path", "serial_port", "baudrate"})
+        box.remove(key);
+    json["kmbox"] = box;
 }
 void Config::save(const QString &p) const {
     validateCapture();
@@ -117,13 +120,11 @@ void Config::validateCapture() const {
         fail("图像过期时间无效");
 }
 void Config::validateBox() const {
-    if (!QStringList{"kmbox_net", "makcu_serial"}.contains(s("kmbox.protocol")))
-        fail("请选择 MAKCU 或 KMBox Net 盒子协议");
+    if (s("kmbox.protocol") != "kmbox_net")
+        fail("当前版本仅支持 KMBox Net，请检查盒子配置");
     if (d("kmbox.timeout") <= 0 || d("kmbox.timeout") > 5 || d("kmbox.counts_per_pixel_x") <= 0 ||
         d("kmbox.counts_per_pixel_y") <= 0 || n("kmbox.desktop_width") <= 0 || n("kmbox.desktop_height") <= 0)
         fail("盒子超时、倍率或桌面尺寸无效");
-    if (n("kmbox.baudrate") < 1 || n("kmbox.baudrate") > 4000000)
-        fail("串口波特率无效");
     if (b("kmbox.dry_run"))
         return;
     if (s("kmbox.protocol") == "kmbox_net") {
@@ -132,8 +133,7 @@ void Config::validateBox() const {
             n("kmbox.port") > 65535 ||
             !QRegularExpression("^[0-9a-fA-F]{8}$").match(s("kmbox.uuid")).hasMatch())
             fail("请填写盒子的 IPv4 地址、端口和 8 位 UUID");
-    } else if (s("kmbox.serial_port").isEmpty())
-        fail("请选择串口");
+    }
 }
 QString formatName(PixelFormat f) {
     return QStringList{"RGB3", "RGB4", "NV12", "P010", "YUY2", "UYVY", "I420", "MJPG"}.at(int(f));

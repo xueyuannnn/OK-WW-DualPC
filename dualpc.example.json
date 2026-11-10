@@ -27,9 +27,7 @@
     "home_counts": 32767,
     "home_wait": 0.05,
     "move_chunk": 512,
-    "move_interval": 0.002,
-    "serial_port": "",
-    "baudrate": 4000000
+    "move_interval": 0.002
   },
   "game_language": "zh_CN"
 }

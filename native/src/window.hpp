@@ -171,7 +171,7 @@ class Window final : public QMainWindow {
     QListWidget *taskList_ = nullptr, *triggerList_ = nullptr, *globalList_ = nullptr, *teamList_ = nullptr;
     QWidget *taskForm_ = nullptr, *triggerForm_ = nullptr, *globalForm_ = nullptr;
     QComboBox *backendChoice_ = nullptr, *deviceChoice_ = nullptr, *resolution_ = nullptr, *format_ = nullptr,
-              *fps_ = nullptr, *protocol_ = nullptr, *serial_ = nullptr, *member_ = nullptr;
+              *fps_ = nullptr, *protocol_ = nullptr, *member_ = nullptr;
     QComboBox *codeSource_ = nullptr, *codeView_ = nullptr;
     QStackedWidget *boxForms_ = nullptr;
     QHash<QString, QWidget *> settings_;

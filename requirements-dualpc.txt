@@ -9,5 +9,4 @@ PySide6-Fluent-Widgets==1.11.3
 pyappify==1.0.13
 pytest>=9,<10
 packaging>=25
-pyserial==3.5
 cv2-enumerate-cameras==1.4.0

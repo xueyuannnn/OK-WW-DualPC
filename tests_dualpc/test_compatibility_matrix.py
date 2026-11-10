@@ -26,7 +26,7 @@ GEOMETRIES = [
 ]
 
 
-@pytest.mark.parametrize("protocol", ["kmbox_net", "makcu_serial"])
+@pytest.mark.parametrize("protocol", ["kmbox_net"])
 @pytest.mark.parametrize("raw,inference,desktop,crop,point,expected", GEOMETRIES)
 def test_menu_target_reaches_same_desktop_location_across_protocols(
         protocol, raw, inference, desktop, crop, point, expected):
@@ -45,13 +45,7 @@ def test_menu_target_reaches_same_desktop_location_across_protocols(
     try:
         interaction.move(*point)
         packets = interaction.client.history
-        if protocol == "makcu_serial":
-            moves = [tuple(map(int, match)) for packet in packets
-                     for match in re.findall(rb"km.move\((-?\d+),(-?\d+)\)", packet)]
-            assert moves[0] == (-32767, -32767)
-            assert (sum(x for x, y in moves[1:]), sum(y for x, y in moves[1:])) == (
-                round(expected[0] * 1.25), round(expected[1] * 0.75))
-        elif protocol == "kmbox_net":
+        if protocol == "kmbox_net":
             moves = [struct.unpack_from("<4i", packet, 16) for packet in packets
                      if struct.unpack_from("<I", packet, 12)[0] == MOVE]
             # Discard connection release and corner homing. The endpoint must

@@ -1,0 +1,79 @@
+{
+  "source": "Original personal UI task-name Unicode symbols",
+  "renderer": "Installed Segoe UI Emoji via original PySide6 Qt; font file is not redistributed",
+  "symbols": [
+    {
+      "symbol": "⏭️",
+      "key": "23ed-fe0f"
+    },
+    {
+      "symbol": "♻️",
+      "key": "267b-fe0f"
+    },
+    {
+      "symbol": "⚒️",
+      "key": "2692-fe0f"
+    },
+    {
+      "symbol": "⚔️",
+      "key": "2694-fe0f"
+    },
+    {
+      "symbol": "✈️",
+      "key": "2708-fe0f"
+    },
+    {
+      "symbol": "⬆️",
+      "key": "2b06-fe0f"
+    },
+    {
+      "symbol": "⭐",
+      "key": "2b50"
+    },
+    {
+      "symbol": "🌀",
+      "key": "1f300"
+    },
+    {
+      "symbol": "🌊",
+      "key": "1f30a"
+    },
+    {
+      "symbol": "🌙",
+      "key": "1f319"
+    },
+    {
+      "symbol": "🌸",
+      "key": "1f338"
+    },
+    {
+      "symbol": "🎛️",
+      "key": "1f39b-fe0f"
+    },
+    {
+      "symbol": "🎡",
+      "key": "1f3a1"
+    },
+    {
+      "symbol": "📅",
+      "key": "1f4c5"
+    },
+    {
+      "symbol": "🔑",
+      "key": "1f511"
+    },
+    {
+      "symbol": "🧪",
+      "key": "1f9ea"
+    }
+  ],
+  "sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64
+  ]
+}

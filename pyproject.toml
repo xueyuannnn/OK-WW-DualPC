@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77", "cython>=3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ok-ww-dualpc"
+version = "0.2.0"
+description = "Dual-PC automation for Wuthering Waves"
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+dependencies = [
+    "ok-script[ocr,qt]>=2.0.8",
+    "onnxocr-ppocrv5>=0.0.20",
+    "openvino",
+    "opencv-python",
+    "pyappify>=1.0.13"
+]
+
+[project.urls]
+Homepage = "https://github.com/xueyuannnn/OK-WW-DualPC"
+Issues = "https://github.com/xueyuannnn/OK-WW-DualPC/issues"
+Downloads = "https://github.com/xueyuannnn/OK-WW-DualPC/releases"
+
+[project.optional-dependencies]
+dev = [
+    "polib",
+    "pytest",
+]
+docs = [
+    "mkdocs-material>=9.5,<10",
+]
+web-test = [
+    "ok-script[web]==2.0.8",
+]

@@ -1,0 +1,14 @@
+<RCC>
+  <qresource prefix="/builtin-code">
+    <file alias="character.cpp">../src/runtime/character.cpp</file>
+    <file alias="character.hpp">../src/runtime/character.hpp</file>
+    <file alias="characters_basic.cpp">../src/runtime/characters_basic.cpp</file>
+    <file alias="characters_extended.cpp">../src/runtime/characters_extended.cpp</file>
+    <file alias="characters_stateful.cpp">../src/runtime/characters_stateful.cpp</file>
+    <file alias="characters_advanced.cpp">../src/runtime/characters_advanced.cpp</file>
+    <file alias="characters_gauges.cpp">../src/runtime/characters_gauges.cpp</file>
+    <file alias="characters_forms.cpp">../src/runtime/characters_forms.cpp</file>
+    <file alias="characters_spectro.cpp">../src/runtime/characters_spectro.cpp</file>
+    <file alias="characters_additional.cpp">../src/runtime/characters_additional.cpp</file>
+  </qresource>
+</RCC>

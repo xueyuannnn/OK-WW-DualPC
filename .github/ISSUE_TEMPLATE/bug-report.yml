@@ -1,0 +1,25 @@
+name: 问题反馈
+description: 报告可以重现的功能、设备或界面问题
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 软件版本与 Windows 版本
+    validations:
+      required: true
+  - type: textarea
+    id: devices
+    attributes:
+      label: 设备与参数
+      description: 采集卡型号、驱动、分辨率、格式、协商与实际帧率，盒子型号与固件。不要填写 IP、UUID 或其他凭据。
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 重现步骤与预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: 上传前请去掉账号信息、设备地址和通知凭据。

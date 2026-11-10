@@ -1,0 +1,585 @@
+{
+  "source_sha256": "30833428707acc25fc631600d5aeae57089cc0e5c5d87bf19aada90842b38380",
+  "characters": [
+    {
+      "templates": [
+        "yangyang_sp"
+      ],
+      "canonical": "yangyang_sp",
+      "class": "YangYangSp",
+      "role": 0,
+      "element": 5,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_yinlin"
+      ],
+      "canonical": "char_yinlin",
+      "class": "Yinlin",
+      "role": 1,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_verina"
+      ],
+      "canonical": "char_verina",
+      "class": "Verina",
+      "role": 2,
+      "element": 0,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_shorekeeper"
+      ],
+      "canonical": "char_shorekeeper",
+      "class": "ShoreKeeper",
+      "role": 2,
+      "element": 0,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_suisui"
+      ],
+      "canonical": "char_suisui",
+      "class": "Suisui",
+      "role": 2,
+      "element": -1,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_taoqi"
+      ],
+      "canonical": "char_taoqi",
+      "class": "Taoqi",
+      "role": 2,
+      "element": 5,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_rover",
+        "char_rover_male"
+      ],
+      "canonical": "char_rover",
+      "class": "Rover",
+      "role": 0,
+      "element": -1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_encore"
+      ],
+      "canonical": "char_encore",
+      "class": "Encore",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_jianxin"
+      ],
+      "canonical": "char_jianxin",
+      "class": "Jianxin",
+      "role": 2,
+      "element": 4,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_sanhua",
+        "char_sanhua2"
+      ],
+      "canonical": "char_sanhua",
+      "class": "Sanhua",
+      "role": 1,
+      "element": 3,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_jinhsi",
+        "char_jinhsi2"
+      ],
+      "canonical": "char_jinhsi",
+      "class": "Jinhsi",
+      "role": 0,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_yuanwu"
+      ],
+      "canonical": "char_yuanwu",
+      "class": "Yuanwu",
+      "role": 1,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "chang_changli",
+        "char_changli2"
+      ],
+      "canonical": "chang_changli",
+      "class": "Changli",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_chixia"
+      ],
+      "canonical": "char_chixia",
+      "class": "Chixia",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_danjin"
+      ],
+      "canonical": "char_danjin",
+      "class": "Danjin",
+      "role": 1,
+      "element": 5,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_baizhi"
+      ],
+      "canonical": "char_baizhi",
+      "class": "Baizhi",
+      "role": 2,
+      "element": 3,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_calcharo"
+      ],
+      "canonical": "char_calcharo",
+      "class": "Calcharo",
+      "role": 0,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_jiyan"
+      ],
+      "canonical": "char_jiyan",
+      "class": "Jiyan",
+      "role": 0,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_mortefi"
+      ],
+      "canonical": "char_mortefi",
+      "class": "Mortefi",
+      "role": 1,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_zhezhi"
+      ],
+      "canonical": "char_zhezhi",
+      "class": "Zhezhi",
+      "role": 1,
+      "element": 3,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_xiangliyao"
+      ],
+      "canonical": "char_xiangliyao",
+      "class": "Xiangliyao",
+      "role": 0,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_camellya"
+      ],
+      "canonical": "char_camellya",
+      "class": "Camellya",
+      "role": 0,
+      "element": 5,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_youhu"
+      ],
+      "canonical": "char_youhu",
+      "class": "Youhu",
+      "role": 2,
+      "element": 3,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_carlotta",
+        "char_carlotta2"
+      ],
+      "canonical": "char_carlotta",
+      "class": "Carlotta",
+      "role": 0,
+      "element": 3,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_roccia"
+      ],
+      "canonical": "char_roccia",
+      "class": "Roccia",
+      "role": 1,
+      "element": 5,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_phoebe"
+      ],
+      "canonical": "char_phoebe",
+      "class": "Phoebe",
+      "role": 1,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_brant"
+      ],
+      "canonical": "char_brant",
+      "class": "Brant",
+      "role": 2,
+      "element": 2,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_cantarella"
+      ],
+      "canonical": "char_cantarella",
+      "class": "Cantarella",
+      "role": 2,
+      "element": 5,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_zani",
+        "char_zani2"
+      ],
+      "canonical": "char_zani",
+      "class": "Zani",
+      "role": 0,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_ciaccona"
+      ],
+      "canonical": "char_ciaccona",
+      "class": "Ciaccona",
+      "role": 1,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_cartethyia"
+      ],
+      "canonical": "char_cartethyia",
+      "class": "Cartethyia",
+      "role": 0,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lupa"
+      ],
+      "canonical": "char_lupa",
+      "class": "Lupa",
+      "role": 1,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_phrolova"
+      ],
+      "canonical": "char_phrolova",
+      "class": "Phrolova",
+      "role": 0,
+      "element": 5,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "Augusta"
+      ],
+      "canonical": "Augusta",
+      "class": "Augusta",
+      "role": 0,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_iuno"
+      ],
+      "canonical": "char_iuno",
+      "class": "Iuno",
+      "role": 1,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_galbrena"
+      ],
+      "canonical": "char_galbrena",
+      "class": "Galbrena",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_chouyuan"
+      ],
+      "canonical": "char_chouyuan",
+      "class": "Qiuyuan",
+      "role": 1,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_chisa",
+        "char_chisa2"
+      ],
+      "canonical": "char_chisa",
+      "class": "Chisa",
+      "role": 2,
+      "buff_time": 20,
+      "element": 5
+    },
+    {
+      "templates": [
+        "char_denia"
+      ],
+      "canonical": "char_denia",
+      "class": "Denia",
+      "role": 1,
+      "buff_time": 14,
+      "element": 2
+    },
+    {
+      "templates": [
+        "char_douling"
+      ],
+      "canonical": "char_douling",
+      "class": "Douling",
+      "role": 2,
+      "element": 1,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_linnai",
+        "char_linnai2"
+      ],
+      "canonical": "char_linnai",
+      "class": "Linnai",
+      "role": 1,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_moning",
+        "char_moning_new"
+      ],
+      "canonical": "char_moning",
+      "class": "Mornye",
+      "role": 2,
+      "element": 2,
+      "buff_time": 28
+    },
+    {
+      "templates": [
+        "char_aemeath"
+      ],
+      "canonical": "char_aemeath",
+      "class": "Aemeath",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_xigelika"
+      ],
+      "canonical": "char_xigelika",
+      "class": "Xigelika",
+      "role": 0,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_luhesi"
+      ],
+      "canonical": "char_luhesi",
+      "class": "Luhesi",
+      "role": 0,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_hiyuki"
+      ],
+      "canonical": "char_hiyuki",
+      "class": "Hiyuki",
+      "role": 0,
+      "element": 3,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lucilla"
+      ],
+      "canonical": "char_lucilla",
+      "class": "Lucilla",
+      "role": 1,
+      "element": 3,
+      "target_box_short_combat_check": true,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lucy"
+      ],
+      "canonical": "char_lucy",
+      "class": "Lucy",
+      "role": 0,
+      "element": 0,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_rebecca"
+      ],
+      "canonical": "char_rebecca",
+      "class": "Rebecca",
+      "role": 1,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_qingxiao"
+      ],
+      "canonical": "char_qingxiao",
+      "class": "Qingxiao",
+      "role": 0,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_jingran"
+      ],
+      "canonical": "char_jingran",
+      "class": "JingRan",
+      "role": 0,
+      "element": 2,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_hsin"
+      ],
+      "canonical": "char_hsin",
+      "class": "Hsin",
+      "role": 0,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_aalto"
+      ],
+      "canonical": "char_aalto",
+      "class": "Aalto",
+      "role": 1,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lingyang"
+      ],
+      "canonical": "char_lingyang",
+      "class": "Lingyang",
+      "role": 0,
+      "element": 3,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lumi"
+      ],
+      "canonical": "char_lumi",
+      "class": "Lumi",
+      "role": 1,
+      "element": 1,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_yangyang"
+      ],
+      "canonical": "char_yangyang",
+      "class": "Yangyang",
+      "role": 1,
+      "element": 4,
+      "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_suoming"
+      ],
+      "canonical": "char_suoming",
+      "class": "Suoming",
+      "role": 1,
+      "element": 1,
+      "buff_time": 8
+    }
+  ]
+}

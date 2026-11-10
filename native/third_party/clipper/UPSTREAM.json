@@ -1,0 +1,14 @@
+{
+  "repo": "https://github.com/fonttools/pyclipper",
+  "commit": "f998920369565dca56d346bb30c5741e273f0b9b",
+  "files": [
+    {
+      "name": "clipper.cpp",
+      "sha256": "5C642A3668311701F72572443AA42C1A981EDB037298EFC015166D9D90BE0755"
+    },
+    {
+      "name": "clipper.hpp",
+      "sha256": "734EBA9DC9D399089B2B467017074BD24728A1B9E64C7429E827806ED10E54CC"
+    }
+  ]
+}

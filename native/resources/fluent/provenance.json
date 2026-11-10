@@ -1,0 +1,565 @@
+{
+  "source": "Retained OKWW Enhanced DualPC personal UI / PySide6 Fluent Widgets 1.11.3",
+  "resource_sha256": "AE8A5BD913058957926C03A01C4F05BE0B5B216B6E30692E4FF8DFC80F0BA214",
+  "sizes": [
+    10,
+    12,
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    60,
+    64
+  ],
+  "icons": [
+    {
+      "name": "Play",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Play_black.svg",
+      "sha256": "D38C8279816045DB012609380493C6AA17E829009364A965D797935015911948",
+      "rotated_180": false
+    },
+    {
+      "name": "Pause",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Pause_black.svg",
+      "sha256": "4D97EC5CBFFCB2E98021C8E01546CB1C38A47DA5CD5C919BD29E0792DFEBEAB8",
+      "rotated_180": false
+    },
+    {
+      "name": "Connect",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Connect_black.svg",
+      "sha256": "FB435554FFB00E877D7C9FBFD3DD3654B0D66346A7680B9030D6868593E13A59",
+      "rotated_180": false
+    },
+    {
+      "name": "StopWatch",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/StopWatch_black.svg",
+      "sha256": "5E0C6D090334185E178E3C9DB6787FE2FE9B91A36B6C343D88094DCE90A02022",
+      "rotated_180": false
+    },
+    {
+      "name": "BookShelf",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/BookShelf_black.svg",
+      "sha256": "0B704037D57275C18D37D263D4EC01C694A2E626FB81B650A2E7F3D384B21F3C",
+      "rotated_180": false
+    },
+    {
+      "name": "Code",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Code_black.svg",
+      "sha256": "3083CE45E39A799219E3613FBA27C726A767F080DF01605216B7C26A7C625E0F",
+      "rotated_180": false
+    },
+    {
+      "name": "Calendar",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Calendar_black.svg",
+      "sha256": "05C5212D8C90FDBCB925906FF1CA9BD55F32FA8E7C083A1D90F45F6801CDB853",
+      "rotated_180": false
+    },
+    {
+      "name": "People",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/People_black.svg",
+      "sha256": "57D480BD67625BDF2B574F7AB64F37674BBCF2EFBCCA17235CEBB86D25D571C8",
+      "rotated_180": false
+    },
+    {
+      "name": "Game",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Game_black.svg",
+      "sha256": "6B5CB23C7CFFBEC3369939D5ACDBDF68E478883A439C3E020FE692B9A2503FD0",
+      "rotated_180": false
+    },
+    {
+      "name": "Info",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Info_black.svg",
+      "sha256": "D270C1687BBD84720F89D8DCFE4EB0804B97CDE95FFEE69693924E1D581057FF",
+      "rotated_180": false
+    },
+    {
+      "name": "Sync",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Sync_black.svg",
+      "sha256": "00B65E066A49FE5CA9F7CE65BA9A636FC9B71843BBC59974E517942860FAB27F",
+      "rotated_180": false
+    },
+    {
+      "name": "Ringer",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Ringer_black.svg",
+      "sha256": "92ED7301E21182BE5163E1DA2F60042D7AB47AD8EFFFAA2B221ECBDB5447A2D0",
+      "rotated_180": false
+    },
+    {
+      "name": "Setting",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Setting_black.svg",
+      "sha256": "784D54296EFA5FECE7C383D13319013B27E86DD823195D92AF7196D29CA86734",
+      "rotated_180": false
+    },
+    {
+      "name": "Question",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Question_black.svg",
+      "sha256": "A6D0980BFEA96AC0C26E3433F3786C097938C6DD5DE5F9CD62970C0618720C29",
+      "rotated_180": false
+    },
+    {
+      "name": "Menu",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Menu_black.svg",
+      "sha256": "090D9BAE816510C10A2C6C9250C12FD31C72F63233E2C90DB61831EC83E7D8F4",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronDown",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/ChevronDown_black.svg",
+      "sha256": "636806E0034F287715F1F00C5FE58ED08CA64556482E8E2F5730783330FF5098",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronRight",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/ChevronRight_black.svg",
+      "sha256": "55E957C113BE816D553B8A2455D7C02EFD25A193B44361BC2EE8F7AFF656F060",
+      "rotated_180": false
+    },
+    {
+      "name": "Save",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Save_black.svg",
+      "sha256": "BBE761F01D4764D0337CF867D08102ACF92FDF03BE617B997C29FE0B8D967A50",
+      "rotated_180": false
+    },
+    {
+      "name": "Send",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Send_black.svg",
+      "sha256": "996F1F714494E0895ACEE162E46444BEF29E9DDEFA518883F422927C51AE04BF",
+      "rotated_180": false
+    },
+    {
+      "name": "View",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/View_black.svg",
+      "sha256": "2CD24CE9A1F1AC1164D92233A3CCB42EA2BFFDF8B940D6DAE3343ABBD4A60D4B",
+      "rotated_180": false
+    },
+    {
+      "name": "Cancel",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Cancel_black.svg",
+      "sha256": "AE569D705EDCF4639ED884C1BCBA2431D137768847CC31F9FEF6A334AFF9DF72",
+      "rotated_180": false
+    },
+    {
+      "name": "Link",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Link_black.svg",
+      "sha256": "C0B90A3D7336DCDF8AC609B5269EA2101E29D2E93970A7E843C68582781D91AD",
+      "rotated_180": false
+    },
+    {
+      "name": "Search",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Search_black.svg",
+      "sha256": "AE53B5D0AE3DE59481ECAB1070EC46D68E6C01259DBADA7F6BA7A8E12B61D497",
+      "rotated_180": false
+    },
+    {
+      "name": "Zoom",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Zoom_black.svg",
+      "sha256": "C861757CD41A7F967B2A4FF5BBE4484B909521D4EA3D3D7F93D5A77479CA9892",
+      "rotated_180": false
+    },
+    {
+      "name": "Feedback",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Feedback_black.svg",
+      "sha256": "9D5481B0D83F553EDC25FFB1AE5276E46F4C4EBE0DDA3F33F379487EABBD7194",
+      "rotated_180": false
+    },
+    {
+      "name": "Folder",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Folder_black.svg",
+      "sha256": "EE0E5FA07B280AFC4DC7956CBD138F8E05E94A3352D58E4E1D5F97F64653A42C",
+      "rotated_180": false
+    },
+    {
+      "name": "CommandPrompt",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/CommandPrompt_black.svg",
+      "sha256": "86A627C34EF9CE4E3077A09CEF52BEDEC823677906B71901CF5BF8047F19A0DC",
+      "rotated_180": false
+    },
+    {
+      "name": "Download",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Download_black.svg",
+      "sha256": "7E6B9080942F791FED829272A29CFB8EEA9138ACF787CF67D637E2FBCAA8DA62",
+      "rotated_180": false
+    },
+    {
+      "name": "Share",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Share_black.svg",
+      "sha256": "0773A9DA6354F7095B006B309AEDB3CFE4506187D9B5561CFD58C291FAA57DBB",
+      "rotated_180": false
+    },
+    {
+      "name": "Add",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Add_black.svg",
+      "sha256": "4E1372E63E6CBE166ECD84B5D94B2BF8B49922EB01AC5166FEEB83C98C9C7FD7",
+      "rotated_180": false
+    },
+    {
+      "name": "Return",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Return_black.svg",
+      "sha256": "2CAC5669180807F13CC29CCCB4689780CF41B84173CD6B01053F68DD32AF1E7C",
+      "rotated_180": false
+    },
+    {
+      "name": "Delete",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Delete_black.svg",
+      "sha256": "D6346BDA417D8230699B32801665FFDDB3C8EEC5E4CD913212DA18A93959A7F5",
+      "rotated_180": false
+    },
+    {
+      "name": "GitHub",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/GitHub_black.svg",
+      "sha256": "7A0DD11E373830A51A565DE9FED4A985707C67CCD390F9AE4946A152303EA676",
+      "rotated_180": false
+    },
+    {
+      "name": "Robot",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Robot_black.svg",
+      "sha256": "A8019F8F0228A5CA2C8B790E2DEB8EB77D2A273B08C9260A1F8CEFE5DFE7BB9F",
+      "rotated_180": false
+    },
+    {
+      "name": "Brush",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Brush_black.svg",
+      "sha256": "AF07A7B073D18E73CB4A9245EDCA3FE3B8C7AF7862B8D003A9F8614D23170FB0",
+      "rotated_180": false
+    },
+    {
+      "name": "Language",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Language_black.svg",
+      "sha256": "6CD1D38CD0EF7AEFFBF290011A67CA6B05FFE26D7EF7CD46EEF5B3E3694BF736",
+      "rotated_180": false
+    },
+    {
+      "name": "Close",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/Close_black.svg",
+      "sha256": "4D55E98AC7D72AEA226544ACFBB1F5DB2798D265B0F420AC769157B2753148EC",
+      "rotated_180": false
+    },
+    {
+      "name": "Stop",
+      "theme": "light",
+      "original": "vendor/ok-script/ok/ui/qt/qss/light/stop.svg",
+      "sha256": "787017259D1B55A98300B303FADDA466A21C30D130EE632CEBD5D39ACC1A64A5",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronUp",
+      "theme": "light",
+      "original": ":/qfluentwidgets/images/icons/ChevronDown_black.svg",
+      "sha256": "636806E0034F287715F1F00C5FE58ED08CA64556482E8E2F5730783330FF5098",
+      "rotated_180": true
+    },
+    {
+      "name": "Play",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Play_white.svg",
+      "sha256": "671A77BF8557FBCA252E9C676EA0697AED1CFC59BF29C938419BF808F2422CA5",
+      "rotated_180": false
+    },
+    {
+      "name": "Pause",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Pause_white.svg",
+      "sha256": "B608C023103DF90877A69C5F166C009A28A8077150C32F957C159673A896BC8B",
+      "rotated_180": false
+    },
+    {
+      "name": "Connect",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Connect_white.svg",
+      "sha256": "92D0E4E05569AF2384919EA84033B1B3E5C7AA6675C4DC416165D3AA1FB24A8C",
+      "rotated_180": false
+    },
+    {
+      "name": "StopWatch",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/StopWatch_white.svg",
+      "sha256": "310B2247A640A45F66EF174E38E561A07574F7803BA60D66A797418C106AAB61",
+      "rotated_180": false
+    },
+    {
+      "name": "BookShelf",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/BookShelf_white.svg",
+      "sha256": "67369CB132DE6AB7149B2F1321DD63067C593223B8641A65AAFEE293F6425946",
+      "rotated_180": false
+    },
+    {
+      "name": "Code",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Code_white.svg",
+      "sha256": "95F462D7D7D1D24AC6A71842BE171155D7B35369BBE1C609750809D0754963D5",
+      "rotated_180": false
+    },
+    {
+      "name": "Calendar",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Calendar_white.svg",
+      "sha256": "8C00895264639E212722FCAFDA1631827AAB2B43A5050C2FEF9DF792C7F00917",
+      "rotated_180": false
+    },
+    {
+      "name": "People",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/People_white.svg",
+      "sha256": "BFF23C0462050DB32F8AB8D115641D5456B19D0D063D754F72FE54C486A5A150",
+      "rotated_180": false
+    },
+    {
+      "name": "Game",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Game_white.svg",
+      "sha256": "9621126B67F6729FFFC294EB282A77BE3ED51E622AEB0FCA54726A169B6FD3DA",
+      "rotated_180": false
+    },
+    {
+      "name": "Info",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Info_white.svg",
+      "sha256": "CB9096C7BFA05603E5EEFE3E331F7C3D339CF5332287389446BDEE53778E63D4",
+      "rotated_180": false
+    },
+    {
+      "name": "Sync",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Sync_white.svg",
+      "sha256": "0EBAA4DB935867958844970410B43A8F641DB9B73EEF87007D629338F02C33A3",
+      "rotated_180": false
+    },
+    {
+      "name": "Ringer",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Ringer_white.svg",
+      "sha256": "05F610094D79A3850F686DA8892B72F95148977BF31005FF7CF07221FB8D4DFE",
+      "rotated_180": false
+    },
+    {
+      "name": "Setting",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Setting_white.svg",
+      "sha256": "37BA3A174BA74167FA78EACEE1AE612E9DF5BE5C18F78833C8F28F9A0FB74D89",
+      "rotated_180": false
+    },
+    {
+      "name": "Question",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Question_white.svg",
+      "sha256": "C46201B937DD98B5A2E973887B1F24DE2766336E6D6FAF95C4ED2C89230AFD3C",
+      "rotated_180": false
+    },
+    {
+      "name": "Menu",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Menu_white.svg",
+      "sha256": "B886947C5894D610ED0761FD66BC37A304E6B1BCE1DA5F91F7E7FE5C201C97BF",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronDown",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/ChevronDown_white.svg",
+      "sha256": "00C3973C35FCF37E7BD47D44A8370C6A49248315935A734750B12132D0198D39",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronRight",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/ChevronRight_white.svg",
+      "sha256": "D9B5CFFF3A8C090D71DA53EE7970D6112DE5B8BF083DCFCFE3CDD3448D72DB28",
+      "rotated_180": false
+    },
+    {
+      "name": "Save",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Save_white.svg",
+      "sha256": "1B78CCC88EAC0BDD3083A03488EB405A66EF87C1D356EB55ED2E0258B2F57F1F",
+      "rotated_180": false
+    },
+    {
+      "name": "Send",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Send_white.svg",
+      "sha256": "474873FDB0F071C82D654D0466C62BA87AC2697592D2C293EBA0E9C1CD7BC9F8",
+      "rotated_180": false
+    },
+    {
+      "name": "View",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/View_white.svg",
+      "sha256": "8AEFBA6EAE99262C95535D62CEC370BB5FF11128DE30674902B0D600BCB11E80",
+      "rotated_180": false
+    },
+    {
+      "name": "Cancel",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Cancel_white.svg",
+      "sha256": "AFE208575064FB4A405C9F82DD68E0BC0057311A624007224AC7C35E13F61A02",
+      "rotated_180": false
+    },
+    {
+      "name": "Link",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Link_white.svg",
+      "sha256": "B136A144273530418B585222FDF724CA3CDD144E8F8A798C0ED2BF2A73FE39E6",
+      "rotated_180": false
+    },
+    {
+      "name": "Search",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Search_white.svg",
+      "sha256": "4DBE50387AC18386678AA0A45B5519DFC57111BAA07A7E7DE99C786B7DEFFDB8",
+      "rotated_180": false
+    },
+    {
+      "name": "Zoom",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Zoom_white.svg",
+      "sha256": "C55678A9A9304864D880C60556BDFC92518C0011499D0D2E218F4269E0B18119",
+      "rotated_180": false
+    },
+    {
+      "name": "Feedback",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Feedback_white.svg",
+      "sha256": "EC552F571E896970394024675D11521B04E39437C339CD0346CB2332E79AD591",
+      "rotated_180": false
+    },
+    {
+      "name": "Folder",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Folder_white.svg",
+      "sha256": "51D261BFF224A57A6FC6D22F9C80445E51C167F21D676DD4C07659900FE00A77",
+      "rotated_180": false
+    },
+    {
+      "name": "CommandPrompt",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/CommandPrompt_white.svg",
+      "sha256": "2116E84CA1A4565384BFC98D8A2DEB0955D2D286F2F58334353F09C056F65FC0",
+      "rotated_180": false
+    },
+    {
+      "name": "Download",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Download_white.svg",
+      "sha256": "89AE3CBB9557749BC5BFF9ED7C293A29B386DD3D05F4F06159AF8E4D77BC7030",
+      "rotated_180": false
+    },
+    {
+      "name": "Share",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Share_white.svg",
+      "sha256": "8B080DB85F6B883947D5CDA607D101C0C761FC2AC48A5D53135A613B995880D7",
+      "rotated_180": false
+    },
+    {
+      "name": "Add",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Add_white.svg",
+      "sha256": "A4AAB597C069EFEBAA8EEEE99F6EDC6E0C4411DB766A3AFD1ABEE58281B0BA89",
+      "rotated_180": false
+    },
+    {
+      "name": "Return",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Return_white.svg",
+      "sha256": "EDE0EA18411CAB0B925D63FABD985FC0706565DC538DE0C7D4831BA194FD9FF6",
+      "rotated_180": false
+    },
+    {
+      "name": "Delete",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Delete_white.svg",
+      "sha256": "0E6562A6CF561C310112BB70CB253D37FD07AC7ECED5F7F42149B1AC56C6CE2C",
+      "rotated_180": false
+    },
+    {
+      "name": "GitHub",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/GitHub_white.svg",
+      "sha256": "FAB00C2D598C56CB4838603981B66E3490EBE27EA56FB188120A7E6D4CA46970",
+      "rotated_180": false
+    },
+    {
+      "name": "Robot",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Robot_white.svg",
+      "sha256": "2C9F8214182B49C1FE5D1A9AF7CE64C72D6A87DFFD9A4C0519EDF3062F1B9EF2",
+      "rotated_180": false
+    },
+    {
+      "name": "Brush",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Brush_white.svg",
+      "sha256": "9E9FA506F8E9526083A73319DB168DEDD4F34CA5DA2030D5BC056F6F631F3196",
+      "rotated_180": false
+    },
+    {
+      "name": "Language",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Language_white.svg",
+      "sha256": "E5D75C1FEAE765A66C5A6AA72897B34C70B1387474D1BE2827C636DDAA6D4EB4",
+      "rotated_180": false
+    },
+    {
+      "name": "Close",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/Close_white.svg",
+      "sha256": "14A60451F23E1BF73A113011EF76E4BB5BA6CBBEEDD661B74017E425D4143642",
+      "rotated_180": false
+    },
+    {
+      "name": "Stop",
+      "theme": "dark",
+      "original": "vendor/ok-script/ok/ui/qt/qss/dark/stop.svg",
+      "sha256": "61001857784819DDA8862FEF00666F4457DCBEE00FBB1C677746F01646F6E00F",
+      "rotated_180": false
+    },
+    {
+      "name": "ChevronUp",
+      "theme": "dark",
+      "original": ":/qfluentwidgets/images/icons/ChevronDown_white.svg",
+      "sha256": "00C3973C35FCF37E7BD47D44A8370C6A49248315935A734750B12132D0198D39",
+      "rotated_180": true
+    }
+  ],
+  "python_required_at_runtime": false
+}

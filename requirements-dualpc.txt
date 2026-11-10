@@ -1,0 +1,13 @@
+# Keep the framework snapshot in vendor pinned; upgrade it independently.
+-e ./vendor/ok-script[qt,ocr]
+numpy>=2.2,<2.6
+opencv-python>=4.10,<6
+openvino==2026.4.1
+onnxocr-ppocrv5==0.0.22
+PySide6==6.12.0
+PySide6-Fluent-Widgets==1.11.3
+pyappify==1.0.13
+pytest>=9,<10
+packaging>=25
+pyserial==3.5
+cv2-enumerate-cameras==1.4.0

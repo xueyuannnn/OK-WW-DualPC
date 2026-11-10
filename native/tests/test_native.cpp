@@ -1,0 +1,344 @@
+#include "backend.hpp"
+#include <QTcpSocket>
+#include <QtTest>
+using namespace okww;
+class NativeTests : public QObject {
+    Q_OBJECT
+  private slots:
+    void boxMoveTestRetainsArmedInputAndHeldControls_data() {
+        QTest::addColumn<QString>("protocol");
+        QTest::newRow("KMBox Net") << QString("kmbox_net");
+        QTest::newRow("MAKCU") << QString("makcu_serial");
+    }
+    void boxMoveTestRetainsArmedInputAndHeldControls() {
+        QFETCH(QString, protocol);
+        Backend backend(false);
+        auto config = Config::defaults();
+        config.set("kmbox.protocol", protocol);
+        config.set("kmbox.counts_per_pixel_x", 1.25);
+        config.set("kmbox.counts_per_pixel_y", 1.5);
+        backend.start(config, true);
+        backend.arm(true);
+        backend.nativeCommand({{"op", "key"}, {"code", 4}, {"down", true}});
+        backend.nativeCommand({{"op", "key"}, {"code", 0xe1}, {"down", true}});
+        backend.nativeCommand({{"op", "button"}, {"name", "left"}, {"down", true}});
+        const auto before = backend.snapshot()["box"].toObject();
+        const auto result = backend.testMove();
+        QCOMPARE(result["counts_x"].toInt(), 50);
+        QCOMPARE(result["counts_y"].toInt(), 60);
+        QVERIFY(result["dry_run"].toBool());
+        QVERIFY(result["armed"].toBool());
+        const auto after = backend.snapshot();
+        QVERIFY(after["running"].toBool());
+        QVERIFY(after["armed"].toBool());
+        for (const auto &field : {"keys", "modifiers", "buttons"})
+            QCOMPARE(after["box"].toObject()[field], before[field]);
+        QVERIFY(backend.heartbeat());
+        backend.nativeCommand({{"op", "move"}, {"x", 5}, {"y", -3}});
+        backend.nativeCommand({{"op", "key"}, {"code", 4}, {"down", false}});
+        backend.nativeCommand({{"op", "button"}, {"name", "left"}, {"down", false}});
+        backend.arm(false);
+        QVERIFY(!backend.testMove()["armed"].toBool());
+        backend.stop();
+        QVERIFY_EXCEPTION_THROWN(backend.testMove(), std::runtime_error);
+    }
+    void previewReductionPreservesThinLines_data() {
+        QTest::addColumn<int>("format");
+        for (auto format : {PixelFormat::BGR24, PixelFormat::BGRA32, PixelFormat::NV12,
+                            PixelFormat::YUY2, PixelFormat::UYVY, PixelFormat::I420, PixelFormat::MJPG})
+            QTest::newRow(qPrintable(formatName(format))) << int(format);
+    }
+    void previewReductionPreservesThinLines() {
+        QFETCH(int, format);
+        Frame frame;
+        frame.width = 8;
+        frame.height = 4;
+        frame.format = PixelFormat(format);
+        const int channels = frame.format == PixelFormat::BGR24 ? 3
+            : frame.format == PixelFormat::BGRA32 ? 4
+            : frame.format == PixelFormat::YUY2 || frame.format == PixelFormat::UYVY ? 2 : 1;
+        frame.stride = frame.width * channels;
+        const bool planar = frame.format == PixelFormat::NV12 || frame.format == PixelFormat::I420;
+        frame.bytes = QByteArray(frame.stride * frame.height * (planar ? 3 : 2) / 2, char(128));
+        QImage image(frame.width, frame.height, QImage::Format_RGB32);
+        for (int y = 0; y < frame.height; ++y)
+            for (int x = 0; x < frame.width; ++x) {
+                const int gray = x % 2 ? 255 : 0;
+                image.setPixelColor(x, y, QColor(gray, gray, gray));
+                auto pixel = frame.bytes.data() + y * frame.stride + x * channels;
+                if (channels >= 3) {
+                    for (int c = 0; c < 3; ++c) pixel[c] = char(gray);
+                    if (channels == 4) pixel[3] = char(255);
+                } else pixel[frame.format == PixelFormat::UYVY ? 1 : 0] = char(x % 2 ? 235 : 16);
+            }
+        if (frame.format == PixelFormat::MJPG) {
+            frame.bytes.clear();
+            QBuffer buffer(&frame.bytes);
+            QVERIFY(buffer.open(QIODevice::WriteOnly));
+            QVERIFY(image.save(&buffer, "JPG", 100));
+        }
+        const auto original = frame.bytes;
+        const auto preview = previewImage(frame, {4, 2});
+        QCOMPARE(preview.size(), QSize(4, 2));
+        // Both halves of each one-pixel stripe must contribute. Nearest-neighbour
+        // sampling loses all white strokes and returns a completely black image.
+        for (int y = 0; y < preview.height(); ++y)
+            for (int x = 0; x < preview.width(); ++x) {
+                const auto gray = preview.pixelColor(x, y);
+                QVERIFY(gray.red() >= 120 && gray.red() <= 136);
+                QVERIFY(gray.green() >= 120 && gray.green() <= 136);
+                QVERIFY(gray.blue() >= 120 && gray.blue() <= 136);
+            }
+        QCOMPARE(frame.bytes, original);
+    }
+    void previewRetainsNativeDetailAndLeavesEnlargementToTheWindow() {
+        Frame frame;
+        frame.width = 1920; frame.height = 1080; frame.stride = 1920 * 3;
+        frame.format = PixelFormat::BGR24;
+        frame.bytes = QByteArray(frame.stride * frame.height, char(0));
+        for (int y = 0; y < frame.height; ++y)
+            for (int x = 0; x < frame.width; ++x)
+                for (int c = 0; c < 3; ++c)
+                    frame.bytes[y * frame.stride + x * 3 + c] = char(x % 2 ? 255 : 0);
+        const auto native = previewImage(frame, {1920, 1080});
+        const auto larger = previewImage(frame, {3840, 2160});
+        QCOMPARE(native.size(), QSize(1920, 1080));
+        QCOMPARE(larger.size(), native.size());
+        QCOMPARE(larger, native);
+        QCOMPARE(native.pixelColor(1500, 800), QColor(Qt::black));
+        QCOMPARE(native.pixelColor(1501, 800), QColor(Qt::white));
+        QVERIFY(previewImage(frame, {}).isNull());
+    }
+    void deviceDetectionReadsEveryCardsModesAndContinuesAfterDriverFailure() {
+        auto config = Config::defaults();
+        config.set("capture.backend", "DSHOW");
+        const auto original = config.json;
+        QString backend;
+        QJsonArray requests;
+        const auto result = captureCapabilities(config,
+            [&](const QString &selected) {
+                backend = selected;
+                return std::vector<Device>{{0, "HDMI A", "card-a"}, {1, "Offline card", "card-b"},
+                                           {2, "HDMI C", "card-c"}};
+            },
+            [&](const Config &selected) {
+                requests.append(selected.json);
+                if (selected.s("capture.device_path") == "card-b")
+                    fail("fixture: device unavailable");
+                return selected.n("capture.device_index") == 0
+                    ? std::vector<Mode>{{1920, 1080, 120, "NV12"}, {1920, 1080, 240, "NV12"}}
+                    : std::vector<Mode>{{1280, 720, 60, "YUY2"}};
+            });
+        QCOMPARE(backend, QString("DSHOW"));
+        QCOMPARE(requests.size(), 3);
+        QCOMPARE(result.size(), 3);
+        QCOMPARE(result[0].toObject()["modes"].toArray().size(), 2);
+        QVERIFY(result[1].toObject()["modes"].toArray().isEmpty());
+        QVERIFY(result[1].toObject()["error"].toString().contains("unavailable"));
+        QCOMPARE(result[2].toObject()["modes"].toArray()[0].toObject()["fourcc"].toString(), QString("YUY2"));
+        QCOMPARE(Config{requests[2].toObject()}.s("capture.device_name"), QString("HDMI C"));
+        QCOMPARE(Config{requests[2].toObject()}.s("capture.device_path"), QString("card-c"));
+        QCOMPARE(config.json, original);
+    }
+    void previewKeepsPublishedFramesImmutableAndHonorsPaddedRows() {
+        Frame frame;
+        frame.width = 4; frame.height = 2; frame.stride = 16;
+        frame.format = PixelFormat::BGR24; frame.bottomUp = true;
+        frame.bytes = QByteArray(32, char(0));
+        for (int row = 0; row < 2; ++row)
+            for (int x = 0; x < 4; ++x) {
+                auto p = frame.bytes.data() + row * 16 + x * 3;
+                p[0] = char(20 + row * 80); p[1] = char(x * 20); p[2] = char(150);
+            }
+        const auto original = frame.bytes;
+        const auto expected = frameImage(frame);
+        const auto preview = previewImage(frame, {4, 2});
+        QCOMPARE(frame.bytes, original);
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 4; ++x)
+                QCOMPARE(preview.pixelColor(x, y), expected.pixelColor(x, y));
+        frame.format = PixelFormat::NV12; frame.width = 4; frame.height = 2; frame.stride = 8;
+        frame.bottomUp = false; frame.bytes = QByteArray(24, char(128));
+        for (int row = 0; row < 2; ++row)
+            for (int x = 0; x < 4; ++x) frame.bytes[row * 8 + x] = char(60 + x * 30);
+        const auto reference = frameImage(frame);
+        const auto fast = previewImage(frame, {4, 2});
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 4; ++x) {
+                auto a = reference.pixelColor(x, y), b = fast.pixelColor(x, y);
+                QVERIFY(std::abs(a.red() - b.red()) <= 2);
+                QVERIFY(std::abs(a.green() - b.green()) <= 2);
+                QVERIFY(std::abs(a.blue() - b.blue()) <= 2);
+            }
+    }
+    void matchingUdpAcknowledgements() {
+        WSADATA data;QCOMPARE(WSAStartup(MAKEWORD(2,2),&data),0);
+        SOCKET server=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);QVERIFY(server!=INVALID_SOCKET);
+        sockaddr_in address{};address.sin_family=AF_INET;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+        QCOMPARE(bind(server,reinterpret_cast<sockaddr*>(&address),sizeof(address)),0);
+        int size=sizeof(address);getsockname(server,reinterpret_cast<sockaddr*>(&address),&size);
+        DWORD timeout=50;setsockopt(server,SOL_SOCKET,SO_RCVTIMEO,reinterpret_cast<char*>(&timeout),sizeof(timeout));
+        std::atomic<bool> stop{false},drop{false};std::atomic<int> dropped{0};
+        std::thread peer([&]{while(!stop){char bytes[2048];sockaddr_in client{};int length=sizeof(client);int n=recvfrom(server,bytes,sizeof(bytes),0,reinterpret_cast<sockaddr*>(&client),&length);if(n<16)continue;
+            if(drop){++dropped;continue;}
+            QByteArray stale(bytes,16);qToLittleEndian<uint32_t>(qFromLittleEndian<uint32_t>(stale.constData()+8)+1,stale.data()+8);
+            sendto(server,stale.constData(),16,0,reinterpret_cast<sockaddr*>(&client),length);
+            sendto(server,bytes,16,0,reinterpret_cast<sockaddr*>(&client),length);
+        }});
+        bool success=false,timeoutReported=false;int packets=0;
+        {
+            auto config=Config::defaults();config.set("kmbox.dry_run",false);config.set("kmbox.host","127.0.0.1");config.set("kmbox.port",ntohs(address.sin_port));config.set("kmbox.uuid","12345678");config.set("kmbox.timeout",.06);
+            Controller box(config);try{box.connect();box.move(12,-34);success=box.connected();drop=true;try{box.move(1,2);}catch(const std::runtime_error &){timeoutReported=true;}packets=dropped.load();drop=false;}catch(...){}
+        }
+        stop=true;peer.join();closesocket(server);WSACleanup();
+        QVERIFY(success);QVERIFY(timeoutReported);QCOMPARE(packets,1);
+    }
+    void settingsRoundTrip() {
+        QTemporaryDir dir;
+        auto c = Config::defaults();
+        c.set("capture.device_path", "unique-path");
+        c.set("kmbox.counts_per_pixel_x", 1.25);
+        c.json["extension"] = QJsonObject{{"retained", true}};
+        c.save(dir.path() + "/test.json");
+        auto copy = Config::load(dir.path() + "/test.json");
+        QCOMPARE(copy.s("capture.device_path"), QString("unique-path"));
+        QCOMPARE(copy.d("kmbox.counts_per_pixel_x"), 1.25);
+        QVERIFY(copy.json["extension"].toObject()["retained"].toBool());
+    }
+    void invalidSettings() {
+        auto c = Config::defaults();
+        c.set("capture.fps", 0);
+        QVERIFY_EXCEPTION_THROWN(c.validateCapture(), std::runtime_error);
+        c = Config::defaults();
+        c.set("kmbox.dry_run", false);
+        QVERIFY_EXCEPTION_THROWN(c.validateBox(), std::runtime_error);
+    }
+    void netReports() {
+        auto c = Config::defaults();
+        Controller box(c);
+        box.connect();
+        box.key(0xe1, true);
+        box.key(4, true);
+        auto h = box.history();
+        auto p = h.back();
+        QCOMPARE(p.size(), 28);
+        QCOMPARE(uint8_t(p[16]), uint8_t(2));
+        QCOMPARE(uint8_t(p[18]), uint8_t(4));
+        box.move(-40, 40);
+        p = box.history().back();
+        QCOMPARE(p.size(), 72);
+        QCOMPARE(qFromLittleEndian<int32_t>(p.constData() + 20), -40);
+        QCOMPARE(qFromLittleEndian<int32_t>(p.constData() + 24), 40);
+        box.release();
+        auto s = box.state();
+        QCOMPARE(s["buttons"].toInt(), 0);
+        QCOMPARE(s["modifiers"].toInt(), 0);
+        QVERIFY(s["keys"].toArray().isEmpty());
+    }
+    void unsupportedProtocolsNeverConnect() {
+        for (const auto &protocol : {"ch9329", "kvm_card_mini", "esp32_legacy", "unknown"}) {
+            for (bool dryRun : {false, true}) {
+                auto config = Config::defaults();
+                config.set("kmbox.protocol", protocol);
+                config.set("kmbox.dry_run", dryRun);
+                Controller box(config);
+                QVERIFY_EXCEPTION_THROWN(box.connect(), std::runtime_error);
+                QVERIFY(!box.connected());
+                QVERIFY(box.history().isEmpty());
+            }
+        }
+    }
+    void supportedProfilesIgnoreRetiredUsbFields() {
+        for (const auto &protocol : {"kmbox_net", "makcu_serial"}) {
+            QTemporaryDir data;
+            auto config = Config::defaults();
+            config.set("kmbox.protocol", protocol);
+            config.set("kmbox.serial_port", "COM_TEST");
+            config.set("kmbox.hid_vid", 16701);
+            config.set("kmbox.hid_pid", 8455);
+            config.set("kmbox.hid_path", "retired-device");
+            config.save(data.path() + "/dualpc.json");
+            auto loaded = Config::load(data.path() + "/dualpc.json");
+            QCOMPARE(loaded.s("kmbox.protocol"), QString(protocol));
+            QCOMPARE(loaded.s("kmbox.serial_port"), QString("COM_TEST"));
+            QVERIFY(loaded.get("kmbox.hid_path").isUndefined());
+            QVERIFY(loaded.get("kmbox.hid_vid").isUndefined());
+            Controller box(loaded);
+            box.connect();
+            QVERIFY(!box.state()["absolute"].toBool());
+            QVERIFY_EXCEPTION_THROWN(box.absolute(20, 20, 1920, 1080), std::runtime_error);
+        }
+    }
+    void makcuReports() {
+        auto c = Config::defaults();
+        c.set("kmbox.protocol", "makcu_serial");
+        Controller box(c);
+        box.connect();
+        QVERIFY(box.state()["keyboard"].toBool());
+        box.key(4, true);
+        box.button("left", true);
+        box.release();
+        auto p = box.history().back();
+        QVERIFY(p.contains("km.up(4)\r\n"));
+        QVERIFY(p.contains("km.left(0)\r\n"));
+        QVERIFY(p.endsWith("km.version()\r\n"));
+    }
+    void bottomUpPreview() {
+        Frame f;
+        f.width = 2;
+        f.height = 2;
+        f.stride = 8;
+        f.format = PixelFormat::BGR24;
+        f.bottomUp = true;
+        f.bytes = QByteArray(16, '\0');
+        f.bytes[2] = char(255);
+        f.bytes[8] = char(255);
+        auto image = frameImage(f);
+        QCOMPARE(image.pixelColor(0, 0), QColor(0, 0, 255));
+        QCOMPARE(image.pixelColor(0, 1), QColor(255, 0, 0));
+        auto preview = previewImage(f, QSize(100, 50));
+        QCOMPARE(preview.size(), QSize(2, 2)); // Enlarge only at presentation, retaining original pixels.
+    }
+    void yuvPreview() {
+        Frame f;
+        f.width = 2;
+        f.height = 2;
+        f.stride = 2;
+        f.format = PixelFormat::NV12;
+        f.bytes = QByteArray(6, char(128));
+        for (int i = 0; i < 4; ++i)
+            f.bytes[i] = 16;
+        auto image = frameImage(f);
+        QCOMPARE(image.pixelColor(0, 0), QColor(0, 0, 0));
+    }
+    void nativeIpcAndWatchdog() {
+        Backend backend;
+        auto c = Config::defaults();
+        backend.start(c, true);
+        QTcpSocket socket;
+        socket.connectToHost("127.0.0.1", quint16(backend.port()));
+        QVERIFY(socket.waitForConnected(2000));
+        auto request = [&](QJsonObject q) {
+            q["token"] = backend.token();
+            socket.write(QJsonDocument(q).toJson(QJsonDocument::Compact) + '\n');
+            socket.waitForBytesWritten(1000);
+            if (!socket.canReadLine())
+                socket.waitForReadyRead(2000);
+            return QJsonDocument::fromJson(socket.readLine()).object();
+        };
+        QVERIFY(request({{"op", "key"}, {"code", 4}, {"down", true}})["ok"].toBool() == false);
+        backend.arm(true);
+        QVERIFY(backend.heartbeat());
+        QVERIFY(request({{"op", "key"}, {"code", 4}, {"down", true}})["ok"].toBool());
+        auto frame = request({{"op", "frame"}})["result"].toObject();
+        QVERIFY(frame["available"].toBool());
+        QCOMPARE(frame["size"].toInt(), 1280 * 720 * 3);
+        QTest::qWait(1750);
+        auto state = backend.snapshot();
+        QVERIFY(!state["armed"].toBool());
+        QVERIFY(!backend.heartbeat());
+        QVERIFY(state["box"].toObject()["keys"].toArray().isEmpty());
+    }
+};
+QTEST_GUILESS_MAIN(NativeTests)
+#include "test_native.moc"

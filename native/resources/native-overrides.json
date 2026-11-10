@@ -1,0 +1,271 @@
+{
+  "globals": {
+    "Basic Options": {
+      "remove": [
+        "Use DirectML",
+        "Game Package"
+      ],
+      "fields": {
+        "Trigger Interval": {
+          "minimum": 1,
+          "maximum": 60000
+        }
+      }
+    },
+    "Monthly Card Config": {
+      "fields": {
+        "Monthly Card Time": {
+          "minimum": 1,
+          "maximum": 24,
+          "description": "本机时间，1 到 24 点；24 表示午夜。弹窗时段会在空闲步骤等待领取，战斗中不强行打断连招。"
+        }
+      }
+    },
+    "Notification": {
+      "fields": {
+        "System Notification": {
+          "label": "系统通知"
+        },
+        "Discord Notification": {
+          "label": "Discord 通知"
+        },
+        "Discord Webhook": {
+          "label": "Webhook 地址",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "Discord Notification": true
+          },
+          "secret": true
+        },
+        "Telegram Notification": {
+          "label": "Telegram 通知"
+        },
+        "Telegram Bot Token": {
+          "label": "机器人令牌",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "Telegram Notification": true
+          },
+          "secret": true
+        },
+        "Telegram Chat ID": {
+          "label": "接收聊天 ID",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "Telegram Notification": true
+          },
+          "secret": false
+        },
+        "Enterprise WeChat Webhook Notification": {
+          "label": "企业微信机器人"
+        },
+        "Enterprise WeChat Webhook URL": {
+          "label": "Webhook 地址",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "Enterprise WeChat Webhook Notification": true
+          },
+          "secret": true
+        },
+        "QQ Bot API Notification": {
+          "label": "QQ 频道机器人"
+        },
+        "QQ Bot API App ID": {
+          "label": "应用 ID",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "QQ Bot API Notification": true
+          },
+          "secret": false
+        },
+        "QQ Bot API Token": {
+          "label": "机器人令牌",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "QQ Bot API Notification": true
+          },
+          "secret": true
+        },
+        "QQ Bot API Channel ID": {
+          "label": "接收频道 ID",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "QQ Bot API Notification": true
+          },
+          "secret": false
+        },
+        "SMTP Notification": {
+          "label": "邮件通知"
+        },
+        "SMTP Host": {
+          "label": "邮件服务器",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false
+        },
+        "SMTP Port": {
+          "label": "端口",
+          "value": 587,
+          "default": 587,
+          "kind": "integer",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "SMTP Username": {
+          "label": "用户名",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false
+        },
+        "SMTP Password": {
+          "label": "密码或授权码",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": true
+        },
+        "SMTP Use TLS": {
+          "label": "使用 TLS 加密",
+          "value": true,
+          "default": true,
+          "kind": "boolean",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false
+        },
+        "SMTP Default Sender": {
+          "label": "发件人邮箱",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false
+        },
+        "SMTP Default Recipient": {
+          "label": "收件人邮箱",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "SMTP Notification": true
+          },
+          "secret": false
+        },
+        "QQ Desktop Notification (Not Reliable)": {
+          "label": "QQ 桌面通知（不稳定）"
+        },
+        "QQ Desktop Nickname": {
+          "label": "接收人的完整昵称",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "QQ Desktop Notification (Not Reliable)": true
+          },
+          "secret": false
+        },
+        "WeChat Desktop Notification (Not Reliable)": {
+          "label": "微信桌面通知（不稳定）"
+        },
+        "WeChat Desktop Nickname": {
+          "label": "接收人的完整昵称",
+          "value": "",
+          "default": "",
+          "kind": "text",
+          "visible_when": {
+            "WeChat Desktop Notification (Not Reliable)": true
+          },
+          "secret": false
+        }
+      }
+    }
+  },
+  "tasks": {
+    "AutoCombatTask": {
+      "remove": [
+        "Check Levitator"
+      ]
+    },
+    "EnhanceEchoTask": {
+      "name": "批量强化声骸",
+      "description_append": "游戏语言需为简体或繁体中文，其他语言无法核对强化词条。"
+    },
+    "DailyTask": {
+      "name": "每日任务（基础）"
+    },
+    "TacetTask2": {
+      "name": "无音区（按次数）"
+    },
+    "DailyTask2": {
+      "name": "每日任务（增强）",
+      "fields": {
+        "Forgery Challenge Count": {
+          "label": "凝素领域次数"
+        },
+        "Tacet Suppression Count": {
+          "label": "无音区次数"
+        },
+        "Simulation Challenge Count": {
+          "label": "模拟领域次数"
+        }
+      }
+    },
+    "SimulationTask": {
+      "name": "模拟领域（清体力）"
+    },
+    "TacetTask": {
+      "name": "无音区（清体力）"
+    },
+    "FarmEchoTask": {
+      "name": "4C 声骸（基础）"
+    },
+    "SimulationTask2": {
+      "name": "模拟领域（按次数）"
+    },
+    "FarmEchoTask2": {
+      "name": "4C 声骸 / 高级材料"
+    },
+    "ForgeryTask": {
+      "name": "凝素领域（清体力）"
+    },
+    "ChangeEchoTask": {
+      "name": "批量修改声骸主属性",
+      "description_append": "仅支持简体中文游戏界面。修改主属性会消耗重构材料。"
+    },
+    "ForgeryTask2": {
+      "name": "凝素领域（按次数）"
+    }
+  }
+}

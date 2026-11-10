@@ -1,0 +1,41 @@
+{
+  "repository": "zzc-tongji/ok-ww-enhanced",
+  "commit": "726b10e65cbeb1303214774664d0277a71b7e18a",
+  "scope": "Five character classes only; original source baseline is retained in UPSTREAM.lock.json",
+  "python_sources": [
+    {
+      "path": "src/char/Aalto.py",
+      "upstream_sha256": "751632d9f5a65e63097b7cf8355ab32f454ad01bb12cb3bac5865036cda44398"
+    },
+    {
+      "path": "src/char/Lingyang.py",
+      "upstream_sha256": "bee7cb3021ca0b21d0163c23208312c9a2daaeb60e4afe915d1d5f06f7d62395"
+    },
+    {
+      "path": "src/char/Lumi.py",
+      "upstream_sha256": "10ab434044fa5f75b56b5fed33e6ae498e9e11467098bfc171e1da74960c3211"
+    },
+    {
+      "path": "src/char/Yangyang.py",
+      "upstream_sha256": "3c250a242c5755a8aad9e38ebec75ca554bcec2168d13166dc4bb1ff71edf7f5"
+    },
+    {
+      "path": "src/char/Suoming.py",
+      "upstream_sha256": "f95ae91f543a491c9ebe840fe1fce4ffe3d020da502e13e7aae6013fd88dd0e2"
+    }
+  ],
+  "template_manifest": "assets/upstream-characters/manifest.json",
+  "python_helper": {
+    "path": "src/char/BaseChar.py",
+    "method": "continues_click_until",
+    "original_methods_unchanged": 88
+  },
+  "native_port": {
+    "path": "native/src/runtime/characters_additional.cpp",
+    "sha256": "65ca3063a39c03af4b80e551f70d5b600bb79d5462889e2a36143b40634fe24f"
+  },
+  "upstream_tests": [
+    "tests/test_suoming.py",
+    "tests/test_suoming_heavy.py"
+  ]
+}

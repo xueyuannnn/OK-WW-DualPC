@@ -1,0 +1,66 @@
+{
+  "repository": "zzc-tongji/ok-ww-enhanced",
+  "commit": "726b10e65cbeb1303214774664d0277a71b7e18a",
+  "templates": [
+    {
+      "label": "char_lingyang",
+      "source_url": "https://raw.githubusercontent.com/zzc-tongji/ok-ww-enhanced/726b10e65cbeb1303214774664d0277a71b7e18a/assets/templates/char_lingyang_2560x1440_2355_304.png",
+      "git_blob": "1aaae1e0193c4681018ac50807e44d76bc732890",
+      "original_sha256": "0f3b362b4006294e2888e6305f7896b68d249dd033572817450f622a033111fd",
+      "original": "upstream-characters/templates/char_lingyang_2560x1440_2355_304.png",
+      "image": "upstream-characters/images/char_lingyang.png",
+      "image_sha256": "2b43a22946661cbde047dbb7fbef149ca0ad1914adabb1453ee2192d4dde6f0c",
+      "reference": [
+        2560,
+        1440
+      ],
+      "bbox": [
+        2355,
+        304,
+        62,
+        52
+      ],
+      "conversion": "Lossless placement at coordinates encoded by upstream filename"
+    },
+    {
+      "label": "char_suoming",
+      "source_url": "https://raw.githubusercontent.com/zzc-tongji/ok-ww-enhanced/726b10e65cbeb1303214774664d0277a71b7e18a/assets/templates/char_suoming_3840x2160_3534_450.png",
+      "git_blob": "a7f90c7a53f17370abed8197b7636353c8133cdf",
+      "original_sha256": "891b93d0d7c0ca59ff2591b8f94125f84fa8dd54ae1bc1f9009067aba8cc791c",
+      "original": "upstream-characters/templates/char_suoming_3840x2160_3534_450.png",
+      "image": "upstream-characters/images/char_suoming.png",
+      "image_sha256": "016ecf6d38b6113beea3f015e00f855c5af62179583181a81bc3be48f2c2d677",
+      "reference": [
+        3840,
+        2160
+      ],
+      "bbox": [
+        3534,
+        450,
+        107,
+        69
+      ],
+      "conversion": "Lossless placement at coordinates encoded by upstream filename"
+    },
+    {
+      "label": "suoming_forte_e",
+      "source_url": "https://raw.githubusercontent.com/zzc-tongji/ok-ww-enhanced/726b10e65cbeb1303214774664d0277a71b7e18a/assets/templates/suoming_forte_e_3840x2160_3209_1893.png",
+      "git_blob": "359696b56fc1b41e90c6c0bee16895ad0f8205d5",
+      "original_sha256": "83d94e48245ceb87267e856e348fb6d3353c9aa35f14d6fb6c3595fc7a730859",
+      "original": "upstream-characters/templates/suoming_forte_e_3840x2160_3209_1893.png",
+      "image": "upstream-characters/images/suoming_forte_e.png",
+      "image_sha256": "3f228630dc6c57915901b99db60ef250afa4cc1090dc2fff6b925362b3cfeb0a",
+      "reference": [
+        3840,
+        2160
+      ],
+      "bbox": [
+        3209,
+        1893,
+        78,
+        74
+      ],
+      "conversion": "Lossless placement at coordinates encoded by upstream filename"
+    }
+  ]
+}

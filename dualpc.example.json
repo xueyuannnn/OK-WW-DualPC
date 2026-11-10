@@ -1,0 +1,35 @@
+{
+  "capture": {
+    "device_index": 0,
+    "backend": "DSHOW",
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "fourcc": "",
+    "crop": null,
+    "output_width": 1920,
+    "output_height": 1080,
+    "stale_after": 0.15,
+    "device_name": "GC573",
+    "ffmpeg_path": "ffmpeg"
+  },
+  "kmbox": {
+    "protocol": "kmbox_net",
+    "host": "",
+    "port": 0,
+    "uuid": "",
+    "timeout": 0.3,
+    "dry_run": true,
+    "desktop_width": 1920,
+    "desktop_height": 1080,
+    "counts_per_pixel_x": 1.0,
+    "counts_per_pixel_y": 1.0,
+    "home_counts": 32767,
+    "home_wait": 0.05,
+    "move_chunk": 512,
+    "move_interval": 0.002,
+    "serial_port": "",
+    "baudrate": 4000000
+  },
+  "game_language": "zh_CN"
+}

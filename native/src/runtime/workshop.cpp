@@ -1,4 +1,5 @@
 #include "workshop.hpp"
+#include "diagnostics.hpp"
 #include <QProcessEnvironment>
 #include <QThread>
 namespace okww::runtime {
@@ -13,6 +14,10 @@ double finiteNumber(QJsonValue value) {
     if (!value.isDouble() || !std::isfinite(value.toDouble())) fail("工坊状态包含无效数值");
     return value.toDouble();
 }
+bool stateBoolean(QJsonValue value) {
+    if (!value.isBool()) fail("工坊状态包含无效开关值");
+    return value.toBool();
+}
 double percentile(QVector<double> values, double fraction) {
     if (values.isEmpty()) return 0;
     std::sort(values.begin(), values.end());
@@ -26,6 +31,7 @@ QJsonObject workshopCombatState(CombatHost &host) {
         const auto &s = c->state;
         QJsonObject value{{"index", s.index}, {"current", s.current}, {"intro", s.hasIntro},
             {"sub_intro", s.hasSubDpsIntro}, {"current_con", s.currentCon}, {"check_f", c->checkFOnSwitch},
+            {"buff_time", s.buffTime},
             {"role", s.role == Role::Healer ? "Healer" : s.role == Role::SubDps ? "SubDps" : "MainDps"}};
         for (const auto &[key, member] : commonTimes)
             value[key] = s.*member < 0 ? -1 : now-s.*member;
@@ -54,17 +60,19 @@ void applyWorkshopCombatState(CombatHost &host, const QJsonObject &state) {
         const auto role = value["role"].toString();
         if (!QStringList{"MainDps", "SubDps", "Healer"}.contains(role)) fail("工坊角色定位无效");
         s.role = role == "Healer" ? Role::Healer : role == "SubDps" ? Role::SubDps : Role::MainDps;
-        s.current = value["current"].toBool();
-        s.hasIntro = value["intro"].toBool();
-        s.hasSubDpsIntro = value["sub_intro"].toBool();
+        s.current = stateBoolean(value["current"]);
+        s.hasIntro = stateBoolean(value["intro"]);
+        s.hasSubDpsIntro = stateBoolean(value["sub_intro"]);
         s.currentCon = finiteNumber(value["current_con"]);
         if (s.currentCon < 0 || s.currentCon > 1) fail("工坊协奏值无效");
+        s.buffTime = finiteNumber(value["buff_time"]);
+        if (s.buffTime < 0 || s.buffTime > 86400) fail("工坊角色增益时间无效");
         for (const auto &[key, member] : commonTimes) {
             const auto age = finiteNumber(value[key]);
             s.*member = age < 0 ? -1 : now-age;
         }
         prepared.append({*it, s});
-        checks.append(value["check_f"].toBool());
+        checks.append(stateBoolean(value["check_f"]));
     }
     FreezeTimeline freezes;
     const auto timeline = state["freezes"].toArray();
@@ -77,20 +85,22 @@ void applyWorkshopCombatState(CombatHost &host, const QJsonObject &state) {
         freezes.add(now, now-age, duration, threshold);
     }
     const auto combatAge = finiteNumber(state["combat_age"]);
+    const auto inLiberation = stateBoolean(state["in_liberation"]);
     for (int i = 0; i < prepared.size(); ++i) {
         prepared[i].first->state = prepared[i].second;
         prepared[i].first->checkFOnSwitch = checks[i];
     }
     host.freezes = std::move(freezes);
     host.combatStart = combatAge < 0 ? -1 : now-combatAge;
-    host.inLiberation = state["in_liberation"].toBool();
+    host.inLiberation = inLiberation;
 }
 void validateWorkshopHandshake(const QJsonObject &hello) {
     if (hello["event"] != "ready" || hello["protocol"].toInt() != workshopProtocolVersion ||
         hello["api"].toInt() != workshopApiVersion)
         fail("工坊桥接版本不一致，请使用同一完整包中的主程序和兼容引擎");
     const auto capabilities = hello["capabilities"].toArray();
-    for (const auto &capability : {"request-identity", "combat-state-ages", "immutable-frame-cache", "bridge-metrics"})
+    for (const auto &capability : {"request-identity", "combat-state-ages", "immutable-frame-cache", "bridge-metrics",
+                                    "character-policy", "task-config-context"})
         if (!capabilities.contains(capability)) fail("工坊兼容引擎缺少必要接口能力，请更新完整包");
 }
 QString workshopRoot(const QString &root) {
@@ -241,8 +251,14 @@ void PythonTeamMacro::stop() noexcept {
     mapped_ = nullptr;
     mapping_ = nullptr;
     loaded_ = false;
-    for (const auto &entry : originalRoles_) entry.first->state.role = entry.second;
-    originalRoles_.clear();
+    for (const auto &entry : originalPolicies_) {
+        entry.character->state.role = entry.role;
+        entry.character->state.buffTime = entry.buffTime;
+        entry.character->checkFOnSwitch = entry.checkF;
+    }
+    originalPolicies_.clear();
+    healerOverrides_.clear();
+    shortTargetOverrides_.clear();
     buffer_.clear();
     errors_.clear();
     frameSequence_ = UINT64_MAX;
@@ -300,7 +316,7 @@ QJsonObject PythonTeamMacro::receive(int timeoutMs) {
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < timeoutMs) {
-        h_.preciseWait(0);
+        h_.workshopCheckpoint();
         errors_ += process_.readAllStandardError();
         if (errors_.size() > 65536)
             errors_ = errors_.right(65536);
@@ -322,11 +338,19 @@ QJsonObject PythonTeamMacro::receive(int timeoutMs) {
                     write({{"ok", true}, {"data", rpc(message["request"].toObject())}});
                 } catch (const Cancelled &) {
                     throw;
+                } catch (const CombatEnded &) {
+                    // Lifecycle interruption belongs to the host. Returning it
+                    // as a Python RuntimeError lets broad script handlers swallow
+                    // it and continue pressing keys on a result/revival screen.
+                    throw;
                 } catch (const std::exception &error) {
                     write({{"ok", false}, {"error", errorText(error)}});
                 }
                 continue;
             }
+            if (message["event"] == "fatal")
+                throw ExecutionFailure(message["error"].toString("工坊兼容引擎启动失败"),
+                                       message["traceback"].toString());
             if (!message.isEmpty())
                 return message;
         }
@@ -367,7 +391,7 @@ void PythonTeamMacro::startWorker() {
     loaded_ = true;
     QJsonArray party;
     for (auto c : h_.characters()) {
-        originalRoles_.append({c, c->state.role});
+        originalPolicies_.append({c, c->state.role, c->state.buffTime, c->checkFOnSwitch});
         party.append(QJsonObject{{"class", c->state.className},
                                  {"canonical", c->state.name},
                                  {"index", c->state.index},
@@ -393,6 +417,8 @@ QJsonObject PythonTeamMacro::call(QJsonObject request) {
     const bool wasBusy = h_.macroBusy;
     h_.macroBusy = true;
     request["use_liberation"] = h_.useLiberation;
+    request["in_combat"] = h_.combatEngaged();
+    request["has_levitator"] = h_.hasLevitator;
     request["current"] = h_.partyIndex();
     request["f_rearm"] = h_.macroRearmAt;
     request["f_age"] = h_.now() - h_.macroRearmAt;
@@ -402,6 +428,7 @@ QJsonObject PythonTeamMacro::call(QJsonObject request) {
     request["session"] = session_;
     request["request_id"] = requestId_;
     request["task"] = h_.taskId();
+    request["task_config"] = h_.workshopTaskConfig();
     request["host_state"] = workshopCombatState(h_);
     try {
         write(request);
@@ -409,7 +436,8 @@ QJsonObject PythonTeamMacro::call(QJsonObject request) {
         if (response["event"] != "reply" || response["session"] != session_ || response["request_id"] != requestId_)
             fail("工坊返回了过期或不匹配的回复");
         if (!response["ok"].toBool())
-            fail(response["error"].toString("工坊引擎返回无效"));
+            throw ExecutionFailure(response["error"].toString("工坊引擎返回无效"),
+                                   response["traceback"].toString());
         h_.macroBusy = wasBusy;
         return response["data"].toObject();
     } catch (...) {
@@ -423,12 +451,24 @@ QJsonObject PythonTeamMacro::call(QJsonObject request) {
     }
 }
 void PythonTeamMacro::sync(const QJsonObject &state) {
-    try { applyWorkshopCombatState(h_, state); }
+    QHash<int, bool> healers, shortTargets;
+    try {
+        for (const auto &value : state["chars"].toArray()) {
+            const auto character = value.toObject();
+            if (!character["healer"].isBool() || !character["short_target"].isBool())
+                fail("工坊缺少角色战斗规则");
+            healers[character["index"].toInt()] = character["healer"].toBool();
+            shortTargets[character["index"].toInt()] = character["short_target"].toBool();
+        }
+        applyWorkshopCombatState(h_, state);
+    }
     catch (...) {
         stop();
         try { h_.workshopCommand({{"op", "release"}}); } catch (...) {}
         throw;
     }
+    healerOverrides_ = std::move(healers);
+    shortTargetOverrides_ = std::move(shortTargets);
     report();
 }
 void PythonTeamMacro::report() {
@@ -442,8 +482,11 @@ void PythonTeamMacro::report() {
 }
 void PythonTeamMacro::configure() { startWorker(); }
 void PythonTeamMacro::reset() {
-    if (loaded_)
-        sync(call({{"op", "reset"}}));
+    // A host-owned result/cancellation can terminate the worker mid-segment.
+    // Reload policy/state before the next battle's healer selection, rather
+    // than falling back to native roles until the first perform call.
+    startWorker();
+    sync(call({{"op", "reset"}}));
 }
 void PythonTeamMacro::combatEnd() {
     if (loaded_)
@@ -458,7 +501,25 @@ bool PythonTeamMacro::perform(Character &entry) {
     return true;
 }
 std::optional<int> PythonTeamMacro::priority(const Character &c, bool intro) {
+    return priority(c, intro, false);
+}
+std::optional<int> PythonTeamMacro::priority(const Character &c, bool intro, bool targetLowCon) {
     startWorker();
-    return call({{"op", "priority"}, {"index", c.state.index}, {"intro", intro}})["priority"].toInt();
+    const auto result = call({{"op", "priority"}, {"index", c.state.index}, {"intro", intro},
+                              {"target_low_con", targetLowCon}});
+    if (result.contains("interrupted"))
+        throw CombatInterrupted(result["interrupted"].toString());
+    if (!result["priority"].isDouble()) fail("工坊返回了无效的切人优先级");
+    sync(result);
+    return result["priority"].toInt();
+}
+bool PythonTeamMacro::skipsCombatCheck(const Character &c) {
+    startWorker();
+    const auto result = call({{"op", "policy"}, {"index", c.state.index}});
+    if (result.contains("interrupted"))
+        throw CombatInterrupted(result["interrupted"].toString());
+    if (!result["skip_combat_check"].isBool()) fail("工坊返回了无效的战斗检测规则");
+    sync(result);
+    return result["skip_combat_check"].toBool();
 }
 } // namespace okww::runtime

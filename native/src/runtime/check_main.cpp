@@ -172,6 +172,8 @@ int main(int argc, char **argv) {
                 combat["health"] = vision.healthBar(false);
                 combat["shifted_health"] = vision.shiftedHealthBar();
                 combat["death_dialog"] = vision.deathDialog();
+                const auto result = vision.challengeResult();
+                combat["challenge_result"] = result ? (*result ? "success" : "failure") : "none";
                 combat["mouse_forte"] = vision.forte(Forte::Mouse);
                 combat["bar_forte"] = vision.forte(Forte::Bar);
                 report["combat"] = combat;

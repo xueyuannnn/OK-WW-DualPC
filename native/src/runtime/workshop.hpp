@@ -34,7 +34,15 @@ class PythonTeamMacro final : public TeamMacro {
     QVector<double> pingSamples_, frameInputSamples_;
     QElapsedTimer telemetryClock_;
     bool loaded_ = false;
-    QVector<QPair<Character *, Role>> originalRoles_;
+    struct NativePolicy {
+        Character *character;
+        Role role;
+        double buffTime;
+        bool checkF;
+    };
+    QVector<NativePolicy> originalPolicies_;
+    QHash<int, bool> healerOverrides_;
+    QHash<int, bool> shortTargetOverrides_;
     void stop() noexcept;
     void startWorker();
     void write(QJsonObject value);
@@ -52,5 +60,11 @@ class PythonTeamMacro final : public TeamMacro {
     void combatEnd() override;
     bool perform(Character &entry) override;
     std::optional<int> priority(const Character &c, bool intro) override;
+    std::optional<int> priority(const Character &c, bool intro, bool targetLowCon);
+    bool skipsCombatCheck(const Character &c);
+    bool usesShortTarget(const Character &c) const { return shortTargetOverrides_.value(c.state.index, false); }
+    bool isHealer(const Character &c) const {
+        return healerOverrides_.value(c.state.index, c.state.role == Role::Healer);
+    }
 };
 } // namespace okww::runtime

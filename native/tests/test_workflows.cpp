@@ -113,6 +113,48 @@ struct Scenes {
 class WorkflowTests : public QObject {
     Q_OBJECT
   private slots:
+    void challengeResultsRequireTitleAndActionAndInterruptOnlyConfirmedOutcomes_data() {
+        QTest::addColumn<QSize>("dimensions");
+        QTest::addColumn<QString>("title");
+        QTest::addColumn<QString>("button");
+        QTest::addColumn<int>("outcome");
+        for (const auto size : {QSize(1280, 720), QSize(1920, 1080), QSize(2560, 1440)}) {
+            const auto name = QString::number(size.height());
+            QTest::newRow(qPrintable(name+"-success")) << size << QString("挑战成功") << QString("确认成绩") << 1;
+            QTest::newRow(qPrintable(name+"-failure")) << size << QString("挑战失败") << QString("再次挑战") << 0;
+            QTest::newRow(qPrintable(name+"-traditional")) << size << QString("挑戰成功") << QString("確認成績") << 1;
+            QTest::newRow(qPrintable(name+"-english")) << size << QString("Challenge Failed") << QString("Challenge Again") << 0;
+            QTest::newRow(qPrintable(name+"-animation")) << size << QString("共鸣解放") << QString{} << -1;
+            QTest::newRow(qPrintable(name+"-title-only")) << size << QString("挑战成功") << QString{} << -1;
+            QTest::newRow(qPrintable(name+"-button-only")) << size << QString{} << QString("再次挑战") << -1;
+        }
+    }
+    void challengeResultsRequireTitleAndActionAndInterruptOnlyConfirmedOutcomes() {
+        QFETCH(QSize, dimensions);
+        QFETCH(QString, title);
+        QFETCH(QString, button);
+        QFETCH(int, outcome);
+        Scenes s(dimensions);
+        s.words["blank"] = {s.word(title, .4, .3), s.word(button, .5, .84)};
+        s.show("blank");
+        CombatVision vision(s.c, s.root+"/native/resources/characters.json");
+        const auto result = vision.challengeResult();
+        QCOMPARE(bool(result), outcome >= 0);
+        if (result) QCOMPARE(*result, outcome == 1);
+        CombatSession combat(s.c, s.root, s.directory.path());
+        combat.macroBusy = true;
+        s.clock.sleep(1.1); // Result watchdog polls once per second during a segment.
+        if (outcome == 0)
+            QVERIFY_THROWS_EXCEPTION(CombatInterrupted, combat.workshopCheckpoint());
+        else if (outcome == 1)
+            QVERIFY_THROWS_EXCEPTION(CombatEnded, combat.workshopCheckpoint());
+        else
+            combat.workshopCheckpoint();
+        // The watchdog observes/relinquishes input; it never dismisses results.
+        QCOMPARE(s.clicks(), 0);
+        for (auto event : s.events)
+            QVERIFY(!(event["op"] == "key" && event["down"].toBool()));
+    }
     void shortTargetDistinguishesEnemyFromEmptyMarker_data() {
         QTest::addColumn<QSize>("dimensions");
         QTest::addColumn<QString>("marker");
@@ -715,6 +757,38 @@ class WorkflowTests : public QObject {
         QTest::addColumn<QString>("scenario");
         for (auto name : {"complete", "resume", "retry-exhausted", "death", "cancel"})
             QTest::newRow(name) << QString(name);
+    }
+    void realtimeInterruptionDoesNotRunCombatEndHealerSwitch() {
+        Scenes s;
+        s.clock.minimumStep = .02;
+        s.frame("fight", {"has_target", "char_2_text", "char_3_text", "world_earth_icon"});
+        const QStringList names{"char_mortefi", "char_baizhi", "char_verina"};
+        for (int i = 0; i < names.size(); ++i) {
+            auto pattern = s.templates.pattern(names[i], s.size);
+            if (pattern.channels() == 1) cv::cvtColor(pattern, pattern, cv::COLOR_GRAY2BGR);
+            const auto area = s.templates.box(QString("box_char_%1").arg(i+1), s.size);
+            pattern.copyTo(s.frames["fight"](cv::Rect(area.x(), area.y(), pattern.cols, pattern.rows)));
+        }
+        s.c.task = "AutoCombatTask";
+        s.profile.set("AutoCombatTask", "_enabled", true);
+        s.profile.set("AutoCombatTask", "Switch to Healer before and after Combat", false);
+        s.show("fight");
+        CombatSession combat(s.c, s.root, s.directory.path());
+        int eventsAtInterruption = -1;
+        combat.onCombatCheck = [&]() -> bool {
+            eventsAtInterruption = s.events.size();
+            s.profile.set("AutoCombatTask", "Switch to Healer before and after Combat", true);
+            throw CombatInterrupted("temporary observation interruption");
+        };
+        QVERIFY(combat.runAutoCombat());
+        QCOMPARE(combat.characters().size(), 3);
+        QCOMPARE(combat.characters()[0]->state.className, QString("Mortefi"));
+        QCOMPARE(combat.characters()[1]->state.role, Role::Healer);
+        QVERIFY(eventsAtInterruption >= 0);
+        for (int i = eventsAtInterruption; i < s.events.size(); ++i)
+            QVERIFY2(s.events[i]["op"] == "release", "Interrupted combat sent a cleanup key or click");
+        QVERIFY(!s.c.state->inCombat);
+        QVERIFY(s.input.idle());
     }
     void combatRoundDistinguishesVictoryInterruptionDeathAndCancellation() {
         QFETCH(QString, scenario);

@@ -1,5 +1,6 @@
 #include "combat_session.hpp"
 #include "interaction.hpp"
+#include "workshop.hpp"
 #include <opencv2/imgcodecs.hpp>
 namespace okww::runtime {
 namespace {
@@ -214,7 +215,7 @@ void CombatSession::watchdog() {
     context_.execution.checkpoint();
     if (combatDeadline_ > 0 && now() > combatDeadline_)
         throw NavigationFailure("本轮战斗超过等待上限，未记录为完成");
-    if ((!engaged_ && !combatScope_) || checkingDialog_ || now() - lastDeathCheck_ < 1)
+    if ((!engaged_ && !combatScope_ && !macroBusy) || checkingDialog_ || now() - lastDeathCheck_ < 1)
         return;
     lastDeathCheck_ = now();
     FlagGuard guard(checkingDialog_);
@@ -222,6 +223,13 @@ void CombatSession::watchdog() {
         context_.input.release();
         throw CharacterDead();
     }
+    if (macroBusy && !vision_.party().visible)
+        if (const auto result = vision_.challengeResult()) {
+            context_.input.release();
+            if (*result)
+                throw CombatEnded("已确认挑战成功结算，停止本轮工坊连招");
+            throw CombatInterrupted("已确认挑战失败结算，停止本轮工坊连招，等待重新挑战");
+        }
 }
 void CombatSession::nextFrame() {
     context_.execution.wait(.001);
@@ -369,7 +377,9 @@ bool CombatSession::targetEnemy() {
 }
 bool CombatSession::targetLocked() {
     const auto c = current();
-    const bool shortTarget = c && partyDefinitions_[c->state.index].shortTarget;
+    const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
+    const bool shortTarget = c && (python ? python->usesShortTarget(*c)
+                                         : partyDefinitions_[c->state.index].shortTarget);
     auto result = vision_.targetObservation(shortTarget, true);
     if (!result.extended || targetEscCount_ != 0)
         return result.locked;
@@ -433,7 +443,8 @@ bool CombatSession::combatActive() {
             return true;
         checkBreak();
         auto c = current();
-        if (c && c->skipCombatCheck())
+        const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
+        if (c && (python ? python->skipsCombatCheck(*c) : c->skipCombatCheck()))
             return true;
         if (onCombatCheck && !onCombatCheck()) {
             resetCombat();
@@ -515,7 +526,9 @@ void CombatSession::switchNext(Character &previous, bool freeIntro, bool targetL
     auto choose = [&]() -> Character * {
         std::vector<SwitchCandidate> candidates;
         for (auto &c : party_) {
-            const auto overridden = macro_ ? macro_->priority(*c, intro) : std::optional<int>{};
+            const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
+            const auto overridden = python ? python->priority(*c, intro, targetLowCon)
+                : macro_ ? macro_->priority(*c, intro) : std::optional<int>{};
             candidates.push_back(
                 {&c->state, overridden ? *overridden : c->switchPriority(&previous, intro, targetLowCon)});
         }
@@ -593,6 +606,8 @@ void CombatSession::switchNext(Character &previous, bool freeIntro, bool targetL
     throw CombatInterrupted("角色切换超时");
 }
 void CombatSession::switchHealer() {
+    if (!vision_.party().visible)
+        return;
     const auto group = context_.task == "FarmEchoTask" || context_.task == "FarmEchoTask2"
                            ? context_.task
                            : QString("AutoCombatTask");
@@ -602,12 +617,16 @@ void CombatSession::switchHealer() {
             : context_.profile.value(group, "Switch to Healer before and after Combat", true);
     if (!enabled.toBool())
         return;
+    const auto isHealer = [&](const Character &member) {
+        const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
+        return python ? python->isHealer(member) : member.state.role == Role::Healer;
+    };
     auto c = current();
-    if (!c || c->state.role == Role::Healer)
+    if (!c || isHealer(*c))
         return;
     Character *healer = nullptr;
     for (auto &member : party_)
-        if (member->state.role == Role::Healer) {
+        if (isHealer(*member)) {
             healer = member.get();
             break;
         }
@@ -664,6 +683,13 @@ bool CombatSession::runAutoCombat() {
         context_.input.release();
         resetCombat();
         throw;
+    } catch (const CombatInterrupted &e) {
+        // A stale/hidden HUD or interrupted switch is not a combat-end event.
+        // Do not call author cleanup or inject a healer switch into a live fight.
+        context_.input.release();
+        resetCombat();
+        log(errorText(e));
+        return ran;
     } catch (const CombatEnded &e) {
         log(errorText(e));
     } catch (...) {

@@ -105,8 +105,6 @@ def run_script(runtime, data, request, channel):
     # Trigger predicates and run() must observe the same iteration's settings.
     for key, value in request.get('values', {}).items():
         task.config[key] = value
-    if isinstance(task, TriggerTask) and not task.should_trigger():
-        return dict(handled=False)
     task._enabled = True
     task.unpause()
     task.running = True
@@ -132,7 +130,11 @@ def run_script(runtime, data, request, channel):
         task.start_time = time.time()
         # There is no Python task-executor loop. Only this selected extension
         # runs; C++ keeps ownership of trigger ordering, repeat and pause.
-        handled = bool(task.run())
+        # Predicates need the same current task, fresh scene and screenshot as
+        # run(). Otherwise a false predicate can retain the previous iteration's
+        # cached picture forever and never observe that the game has changed.
+        if not isinstance(task, TriggerTask) or task.should_trigger():
+            handled = bool(task.run())
     except FinishedException:
         pass
     finally:
@@ -179,7 +181,7 @@ def main():
             reply = dict(event='reply', ok=True, data=result)
         except Exception as error:
             traceback.print_exc(file=sys.stderr)
-            reply = dict(event='reply', ok=False, error=str(error))
+            reply = dict(event='reply', ok=False, error=str(error), traceback=traceback.format_exc())
         output.write(json.dumps(reply, ensure_ascii=False, default=str) + '\n')
         output.flush()
 
@@ -192,6 +194,7 @@ if __name__ == '__main__':
         os._exit(0)
     except BaseException as error:
         traceback.print_exc(file=sys.stderr)
-        sys.__stdout__.write(json.dumps(dict(event='fatal', ok=False, error=str(error)), ensure_ascii=False) + '\n')
+        sys.__stdout__.write(json.dumps(dict(event='fatal', ok=False, error=str(error),
+                                           traceback=traceback.format_exc()), ensure_ascii=False) + '\n')
         sys.__stdout__.flush()
         os._exit(1)

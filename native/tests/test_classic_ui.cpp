@@ -45,6 +45,39 @@ class ClassicUiTests final : public QObject {
         return runtime::Profile(data.path() + "/configs-dualpc", root + "/native/resources/catalog.json");
     }
   private slots:
+    void runtimeErrorsRestoreHiddenWindowAndKeepTasksPausedAfterAcknowledgement() {
+        QTemporaryDir data;
+        Backend *backend = nullptr;
+        auto window = create(data, [&](Backend &value, const Config &) {
+            backend = &value;
+            value.start(Config::defaults(), true);
+        });
+        QTRY_VERIFY(card(*window, "AutoCombatTask"));
+        window->findChild<QPushButton *>("previewConnection")->click();
+        QTRY_VERIFY(backend && backend->snapshot()["running"].toBool());
+        backend->arm(true);
+        window->hide();
+        const QJsonObject event{{"event", "error"}, {"error", "工坊连招诊断测试"},
+                                {"traceback", "offline traceback marker"}};
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "handleEngineMessage", Q_ARG(QJsonObject, event)));
+        QTRY_VERIFY(window->isVisible());
+        auto dialog = window->findChild<QMessageBox *>("runtimeErrorDialog");
+        QVERIFY(dialog && dialog->isVisible());
+        QVERIFY(dialog->detailedText().contains("offline traceback marker"));
+        QVERIFY(!backend->snapshot()["armed"].toBool());
+        QVERIFY(backend->snapshot()["capture_connected"].toBool());
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "handleEngineMessage", Q_ARG(QJsonObject, event)));
+        QCOMPARE(window->findChildren<QMessageBox *>("runtimeErrorDialog").size(), 1);
+        const auto folders = QDir(data.path()+"/logs/diagnostics").entryList(QDir::Dirs|QDir::NoDotAndDotDot);
+        QVERIFY(!folders.isEmpty());
+        const auto report = readJson(data.path()+"/logs/diagnostics/"+folders.first()+"/report.json");
+        QVERIFY(report["devices"].toObject()["capture_connected"].toBool());
+        QVERIFY(!report.contains("config"));
+        dialog->button(QMessageBox::Ok)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!window->findChild<QMessageBox *>("runtimeErrorDialog"));
+        QVERIFY(!backend->snapshot()["armed"].toBool());
+    }
     void legacyPracticeFlagsCannotSuppressInputAfterTheSwitchIsRemoved() {
         QTemporaryDir data;
         auto old = Config::defaults();

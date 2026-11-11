@@ -273,6 +273,21 @@ bool CombatVision::deathDialog() {
         return false;
     return bool(matchingText(context_.text(.35, .65, .82, .93), "^(?:复苏|復甦|确认|確認|Revive|Confirm)$"));
 }
+std::optional<bool> CombatVision::challengeResult() {
+    // Both anchors are required. A missing party HUD alone can be an ultimate
+    // animation, and must never interrupt an author's rotation.
+    const auto titles = context_.text(.2, .12, .8, .55);
+    const bool success = bool(matchingText(titles,
+        "^(?:挑战成功|挑戰成功|Challenge\\s*(?:Success|Complete|Completed))$"));
+    const bool failure = bool(matchingText(titles,
+        "^(?:挑战失败|挑戰失敗|Challenge\\s*Failed)$"));
+    if (!success && !failure) return {};
+    if (!matchingText(context_.text(.2, .6, .8, .95),
+        "^(?:确认成绩|確認成績|再次挑战|再次挑戰|重新挑战|重新挑戰|返回深塔|"
+        "Confirm\\s*(?:Score|Results?)|Challenge\\s*Again|Retry\\s*Challenge|Return\\s*to\\s*Tower)$"))
+        return {};
+    return success;
+}
 bool CombatVision::forte(Forte kind) {
     if (kind == Forte::Mouse)
         return bool(context_.find(

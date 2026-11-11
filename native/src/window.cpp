@@ -1,5 +1,8 @@
 #include "window.hpp"
 #include <QDesktopServices>
+#ifdef OKWW_NATIVE_ONLY
+#include "runtime/diagnostics.hpp"
+#endif
 namespace okww {
 void Preview::paintEvent(QPaintEvent *) {
     QPainter p(this);
@@ -853,7 +856,7 @@ void Window::runAsync(std::function<QJsonObject()> work, std::function<void(QJso
             if (pendingStart_)
                 failStartup(result["_error"].toString());
             else
-                log(result["_error"].toString());
+                showExecutionError(result["_error"].toString(), {{"phase", "device_operation"}});
             if (restartEngine_ && engine_.state() == QProcess::NotRunning && !closing_)
                 startEngine();
             updateStatus();
@@ -1192,9 +1195,53 @@ void Window::updateStartControl() {
 void Window::failStartup(const QString &error) {
     pendingStart_.reset();
     startupTimer_.stop();
-    log("启动失败：" + error);
+    showExecutionError(error, {{"phase", "startup"}});
     updateStartControl();
     emit startupFailed(error);
+}
+void Window::showExecutionError(const QString &error, QJsonObject event) {
+    pendingStart_.reset();
+    startupTimer_.stop();
+    pauseExecution();
+    log(error);
+    if (closing_) return;
+#ifdef OKWW_NATIVE_ONLY
+    if (event["diagnostic_report"].toString().isEmpty()) {
+        event["event"] = "error";
+        event["error"] = error;
+        event["task"] = currentTask_;
+        event["combat"] = combatInfo_;
+        event["devices"] = backend_.snapshot();
+        event = runtime::saveDiagnostic(data_, event);
+    }
+#endif
+    if (runtimeErrorDialog_) {
+        runtimeErrorDialog_->raise();
+        runtimeErrorDialog_->activateWindow();
+        return;
+    }
+    const auto details = QString::fromUtf8(QJsonDocument(event).toJson(QJsonDocument::Indented));
+    auto dialog = new QMessageBox(QMessageBox::Warning, "自动操作已暂停", error.left(500),
+                                  QMessageBox::Ok, this);
+    runtimeErrorDialog_ = dialog;
+    dialog->setObjectName("runtimeErrorDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setInformativeText("已释放键鼠按键，采集预览保持连接。请检查原因后手动开始；关闭提示不会恢复任务。" +
+        (event.contains("diagnostic_write_error") ? "\n诊断保存失败：" + event["diagnostic_write_error"].toString()
+         : "\n诊断记录：" + QDir::toNativeSeparators(event["diagnostic_report"].toString())));
+    dialog->setDetailedText(details);
+    dialog->button(QMessageBox::Ok)->setText("知道了");
+    auto copy = dialog->addButton("复制详情", QMessageBox::ActionRole);
+    connect(copy, &QPushButton::clicked, dialog, [details] { QApplication::clipboard()->setText(details); });
+    const auto folder = event["diagnostic_directory"].toString();
+    if (!folder.isEmpty()) {
+        auto open = dialog->addButton("打开诊断目录", QMessageBox::ActionRole);
+        connect(open, &QPushButton::clicked, dialog, [folder] { QDesktopServices::openUrl(QUrl::fromLocalFile(folder)); });
+    }
+    showNormal();
+    raise();
+    activateWindow();
+    dialog->open();
 }
 void Window::pauseExecution() {
     automation_ = false;
@@ -1431,10 +1478,7 @@ void Window::handleEngineMessage(const QJsonObject &o) {
         closing_ = true;
         QTimer::singleShot(0, this, &QWidget::close);
     } else if (event == "error") {
-        if (pendingStart_)
-            failStartup(o["error"].toString());
-        else
-            log(o["error"].toString());
+        showExecutionError(o["error"].toString(), o);
     } else if (event == "combat_info") {
         combatInfo_ = o["data"].toObject();
         refreshTaskInfo();

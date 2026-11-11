@@ -3,6 +3,7 @@
 #include "scripts.hpp"
 #include "task_registry.hpp"
 #include "resource_failure.hpp"
+#include "diagnostics.hpp"
 #include <QtConcurrent>
 #include <opencv2/imgcodecs.hpp>
 
@@ -226,6 +227,8 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
     const auto began = clock.now();
     const auto limit = options["limit_seconds"].toDouble();
     QString failure;
+    QString activeTask = selected, phase = "preparation", diagnosticReport;
+    QJsonObject lastCombat;
     bool completed = false, exitAfter = false;
     EmergencyMemory emergency;
     try {
@@ -262,8 +265,15 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         std::function<void()> pollControls;
         bool taskRunning = false;
         Execution execution(gate_, epoch, clock, [&] {
-            if (!backend_.heartbeat())
-                throw Cancelled();
+            if (!backend_.heartbeat()) {
+                // Explicit Pause invalidates the epoch first. A device watchdog
+                // disarm while this epoch is live is an error, not user cancel.
+                if (!gate_.active(epoch)) throw Cancelled();
+                const auto state = backend_.snapshot();
+                throw ExecutionFailure(state["error"].toString().isEmpty()
+                    ? QString("采集或盒子连接已中断，自动操作已暂停") : state["error"].toString(),
+                    QString::fromUtf8(QJsonDocument(state).toJson(QJsonDocument::Indented)));
+            }
             if (taskRunning && pollControls)
                 pollControls();
             if (limit > 0 && clock.now() - began >= limit)
@@ -296,7 +306,8 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
             });
         context.info = [&](auto key, auto value) { log(key + "：" + value); };
         context.sourceSequence = [&] { return captureSequence; };
-        context.combatInfo = [this, epoch](QJsonObject value) {
+        context.combatInfo = [this, epoch, &lastCombat](QJsonObject value) {
+            lastCombat = value;
             QMetaObject::invokeMethod(this, [this, epoch, value = std::move(value)] {
                 if (generation_ == epoch && !paused_)
                     emit message({{"event", "combat_info"}, {"data", value}});
@@ -380,6 +391,8 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                 if (execution.now() < next.value(task.id, 0))
                     continue;
                 context.task = task.id;
+                activeTask = task.id;
+                phase = "task";
                 taskRunning = true;
                 try {
                     handled = task.step(context);
@@ -421,7 +434,22 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         failure = taskFailureText(e);
         if (lowMemory)
             log("内存不足的原始错误：" + errorText(e));
-        emit message({{"event", "error"}, {"error", failure}});
+        // Stop accepting input before allocating a screenshot or notifying UI.
+        {
+            std::lock_guard lock(lifecycle_);
+            gate_.stop();
+            paused_ = true;
+            warming_ = false;
+            try { backend_.arm(false); }
+            catch (const std::exception &releaseError) { log(errorText(releaseError)); }
+        }
+        QJsonObject errorEvent{{"event", "error"}, {"error", failure}, {"task", activeTask},
+                               {"selected_task", selected}, {"phase", phase}, {"combat", lastCombat},
+                               {"devices", backend_.snapshot()}, {"elapsed_seconds", clock.now() - began}};
+        if (const auto bridgeError = dynamic_cast<const ExecutionFailure *>(&e))
+            errorEvent["traceback"] = bridgeError->details;
+        else
+            errorEvent["exception_type"] = QString::fromLatin1(typeid(e).name());
         Notice errorNotice{product::name + " 任务停止", failure, {}, true};
         try {
             // Error screenshots need another full image and PNG buffer. Avoid
@@ -436,18 +464,24 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                     const auto filePath =
                         folder + '/' + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + ".png";
                     QSaveFile file(filePath);
-                    if (file.open(QIODevice::WriteOnly) && file.write(png) == png.size() && file.commit())
+                    if (file.open(QIODevice::WriteOnly) && file.write(png) == png.size() && file.commit()) {
                         log("错误现场已保存：" + filePath);
+                        errorEvent["screenshot"] = filePath;
+                    }
                     errorNotice.images << png;
                 }
             }
         } catch (const std::exception &captureError) {
             log("错误现场保存失败：" + errorText(captureError));
+            errorEvent["screenshot_error"] = errorText(captureError);
         }
+        errorEvent = saveDiagnostic(data_, errorEvent);
+        diagnosticReport = errorEvent["diagnostic_report"].toString();
+        log("任务异常，自动操作已暂停。诊断记录：" + diagnosticReport);
+        emit message(errorEvent);
         notify(std::move(errorNotice));
-        exitAfter =
-            selected == "DailyTask2" && profile_.value(selected, "Exit with Error", true).toBool() &&
-            (options["exit_after"].toBool() || profile_.value(selected, "Exit After Task", false).toBool());
+        // Keep the diagnostic available until the user explicitly resumes/exits.
+        exitAfter = false;
     }
     {
         std::lock_guard lock(lifecycle_);
@@ -467,6 +501,7 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                    {"success", completed},
                    {"error", completed ? QString{} : failure},
                    {"finished", QDateTime::currentDateTime().toString(Qt::ISODate)},
+                   {"diagnostic_report", diagnosticReport},
                    {"seconds", clock.now() - began}});
     } catch (const std::exception &e) {
         log("运行结果保存失败：" + errorText(e));

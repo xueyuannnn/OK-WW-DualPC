@@ -91,6 +91,9 @@ class CombatHost {
     virtual QJsonObject workshopCommand(QJsonObject) { fail("当前环境不支持工坊输入通道"); }
     virtual bool visibleTarget() { return targetLocked(); }
     virtual void workshopTelemetry(QJsonObject) {}
+    virtual void workshopCheckpoint() { preciseWait(0); }
+    virtual QJsonObject workshopTaskConfig() const { return {}; }
+    virtual bool combatEngaged() const { return true; }
     bool wait(const std::function<bool()> &condition, double timeout, const std::function<void()> &post = {},
               double settle = 0, const std::function<void()> &pre = {});
 };

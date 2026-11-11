@@ -40,6 +40,7 @@ class CombatSession final : public CombatHost {
     int targetEscCount_ = 0;
     uint64_t checkedVersion_ = UINT64_MAX;
     double lastInterval_ = 0, lastDeathCheck_ = 0, lastBreakCheck_ = 0, lastHealthCheck_ = -1;
+    double lastWorkshopObservation_ = -1;
     uint64_t partyScanVersion_ = UINT64_MAX;
     QJsonObject bridgeInfo_, lastPartyReport_;
     QByteArray lastPartyKey_;
@@ -79,6 +80,20 @@ class CombatSession final : public CombatHost {
         watchdog();
     }
     void preciseWait(double seconds) override { context_.execution.wait(seconds); }
+    void workshopCheckpoint() override {
+        context_.execution.checkpoint();
+        if (lastWorkshopObservation_ < 0 || now() - lastWorkshopObservation_ >= .1) {
+            lastWorkshopObservation_ = now();
+            refreshObservation();
+        }
+    }
+    QJsonObject workshopTaskConfig() const override {
+        auto config = context_.profile.group(context_.task);
+        for (auto it = context_.taskOverrides.begin(); it != context_.taskOverrides.end(); ++it)
+            config[it.key()] = it.value();
+        return config;
+    }
+    bool combatEngaged() const override { return engaged_; }
     void rawTap(const QString &key, double hold) override { context_.input.key(key, hold); }
     void rawClick(const QString &button, double hold) override { context_.input.click({}, hold, button); }
     cv::Mat namedImage(const QString &name) override;

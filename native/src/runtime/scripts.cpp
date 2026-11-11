@@ -1,4 +1,5 @@
 #include "scripts.hpp"
+#include "diagnostics.hpp"
 #include "workshop.hpp"
 namespace okww::runtime {
 namespace {
@@ -226,7 +227,7 @@ void ScriptRuntime::start() {
         fail("脚本兼容引擎启动失败");
     const auto reply = receive();
     if (reply["event"] != "ready")
-        fail(reply["error"].toString("脚本引擎未就绪"));
+        throw ExecutionFailure(reply["error"].toString("脚本引擎未就绪"), reply["traceback"].toString());
 }
 QJsonObject ScriptRuntime::run(const QJsonObject &script, std::function<bool()> enabled) {
     enabled_ = std::move(enabled);
@@ -246,7 +247,7 @@ QJsonObject ScriptRuntime::run(const QJsonObject &script, std::function<bool()> 
         write({{"script", script["id"]}, {"values", values}});
         const auto reply = receive();
         if (!reply["ok"].toBool())
-            fail(reply["error"].toString("脚本执行失败"));
+            throw ExecutionFailure(reply["error"].toString("脚本执行失败"), reply["traceback"].toString());
         return reply["data"].toObject();
     } catch (...) {
         stop();

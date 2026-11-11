@@ -105,6 +105,8 @@ class Window final : public QMainWindow {
     std::array<std::array<QLabel *, 3>, 2> taskInfoValues_{};
     qint64 taskInfoElapsedSeconds_ = 0;
     QJsonObject combatInfo_;
+    QPointer<QMessageBox> runtimeErrorDialog_;
+    void showExecutionError(const QString &error, QJsonObject event = {});
     QElapsedTimer taskRunClock_;
     QWidget *buildTaskInfo(bool trigger);
     void refreshTaskInfo();

@@ -12,6 +12,78 @@ static Config simulationConfig() {
 class EngineTests final : public QObject {
     Q_OBJECT
   private slots:
+    void unexpectedDeviceDisarmReportsFailureButExplicitPauseDoesNot() {
+        const QString root = OKWW_SOURCE_ROOT;
+        QTemporaryDir data;
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
+        Profile profile(data.path()+"/configs-dualpc", root+"/native/resources/catalog.json");
+        for (auto value : profile.catalog()["tasks"].toArray()) {
+            const auto task = value.toObject();
+            if (task["trigger"].toBool()) profile.set(task["id"].toString(), "_enabled", false);
+        }
+        Backend backend(false);
+        backend.start(Config::defaults(), true);
+        Engine engine(backend, root, data.path());
+        QJsonObject failure;
+        int errors = 0;
+        connect(&engine, &Engine::message, &engine, [&](QJsonObject event) {
+            if (event["event"] == "error") { failure = event; ++errors; }
+        });
+        engine.load();
+        engine.command({{"op", "start"}});
+        QTRY_VERIFY_WITH_TIMEOUT(backend.snapshot()["armed"].toBool(), 30000);
+        backend.arm(false);
+        QTRY_VERIFY_WITH_TIMEOUT(engine.idle() && !failure.isEmpty(), 5000);
+        QVERIFY(QFile::exists(failure["diagnostic_report"].toString()));
+        QVERIFY(failure["error"].toString().contains("中断"));
+        QVERIFY(backend.snapshot()["capture_connected"].toBool());
+        engine.command({{"op", "start"}});
+        QTRY_VERIFY_WITH_TIMEOUT(backend.snapshot()["armed"].toBool(), 10000);
+        engine.command({{"op", "pause"}});
+        QTRY_VERIFY_WITH_TIMEOUT(engine.idle(), 5000);
+        QCOMPARE(errors, 1);
+        QVERIFY(backend.snapshot()["capture_connected"].toBool());
+        backend.stop();
+    }
+    void taskFailurePausesAndReleasesInputBeforePublishingLocalDiagnostics() {
+        const QString root = OKWW_SOURCE_ROOT;
+        if (workshopPython(root).isEmpty()) QSKIP("Python SDK absent");
+        QTemporaryDir data;
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
+        const auto id = scriptManage(root, data.path(), {{"op", "create"}, {"name", "Failure"}})["selected"].toString();
+        scriptManage(root, data.path(), {{"op", "save"}, {"script", id}, {"code",
+            "from ok import BaseTask\nclass Failure(BaseTask):\n    def run(self):\n"
+            "        self.send_key_down('w')\n        self.mouse_down()\n"
+            "        raise RuntimeError('engine diagnostic marker')\n"}});
+        Backend backend(false);
+        backend.start(Config::defaults(), true);
+        Engine engine(backend, root, data.path());
+        int catalogs = 0;
+        QJsonObject failure;
+        bool safeWhenPublished = false;
+        connect(&engine, &Engine::message, &engine, [&](QJsonObject event) {
+            if (event["event"] == "catalog_changed") ++catalogs;
+            if (event["event"] == "error") {
+                failure = event;
+                const auto state = backend.snapshot();
+                safeWhenPublished = !state["armed"].toBool() && state["capture_connected"].toBool() &&
+                    state["box"].toObject()["keys"].toArray().isEmpty() &&
+                    state["box"].toObject()["buttons"].toInt() == 0;
+            }
+        });
+        engine.load();
+        QTRY_VERIFY_WITH_TIMEOUT(catalogs > 0, 15000);
+        engine.command({{"op", "start"}, {"task", id}});
+        QTRY_VERIFY_WITH_TIMEOUT(!failure.isEmpty() && engine.idle(), 30000);
+        QVERIFY(safeWhenPublished);
+        const auto report = readJson(failure["diagnostic_report"].toString());
+        QVERIFY(report["error"].toString().contains("engine diagnostic marker"));
+        QVERIFY(report["traceback"].toString().contains("Traceback"));
+        QCOMPARE(report["task"].toString(), id);
+        QVERIFY(report.contains("memory"));
+        QCOMPARE(readJson(data.path()+"/native-last-run.json")["diagnostic_report"], failure["diagnostic_report"]);
+        backend.stop();
+    }
     void workshopModeSwitchKeepsTheEventLoopResponsiveAndSerializesTaskStart() {
         const QString root = OKWW_SOURCE_ROOT;
         QTemporaryDir data;
@@ -72,7 +144,10 @@ class EngineTests final : public QObject {
         const auto marker = data.path()+"/values.txt";
         const auto code = "from ok import TriggerTask\nfrom pathlib import Path\nclass LiveSettings(TriggerTask):\n"
             "    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.default_config = {'Value': 1}\n"
-            "    def should_trigger(self):\n        return self.config['Value'] > 1 or not Path(r'" + marker + "').exists()\n"
+            "    def should_trigger(self):\n"
+            "        assert self.executor.current_task is self\n"
+            "        assert self.executor.frame is not None\n"
+            "        return self.config['Value'] > 1 or not Path(r'" + marker + "').exists()\n"
             "    def run(self):\n        path = Path(r'" + marker + "')\n"
             "        with path.open('a') as file: file.write('start:'+str(self.config['Value'])+'\\n')\n"
             "        self.sleep(.5)\n"

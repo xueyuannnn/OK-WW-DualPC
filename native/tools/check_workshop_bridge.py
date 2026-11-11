@@ -15,6 +15,8 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'native/bridge'))
+from workshop_protocol import PROTOCOL_VERSION, API_VERSION, CAPABILITIES, TIMES
 
 
 def main():
@@ -30,11 +32,14 @@ def main():
                     element=definitions[n]['element'], role=['MainDps','SubDps','Healer'][definitions[n]['role']],
                     buff=definitions[n]['buff_time']) for i,n in enumerate(names)]
     result = dict(loaded=[], requests=0, input_events=[], hardware_input_sent=False)
+    session, sequence, state = uuid.uuid4().hex, 0, {}
     mapping = 'Local\\OKWW-workshop-test-'+uuid.uuid4().hex
     memory = mmap.mmap(-1,64*1024*1024,tagname=mapping)
     frame = bytes(1920*1080*3)
     memory[:len(frame)] = frame
-    with tempfile.TemporaryDirectory(prefix='okww-workshop-test-') as temporary:
+    a.report.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='offline-profile-', dir=a.report.absolute().parent,
+                                     ignore_cleanup_errors=True) as temporary:
         data = Path(temporary)
         shutil.copy2(a.data/'dualpc.json',data/'dualpc.json')
         shutil.copytree(a.data/'configs-dualpc',data/'configs-dualpc')
@@ -73,12 +78,27 @@ def main():
                 emit(dict(ok=True,data=reply))
             raise TimeoutError('Worker response timed out')
         def command(q):
+            nonlocal sequence, state
+            if q['op'] == 'load':
+                state = dict(chars=[dict(index=c['index'], current=c['index'] == 0, intro=False,
+                    sub_intro=False, current_con=0, role=c['role'], buff_time=c['buff'], check_f=True,
+                    **{key: -1 for key in TIMES}) for c in q['party']], freezes=[],
+                    in_liberation=False, combat_age=0)
+            sequence += 1
+            q = dict(protocol=PROTOCOL_VERSION, api=API_VERSION, session=session, request_id=str(sequence),
+                     host_state=state, task='AutoCombatTask', task_config={}, current=0,
+                     in_combat=True, has_levitator=False, use_liberation=True) | q
             a.report.with_suffix('.progress.json').write_text(json.dumps(q, ensure_ascii=False), encoding='utf-8')
             emit(q);reply=receive()
             if reply.get('event')!='reply' or not reply.get('ok'): raise AssertionError(reply)
+            assert reply.get('session') == session and reply.get('request_id') == str(sequence)
+            if 'chars' in reply['data']:
+                state = reply['data']
             return reply['data']
         try:
-            assert receive()==dict(event='ready')
+            hello = receive()
+            assert hello['event'] == 'ready' and hello['protocol'] == PROTOCOL_VERSION and hello['api'] == API_VERSION
+            assert set(CAPABILITIES) <= set(hello['capabilities'])
             teams=sorted((data/'configs-dualpc/custom_teams').iterdir())
             for folder in teams:
                 if not folder.is_dir():continue
@@ -90,7 +110,7 @@ def main():
             # An ordinary newly imported Python class, absent from every native
             # personal DLL, must execute through the same bridge without compiling.
             names=['Baizhi','Mortefi','Verina']
-            folder=data/'configs-dualpc/custom_teams'/'__'.join(names);folder.mkdir()
+            folder=data/'configs-dualpc/custom_teams'/'__'.join(names);folder.mkdir(exist_ok=True)
             for name in names:
                 code=f'from src.char.{name} import {name} as Native\nclass {name}(Native):\n    def do_perform(self):\n        self.task.send_key("e", down_time=.02)\n        self.task.mouse_down()\n        self.task.mouse_up()\n'
                 (folder/(name+'.py')).write_text(code,encoding='utf-8')

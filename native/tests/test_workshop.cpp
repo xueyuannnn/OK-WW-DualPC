@@ -1,5 +1,6 @@
 #include "runtime/workshop.hpp"
 #include "runtime/team_store.hpp"
+#include "runtime/diagnostics.hpp"
 #include "team_replay.hpp"
 #include <QtTest>
 using namespace okww;
@@ -13,6 +14,20 @@ class WorkshopHost final : public test::TeamReplay {
     QJsonArray input;
     QJsonObject telemetry;
     QString contextTask = "AutoCombatTask";
+    std::optional<int> hudIndex;
+    bool resultVisible = false;
+    int resultAfter = 0;
+    QJsonObject taskConfig;
+    QJsonObject workshopTaskConfig() const override { return taskConfig; }
+    void workshopCheckpoint() override {
+        preciseWait(0);
+        if (resultAfter && clock.elapsed() >= resultAfter)
+            throw CombatEnded("offline result during Python wait");
+    }
+    void refreshObservation() override {
+        if (resultVisible) throw CombatEnded("offline challenge result");
+    }
+    int partyIndex() override { return hudIndex.value_or(TeamReplay::partyIndex()); }
     QString taskId() const override { return contextTask; }
     void workshopTelemetry(QJsonObject value) override { telemetry = std::move(value); }
     WorkshopHost() : TeamReplay({{"names", QJsonArray{"Baizhi", "Mortefi", "Verina"}}}) { clock.start(); }
@@ -56,6 +71,7 @@ class WorkshopTests final : public QObject {
     Q_OBJECT
     const QString root = qEnvironmentVariable("OKWW_WORKSHOP_TEST_ROOT", OKWW_SOURCE_ROOT);
     const QJsonArray team{"Baizhi", "Mortefi", "Verina"};
+    static PythonTeamMacro &python(TeamMacro &macro) { return dynamic_cast<PythonTeamMacro &>(macro); }
     QString source(const QString &name, bool stall = false) {
         return "from src.char." + name + " import " + name + " as Native\nimport time\nclass " + name +
                "(Native):\n"
@@ -84,6 +100,90 @@ class WorkshopTests final : public QObject {
             }
     }
   private slots:
+    void hostResultCannotBeSwallowedByWorkshopExceptionHandlers() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        const QString code = "from src.char.Baizhi import Baizhi as Native\n"
+            "class Baizhi(Native):\n    def do_perform(self):\n"
+            "        self.task.mouse_down()\n"
+            "        try:\n            self.task.next_frame()\n"
+            "        except Exception:\n            pass\n"
+            "        self.task.send_key('e')\n";
+        store.saveDraft(team, "Baizhi.py", code);
+        store.saveDraft(team, "Verina.py", source("Verina")+
+            "\n    @property\n    def is_healer(self):\n        return False\n");
+        WorkshopHost host;
+        auto macro = store.create(store.selection(host), host);
+        macro->reset();
+        QVERIFY(!python(*macro).isHealer(*host.characters()[2]));
+        host.resultVisible = true;
+        QVERIFY_THROWS_EXCEPTION(CombatEnded, macro->perform(host.entry()));
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+        for (const auto &event : host.input)
+            QVERIFY(!(event.toObject()["op"] == "key" && event.toObject()["down"].toBool()));
+        host.resultVisible = false;
+        macro->reset();
+        QVERIFY(!python(*macro).isHealer(*host.characters()[2]));
+        QVERIFY(macro->perform(host.entry()));
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+    }
+    void hiddenHudInterruptsWithoutErasingActorAndRecoveryCanExecuteAgain() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        WorkshopHost host;
+        auto macro = store.create(store.selection(host), host);
+        macro->reset();
+        host.hudIndex = -1;
+        QVERIFY_EXCEPTION_THROWN(macro->priority(host.entry(), false), CombatInterrupted);
+        QVERIFY_EXCEPTION_THROWN(macro->perform(host.entry()), CombatInterrupted);
+        QVERIFY(host.entry().state.current);
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+        host.hudIndex = 1;
+        QVERIFY_EXCEPTION_THROWN(macro->perform(host.entry()), CombatInterrupted);
+        host.hudIndex = 0;
+        QVERIFY(macro->perform(host.entry()));
+        QCOMPARE(*macro->priority(host.entry(), false), 333);
+        QFile trace(data.path()+"/logs/workshop.log");
+        QVERIFY(trace.open(QIODevice::ReadOnly));
+        const auto log = trace.readAll();
+        QVERIFY(log.contains("input_downs="));
+        QVERIFY(log.contains("key:8"));
+        QVERIFY(log.contains("button:left"));
+    }
+    void customHealerPolicyAndPythonTracebackSurviveTheBridge() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        for (auto member : team) {
+            const auto name = member.toString();
+            store.saveDraft(team, name+".py", source(name)+
+                "\n    @property\n    def is_healer(self):\n        return False\n"
+                "    def do_perform(self):\n        self.task.mouse_down()\n"
+                "        self.task.send_key('e')\n        raise RuntimeError('rotation diagnostic marker')\n");
+        }
+        WorkshopHost host;
+        auto macro = store.create(store.selection(host), host);
+        QVERIFY(host.characters()[2]->state.role == Role::Healer);
+        QVERIFY(!python(*macro).isHealer(*host.characters()[2]));
+        try {
+            macro->perform(host.entry());
+            QFAIL("Expected Python failure");
+        } catch (const ExecutionFailure &error) {
+            QVERIFY(errorText(error).contains("rotation diagnostic marker"));
+            QVERIFY(error.details.contains("Traceback"));
+            QVERIFY(error.details.contains("Baizhi.py"));
+        }
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+        QFile trace(data.path()+"/logs/workshop.log");
+        QVERIFY(trace.open(QIODevice::ReadOnly));
+        QVERIFY(trace.readAll().contains("rotation diagnostic marker"));
+    }
     void commonCombatStateTransfersBuffsSwitchesAndFreezeAgesAtomically() {
         WorkshopHost host;
         auto chars = host.characters();
@@ -108,16 +208,91 @@ class WorkshopTests final : public QObject {
         bad["chars"] = values;
         QVERIFY_EXCEPTION_THROWN(applyWorkshopCombatState(host, bad), std::runtime_error);
         QCOMPARE(workshopCombatState(host), state);
+        for (const auto &flag : {"current", "intro", "sub_intro", "check_f", "in_liberation"}) {
+            auto invalid = state;
+            if (QString(flag) == "in_liberation") invalid[flag] = "false";
+            else {
+                auto entries = invalid["chars"].toArray();
+                auto member = entries[1].toObject();
+                member[flag] = "false";
+                entries[1] = member;
+                invalid["chars"] = entries;
+            }
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, applyWorkshopCombatState(host, invalid));
+            QCOMPARE(workshopCombatState(host), state);
+        }
     }
     void protocolRejectsVersionAndCapabilityMismatchBeforeRotations() {
         QJsonObject hello{{"event", "ready"}, {"protocol", 2}, {"api", 1},
-            {"capabilities", QJsonArray{"request-identity", "combat-state-ages", "immutable-frame-cache", "bridge-metrics"}}};
+            {"capabilities", QJsonArray{"request-identity", "combat-state-ages", "immutable-frame-cache", "bridge-metrics",
+                                        "character-policy", "task-config-context"}}};
         validateWorkshopHandshake(hello);
         hello["protocol"] = 1;
         QVERIFY_EXCEPTION_THROWN(validateWorkshopHandshake(hello), std::runtime_error);
         hello["protocol"] = 2;
         hello["capabilities"] = QJsonArray{};
         QVERIFY_EXCEPTION_THROWN(validateWorkshopHandshake(hello), std::runtime_error);
+    }
+    void authorPoliciesAndPriorityChangesSyncThenRestoreWhenSwitchingBackToNative() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        store.saveDraft(team, "Baizhi.py", "from src.char.Baizhi import Baizhi as Native\n"
+            "class Baizhi(Native):\n"
+            "    def __init__(self, *a, **kw):\n        super().__init__(*a, **kw)\n"
+            "        self.gate = True\n        self.check_f_on_switch = False\n"
+            "    def skip_combat_check(self):\n        return self.gate\n"
+            "    def get_switch_priority(self, current=None, has_intro=False, target_low_con=False):\n"
+            "        self.set_char_type('SubDps')\n        self.set_buff_time(31)\n"
+            "        return 444 if target_low_con else 333\n"
+            "    def do_perform(self):\n"
+            "        assert self.task.config['Repeat Farm Count'] == 4321\n"
+            "        assert self.task.use_liberation is False\n"
+            "        assert self.task._in_combat and self.task.has_lavitator\n"
+            "        self.target_box_short_combat_check = True\n        self.gate = False\n");
+        WorkshopHost host;
+        host.contextTask = "FarmEchoTask";
+        host.taskConfig = {{"Repeat Farm Count", 4321}};
+        host.useLiberation = false;
+        host.hasLevitator = true;
+        const auto originalRole = host.entry().state.role;
+        const auto originalBuff = host.entry().state.buffTime;
+        const auto originalCheck = host.entry().checkFOnSwitch;
+        auto macro = store.create(store.selection(host), host);
+        macro->reset();
+        QVERIFY(!host.entry().checkFOnSwitch);
+        QVERIFY(python(*macro).skipsCombatCheck(host.entry()));
+        QCOMPARE(*python(*macro).priority(host.entry(), false, true), 444);
+        QCOMPARE(host.entry().state.role, Role::SubDps);
+        QCOMPARE(host.entry().state.buffTime, 31.);
+        QVERIFY(macro->perform(host.entry()));
+        QVERIFY(!python(*macro).skipsCombatCheck(host.entry()));
+        QVERIFY(python(*macro).usesShortTarget(host.entry()));
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+        macro.reset();
+        QCOMPARE(host.entry().state.role, originalRole);
+        QCOMPARE(host.entry().state.buffTime, originalBuff);
+        QCOMPARE(host.entry().checkFOnSwitch, originalCheck);
+        QFile saved(data.path()+"/configs-dualpc/FarmEchoTask.json");
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QVERIFY(QJsonDocument::fromJson(saved.readAll()).object()["Repeat Farm Count"] != 4321);
+    }
+    void resultDuringPythonSleepStillStopsTheWorkerAndReleasesHeldInput() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        store.saveDraft(team, "Baizhi.py", source("Baizhi", true));
+        WorkshopHost host;
+        auto macro = store.create(store.selection(host), host);
+        macro->reset();
+        host.resultAfter = host.clock.elapsed() + 500;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QVERIFY_EXCEPTION_THROWN(macro->perform(host.entry()), CombatEnded);
+        QVERIFY(elapsed.elapsed() < 3000);
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
     }
     void initTestCase() {
         if (workshopPython(root).isEmpty())

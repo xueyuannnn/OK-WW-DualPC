@@ -52,6 +52,7 @@ class CombatVision {
     bool healthBar(bool inCombat);
     bool shiftedHealthBar();
     bool deathDialog();
+    std::optional<bool> challengeResult(); // true: success; false: failure
     bool forte(Forte kind);
     double white(const QString &name);
     static double cdX(int width, int height, double fraction);

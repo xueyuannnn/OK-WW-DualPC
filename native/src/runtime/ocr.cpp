@@ -1,6 +1,7 @@
 // PP-OCR preprocessing and DB/CTC postprocessing follow the project's OnnxOCR
 // implementation (PaddlePaddle Authors, Apache-2.0). Inference is native OpenVINO.
 #include "ocr.hpp"
+#include "inference_wait.hpp"
 #include <openvino/openvino.hpp>
 #include <opencv2/imgproc.hpp>
 #include <numeric>
@@ -74,6 +75,9 @@ struct Ocr::Impl {
     QStringList alphabet;
     QString models;
     std::mutex mutex;
+    static void infer(ov::InferRequest &request, const std::function<void()> &checkpoint) {
+        inferWithCheckpoint(request, checkpoint, "OCR ");
+    }
     explicit Impl(const QString &path) : models(path) {
         QFile dictionary(path + "/ppocrv5_dict.txt");
         if (!dictionary.open(QIODevice::ReadOnly))
@@ -114,12 +118,12 @@ struct Ocr::Impl {
             }
         return tensor;
     }
-    std::vector<Quad> detect(const cv::Mat &image) {
+    std::vector<Quad> detect(const cv::Mat &image, const std::function<void()> &checkpoint) {
         double ratio = std::min(1., 960. / std::max(image.cols, image.rows));
         int h = std::max(32, pixelRound(int(image.rows * ratio) / 32.) * 32),
             w = std::max(32, pixelRound(int(image.cols * ratio) / 32.) * 32);
         detRequest.set_input_tensor(normalized(image, h, w, true));
-        detRequest.infer();
+        infer(detRequest, checkpoint);
         auto tensor = detRequest.get_output_tensor();
         auto shape = tensor.get_shape();
         if (shape.size() != 4 || shape[0] != 1 || shape[1] != 1 ||
@@ -131,6 +135,7 @@ struct Ocr::Impl {
         cv::findContours(mask, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
         std::vector<Quad> boxes;
         for (size_t i = 0; i < std::min<size_t>(1000, contours.size()); ++i) {
+            if (checkpoint && i % 16 == 0) checkpoint();
             std::vector<cv::Point2f> contour;
             for (auto p : contours[i])
                 contour.emplace_back(float(p.x), float(p.y));
@@ -163,13 +168,13 @@ struct Ocr::Impl {
             }
         return boxes;
     }
-    void orient(cv::Mat &image) {
+    void orient(cv::Mat &image, const std::function<void()> &checkpoint) {
         if (!cls) {
             cls = compile(models + "/cls/cls.onnx");
             clsRequest = cls.create_infer_request();
         }
         clsRequest.set_input_tensor(normalized(image, 48, 192, false));
-        clsRequest.infer();
+        infer(clsRequest, checkpoint);
         auto tensor = clsRequest.get_output_tensor();
         if (tensor.get_size() != 2 || tensor.get_element_type() != ov::element::f32)
             fail("OCR 方向输出无效");
@@ -177,7 +182,8 @@ struct Ocr::Impl {
         if (scores[1] > .9f && scores[1] > scores[0])
             cv::rotate(image, image, cv::ROTATE_180);
     }
-    std::vector<std::pair<QString, double>> recognize(const std::vector<cv::Mat> &images) {
+    std::vector<std::pair<QString, double>> recognize(const std::vector<cv::Mat> &images,
+                                                    const std::function<void()> &checkpoint) {
         std::vector<size_t> indices(images.size());
         std::iota(indices.begin(), indices.end(), 0);
         std::stable_sort(indices.begin(), indices.end(), [&](auto a, auto b) {
@@ -185,6 +191,7 @@ struct Ocr::Impl {
         });
         std::vector<std::pair<QString, double>> results(images.size());
         for (size_t begin = 0; begin < indices.size(); begin += 6) {
+            if (checkpoint) checkpoint();
             const size_t end = std::min(begin + 6, indices.size()), count = end - begin;
             double maxRatio = 320. / 48;
             for (size_t i = begin; i < end; ++i)
@@ -199,7 +206,7 @@ struct Ocr::Impl {
                        item.get_byte_size());
             }
             recRequest.set_input_tensor(batch);
-            recRequest.infer();
+            infer(recRequest, checkpoint);
             auto output = recRequest.get_output_tensor();
             auto shape = output.get_shape();
             if (shape.size() != 3 || shape[0] != count || shape[2] != size_t(alphabet.size()) ||
@@ -211,6 +218,7 @@ struct Ocr::Impl {
                 double score = 0;
                 int selected = 0, last = -1;
                 for (size_t t = 0; t < shape[1]; ++t) {
+                    if (checkpoint && t % 32 == 0) checkpoint();
                     auto row = data + (i * shape[1] + t) * shape[2];
                     int index = int(std::max_element(row, row + shape[2]) - row);
                     if (index && index != last) {
@@ -229,7 +237,8 @@ struct Ocr::Impl {
 Ocr::Ocr(const QString &directory) : impl_(std::make_unique<Impl>(directory)) {}
 Ocr::~Ocr() = default;
 QVector<TextLine> Ocr::read(const cv::Mat &image, std::optional<QRect> area, double threshold, bool detection,
-                            bool angle) {
+                            bool angle, const std::function<void()> &checkpoint) {
+    if (checkpoint) checkpoint();
     if (image.empty())
         return {};
     if (image.type() != CV_8UC3 || threshold < 0 || threshold > 1)
@@ -244,25 +253,26 @@ QVector<TextLine> Ocr::read(const cv::Mat &image, std::optional<QRect> area, dou
     if (!detection) {
         cv::Mat crop = source.clone();
         if (angle)
-            impl_->orient(crop);
-        auto [text, score] = impl_->recognize({crop}).front();
+            impl_->orient(crop, checkpoint);
+        auto [text, score] = impl_->recognize({crop}, checkpoint).front();
         if (score >= threshold && !text.isEmpty())
             result.append({text, bounds, score});
         return result;
     }
     std::vector<cv::Mat> crops;
     std::vector<QRect> rectangles;
-    for (const auto &quad : impl_->detect(source)) {
+    for (const auto &quad : impl_->detect(source, checkpoint)) {
+        if (checkpoint) checkpoint();
         auto crop = textCrop(source, quad);
         if (crop.empty())
             continue;
         if (angle)
-            impl_->orient(crop);
+            impl_->orient(crop, checkpoint);
         const auto r = cv::boundingRect(std::vector<cv::Point2f>(quad.begin(), quad.end()));
         crops.push_back(crop);
         rectangles.emplace_back(r.x + bounds.x(), r.y + bounds.y(), r.width, r.height);
     }
-    const auto recognized = impl_->recognize(crops);
+    const auto recognized = impl_->recognize(crops, checkpoint);
     for (size_t i = 0; i < recognized.size(); ++i) {
         const auto &[text, score] = recognized[i];
         if (score >= threshold && !text.isEmpty())

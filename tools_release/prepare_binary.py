@@ -87,7 +87,15 @@ def prepare_directory(stage: Path, review: Path) -> None:
 
 def write_manifest(stage: Path, source_exe_hash: str) -> list[Path]:
     root = windows_path(stage)
-    files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != "PACKAGE.json")
+    # Portable-engine checks can generate local logs, calibration and model
+    # caches. They are runtime data, even when they appear in a release stage.
+    def distributable(path: Path) -> bool:
+        parts = path.relative_to(root).parts
+        return not (len(parts) > 2 and parts[0] == "workshop-engine" and
+                    parts[1] in {"cache", "configs", "logs", "screenshots", "__pycache__"})
+
+    files = sorted(p for p in root.rglob("*")
+                   if p.is_file() and p.name != "PACKAGE.json" and distributable(p))
     manifest = {
         "version": "0.2.0", "channel": "preview", "variant": "full",
         "runtime": "C++ + Python workshop", "status": "candidate-awaiting-hardware-acceptance",

@@ -28,7 +28,7 @@ bool gardenPointsComplete(const QVector<TextLine> &lines) {
         const auto m = matches.next();
         const int current = QString(m.captured(1)).remove(',').remove("，").toInt();
         const int maximum = QString(m.captured(2)).remove(',').remove("，").toInt();
-        if (current >= 6000 && maximum == 6000)
+        if (current == 6000 && maximum == 6000)
             return true;
     }
     return false;
@@ -203,8 +203,18 @@ std::optional<Match> Garden::rewardChoice() {
     }
     return chosen.box;
 }
-std::optional<int> Garden::weeklyProgress() {
-    for (const auto &line : c_.text(.19, .83, .275, .90)) {
+std::optional<int> gardenWeeklyPoints(const QVector<TextLine> &lines, const cv::Mat &frame) {
+    // OCR needs the whole reward strip to detect isolated digits such as zero.
+    // Only the counter at the left is earned progress; the milestones to its
+    // right and possible rewards in activity cards must never count as progress.
+    const auto counter = gameBox(frame, .17, .81, .30, .90);
+    const auto overview = gameBox(frame, .08, .78, .36, .97);
+    QVector<TextLine> local;
+    for (const auto &line : lines)
+        if (overview.contains(line.center().toPoint())) local.append(line);
+    if (gardenPointsComplete(local)) return 6000;
+    for (const auto &line : local) {
+        if (!counter.contains(line.center().toPoint())) continue;
         const auto text = QString(line.text).remove(',').remove("，").trimmed();
         if (QRegularExpression("^\\d+$").match(text).hasMatch()) {
             bool ok = false;
@@ -213,11 +223,8 @@ std::optional<int> Garden::weeklyProgress() {
                 return value;
         }
     }
-    const auto lines = c_.text(.08, .68, .36, .97, .75);
-    if (gardenPointsComplete(lines))
-        return 6000;
     QString text;
-    for (const auto &line : lines)
+    for (const auto &line : local)
         text += line.text + ' ';
     auto matches = QRegularExpression("(\\d[\\d,，]*)\\s*[/／]\\s*(\\d[\\d,，]*)").globalMatch(text);
     while (matches.hasNext()) {
@@ -227,5 +234,28 @@ std::optional<int> Garden::weeklyProgress() {
             return value;
     }
     return {};
+}
+std::optional<int> Garden::weeklyProgress() {
+    const auto heading = c_.text(.09, .08, .65, .18, .75);
+    const bool weekly = bool(matchingText(heading,
+        "^(?:[周週]度[游遊][历歷]|[周週]常(?:[游遊][历歷]|任[务務])|Weekly\\s*(?:Activity|Exploration|Journey|Tasks?))$"));
+    const auto lines = c_.text(.05, .78, .98, .97, .75);
+    QVector<TextLine> local;
+    const auto overview = gameBox(c_.frame, .08, .78, .36, .97);
+    for (const auto &line : lines)
+        if (overview.contains(line.center().toPoint())) local.append(line);
+    // The weekly tab's text is also visible while the daily tab is selected.
+    // Require its own counter label/banner, not a daily activity number.
+    const bool counterLabel = bool(matchingText(local,
+        "^(?:[游遊][历歷]值|(?:Weekly\\s*)?(?:Exploration|Journey|Activity)\\s*Points?)$")) || gardenPointsComplete(local);
+    QJsonArray titles, strip;
+    for (const auto &line : heading) titles.append(line.json());
+    for (const auto &line : lines) strip.append(line.json());
+    weeklyObservation_ = {{"weekly_heading", weekly}, {"weekly_counter_label", counterLabel},
+                          {"heading_lines", titles}, {"reward_strip_lines", strip}};
+    if (!weekly || !counterLabel) return {};
+    const auto result = gardenWeeklyPoints(lines, c_.frame);
+    if (result) weeklyObservation_["progress"] = *result;
+    return result;
 }
 } // namespace okww::runtime

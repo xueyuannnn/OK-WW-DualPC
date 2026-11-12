@@ -76,14 +76,14 @@ QVector<TextLine> TaskContext::textScaled(QRect area, double threshold, double s
     return result;
 }
 void TaskContext::click(QPointF point, double after) {
-    input.click(point, .2);
+    input.taskClick(point);
     if (after)
         sleep(after);
 }
 void TaskContext::clickRelative(double x, double y, double after, bool hcenter) {
-    // Coordinate clicks and click_relative hold for .2 in BaseWWTask. Raw
-    // combat clicks go through CombatHost and keep their original .01 minimum.
-    input.click(gamePoint({frame.cols, frame.rows}, x, y, hcenter), .2);
+    // Navigation uses the configurable UI hold. Raw combat clicks retain their
+    // explicit rotation timing and never inherit the UI hold setting.
+    input.taskClick(gamePoint({frame.cols, frame.rows}, x, y, hcenter));
     if (after)
         sleep(after);
 }

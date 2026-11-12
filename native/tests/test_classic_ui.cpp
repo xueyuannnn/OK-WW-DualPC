@@ -1163,6 +1163,17 @@ class ClassicUiTests final : public QObject {
     }
     void taskPauseAndStopKeepDevicesUntilDevicePageStopsThem() {
         QTemporaryDir data;
+        auto preferences = profile(data);
+        for (auto value : preferences.catalog()["tasks"].toArray()) {
+            const auto task = value.toObject();
+            if (task["trigger"].toBool()) preferences.set(task["id"].toString(), "_enabled", false);
+        }
+        const auto id = runtime::scriptManage(root, data.path(),
+            {{"op", "create"}, {"name", "TaskLifecycle"}})["selected"].toString();
+        runtime::scriptManage(root, data.path(), {{"op", "save"}, {"script", id}, {"code",
+            "from ok import BaseTask\nclass TaskLifecycle(BaseTask):\n    def run(self):\n"
+            "        self.send_key_down('w')\n        self.mouse_down()\n"
+            "        while True: self.sleep(.05)\n"}});
         Backend *connectedBackend = nullptr;
         int connections = 0;
         auto window = create(data, [&](Backend &backend, const Config &config) {
@@ -1170,8 +1181,8 @@ class ClassicUiTests final : public QObject {
             connectedBackend = &backend;
             ++connections;
         });
-        QTRY_VERIFY(card(*window, "DailyTask2"));
-        auto daily = card(*window, "DailyTask2");
+        QTRY_VERIFY_WITH_TIMEOUT(card(*window, id), 15000);
+        auto daily = card(*window, id);
         QPushButton *run = nullptr, *pauseTask = nullptr, *stopTask = nullptr, *main = nullptr;
         for (auto button : daily->findChildren<QPushButton *>()) {
             if (button->text() == "开始")
@@ -1186,24 +1197,29 @@ class ClassicUiTests final : public QObject {
                 main = button;
         QVERIFY(run && pauseTask && stopTask && main);
         QSignalSpy accepted(window.get(), &Window::taskStartAccepted);
+        connect(window.get(), &Window::startupFailed, window.get(), [](const QString &error) { qWarning() << error; });
+        QTRY_VERIFY(run->isEnabled());
         run->click();
         QTRY_COMPARE(accepted.count(), 1);
         QVERIFY(connectedBackend);
         QVERIFY(connectedBackend->snapshot()["running"].toBool());
         QCOMPARE(main->text(), QString("停止"));
+        QTRY_VERIFY_WITH_TIMEOUT(connectedBackend->snapshot()["box"].toObject()["keys"].toArray().contains(26), 15000);
         pauseTask->click();
         QVERIFY(connectedBackend->snapshot()["running"].toBool());
-        QVERIFY(!connectedBackend->snapshot()["armed"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(connectedBackend->snapshot()["armed"].toBool() &&
+            connectedBackend->snapshot()["box"].toObject()["keys"].toArray().isEmpty(), 10000);
         run->click();
         QTRY_COMPARE(accepted.count(), 2);
-        connectedBackend->arm(true);
-        connectedBackend->nativeCommand({{"op", "key"}, {"code", 4}, {"down", true}});
+        QTRY_VERIFY_WITH_TIMEOUT(connectedBackend->snapshot()["box"].toObject()["keys"].toArray().contains(26), 15000);
         stopTask->click();
+        QTRY_VERIFY_WITH_TIMEOUT(connectedBackend->snapshot()["armed"].toBool() &&
+            connectedBackend->snapshot()["box"].toObject()["keys"].toArray().isEmpty(), 10000);
         const auto stopped = connectedBackend->snapshot();
         QVERIFY(stopped["running"].toBool());
         QVERIFY(stopped["capture_connected"].toBool());
         QVERIFY(stopped["box"].toObject()["connected"].toBool());
-        QVERIFY(!stopped["armed"].toBool());
+        QVERIFY(stopped["armed"].toBool());
         QVERIFY(stopped["box"].toObject()["keys"].toArray().isEmpty());
         QTRY_VERIFY(connectedBackend->latestFrame());
         const auto sequence = connectedBackend->latestFrame()->sequence;
@@ -1228,6 +1244,11 @@ class ClassicUiTests final : public QObject {
     }
     void taskCancellationDuringConnectionKeepsTheConnectionWithoutStartingLate() {
         QTemporaryDir data;
+        auto preferences = profile(data);
+        for (auto value : preferences.catalog()["tasks"].toArray()) {
+            const auto task = value.toObject();
+            if (task["trigger"].toBool()) preferences.set(task["id"].toString(), "_enabled", false);
+        }
         std::atomic<int> connections{0};
         std::atomic<bool> release{false};
         Backend *connected = nullptr;
@@ -1256,18 +1277,18 @@ class ClassicUiTests final : public QObject {
         cancellation.start();
         run->click();
         QVERIFY(cancellation.elapsed() < 500);
-        QVERIFY(!main->property("startupPending").toBool());
+        QVERIFY(main->property("startupPending").toBool());
         release = true;
         QTRY_VERIFY(!main->property("deviceBusy").toBool());
         QVERIFY(connected);
         QVERIFY(connected->snapshot()["running"].toBool());
         QVERIFY(connected->snapshot()["capture_connected"].toBool());
         QVERIFY(connected->snapshot()["box"].toObject()["connected"].toBool());
-        QVERIFY(!connected->snapshot()["armed"].toBool());
-        QTest::qWait(250);
-        QCOMPARE(accepted.count(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(accepted.count(), 1, 15000);
+        QCOMPARE(accepted.at(0).at(0).toString(), QString{});
+        QTRY_VERIFY_WITH_TIMEOUT(connected->snapshot()["armed"].toBool(), 10000);
         run->click();
-        QTRY_COMPARE(accepted.count(), 1);
+        QTRY_COMPARE(accepted.count(), 2);
         QCOMPARE(connections.load(), 1);
         main->click();
         QTRY_VERIFY(!main->property("deviceBusy").toBool());

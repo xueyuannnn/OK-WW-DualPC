@@ -41,6 +41,7 @@ struct Scenes {
     QVector<QJsonObject> events;
     std::function<void(QJsonObject)> action;
     std::function<QVector<TextLine>(const cv::Mat &, QRect)> scaledText;
+    std::function<QVector<TextLine>(QRect, QVector<TextLine>)> textOverride;
     QPoint pointer;
     Input input;
     TaskContext c;
@@ -65,6 +66,7 @@ struct Scenes {
                   for (auto line : words[scene])
                       if (area.contains(line.center().toPoint()))
                           out << line;
+                  if (textOverride) return textOverride(area, out);
                   return out;
               }) {
         c.wallTime = [] { return QDateTime(QDate(2030, 1, 2), QTime(12, 0)); };
@@ -518,7 +520,7 @@ class WorkflowTests : public QObject {
     void weeklyCompletedDoesNotEnterAnotherRound() {
         Scenes s;
         s.frame("book", {"gray_book_quest"});
-        s.words["book"] = {s.word("本周游历值已满", .1, .8, .22)};
+        s.words["book"] = {s.word("周度游历", .3, .12), s.word("本周游历值已满", .1, .8, .22)};
         bool book = false;
         int claims = 0;
         s.action = [&](auto e) {
@@ -539,6 +541,105 @@ class WorkflowTests : public QObject {
         Garden(s.c, s.root).run();
         QVERIFY(book);
         QCOMPARE(claims, 2);
+        QVERIFY(s.input.idle());
+    }
+    void weeklyOverviewCounterSurvivesIsolatedDigitOcrFailure_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::addColumn<QString>("counter");
+        QTest::addColumn<int>("expected");
+        for (const auto size : {QSize(1280, 720), QSize(1920, 1080), QSize(2560, 1440)})
+            for (const auto &counter : {QString("0"), QString("3000"), QString("6,000"), QString(""), QString("6001"), QString("5900/6000"), QString("6001/6000")}) {
+                const auto name = QString::number(size.height()) + '-' + (counter.isEmpty() ? "missing" : counter);
+                QTest::newRow(qPrintable(name)) << size << counter
+                    << (counter.isEmpty() || counter.startsWith("6001") ? -1 : QString(counter).section('/', 0, 0).remove(',').toInt());
+            }
+    }
+    void weeklyOverviewCounterSurvivesIsolatedDigitOcrFailure() {
+        QFETCH(QSize, size);
+        QFETCH(QString, counter);
+        QFETCH(int, expected);
+        Scenes s(size);
+        s.frame("book", {"gray_book_quest"});
+        s.words["book"] = {s.word("周度游历", .3, .12), s.word(counter, .195, .84, .06, .045),
+                           s.word("游历值", .195, .9, .06), s.word("6000", .88, .9, .05),
+                           s.word("3000-6000", .27, .68)};
+        // Recorded PP-OCR behavior: isolated zero is missed in the small crop,
+        // but detected when the complete horizontal reward strip is available.
+        s.textOverride = [&](QRect area, QVector<TextLine> lines) {
+            if (area.width() < size.width() / 2)
+                lines.erase(std::remove_if(lines.begin(), lines.end(), [&](const auto &line) {
+                    return line.text == counter;
+                }), lines.end());
+            return lines;
+        };
+        s.show("book");
+        Garden garden(s.c, s.root);
+        QCOMPARE(garden.weeklyProgress(), expected < 0 ? std::optional<int>{} : std::optional(expected));
+        QCOMPARE(garden.weeklyObservation()["weekly_heading"].toBool(), true);
+        QCOMPARE(s.clicks(), 0);
+        // Both tab headings remain visible on the daily page. Its activity
+        // number must not become weekly progress when selecting the tab failed.
+        for (auto &line : s.words["book"])
+            if (line.text == "游历值") line.text = "活跃度";
+        s.c.refresh();
+        if (!counter.contains('/')) QVERIFY(!garden.weeklyProgress());
+        // A bare number or reward scale without the weekly page heading must
+        // not permit another run, including an apparently valid 6000 counter.
+        s.words["book"].removeFirst();
+        s.c.refresh();
+        QVERIFY(!garden.weeklyProgress());
+    }
+    void weeklyTabRetriesBeforeClaimingAndDoesNotStartCompletedRound() {
+        Scenes s;
+        s.frame("book", {"gray_book_quest"});
+        int opens = 0, tabs = 0, claims = 0;
+        s.action = [&](auto e) {
+            if (s.keyUp(e, Input::keyCode("esc"))) s.scene = "world";
+            if (s.keyUp(e, Input::keyCode("f2"))) { s.scene = "book"; ++opens; }
+            if (!s.leftUp(e) || s.scene != "book") return;
+            const auto nearPoint = [&](double x, double y) {
+                return (s.pointer - gamePoint(s.size, x, y)).manhattanLength() < 10;
+            };
+            if (nearPoint(.343, .129) && ++tabs == 2)
+                s.words["book"] = {s.word("周度游历", .3, .12), s.word("本周游历值已满", .1, .8, .22)};
+            if (nearPoint(.927, .893)) {
+                if (tabs < 2) fail("周常页面确认前点击领奖");
+                ++claims;
+            }
+            if (nearPoint(.246, .486)) fail("周常完成后仍开始下一轮");
+        };
+        s.show("world");
+        Garden(s.c, s.root).run();
+        QCOMPARE(opens, 2);
+        QCOMPARE(tabs, 2);
+        QCOMPARE(claims, 2);
+        QVERIFY(s.input.idle());
+    }
+    void weeklyUnknownProgressPreservesPageAndOcrBeforeDailyRecovery() {
+        Scenes s;
+        s.frame("book", {"gray_book_quest"});
+        s.words["book"] = {s.word("周度游历", .3, .12), s.word("游历值", .195, .9, .06),
+                           s.word("6000", .88, .9, .05)};
+        bool saved = false;
+        s.c.diagnostic = [&](QString, QJsonObject event) {
+            QCOMPARE(s.scene, QString("book"));
+            QCOMPARE(s.c.task, QString("GardenTask"));
+            QVERIFY(event["weekly_observation"].toObject()["weekly_heading"].toBool());
+            QVERIFY(!event["weekly_observation"].toObject().contains("progress"));
+            saved = true;
+        };
+        s.action = [&](auto e) {
+            if (s.keyUp(e, Input::keyCode("f2"))) s.scene = "book";
+            if (s.keyUp(e, Input::keyCode("esc"))) s.scene = "world";
+            if (!s.leftUp(e) || s.scene != "book") return;
+            for (const auto point : {gamePoint(s.size, .246, .486), gamePoint(s.size, .927, .893)})
+                if ((s.pointer - point).manhattanLength() < 10)
+                    fail("未识别当前游历值仍点击开始或领奖");
+        };
+        s.show("world");
+        QVERIFY_EXCEPTION_THROWN(Garden(s.c, s.root).run(), NavigationFailure);
+        QVERIFY(saved);
+        QCOMPARE(s.scene, QString("book"));
         QVERIFY(s.input.idle());
     }
     void shopBuysRecommendedThenInOrderReservesTenAndStopsOnUncertainDebit_data() {
@@ -625,7 +726,7 @@ class WorkflowTests : public QObject {
         s.frame("blessing", {});
         s.frame("finish", {"a_garden_back", "a_garden_restart"});
         s.frame("book", {"gray_book_quest"});
-        s.words["book"] = {s.word("本周游历值已满", .1, .8, .22)};
+        s.words["book"] = {s.word("周度游历", .3, .12), s.word("本周游历值已满", .1, .8, .22)};
         int day = 1, speed = 1, opened = 0, used = 0, claims = 0, advanced = 0;
         const auto update = [&] {
             const auto stage = s.word(QString("阶段1/7 第%1天").arg(day), .03, .11, .18);
@@ -733,7 +834,7 @@ class WorkflowTests : public QObject {
             else if (s.scene == "book") {
                 if (nearPoint(.343, .129)) {
                     weekly = true;
-                    s.words["book"] = {s.word("本周游历值已满", .1, .8, .22)};
+                    s.words["book"] = {s.word("周度游历", .3, .12), s.word("本周游历值已满", .1, .8, .22)};
                 }
                 if (weekly && nearPoint(.927, .893))
                     ++weeklyClaims;

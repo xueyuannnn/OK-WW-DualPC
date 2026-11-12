@@ -363,74 +363,79 @@ QJsonObject PythonTeamMacro::receive(int timeoutMs) {
 void PythonTeamMacro::startWorker() {
     if (loaded_)
         return;
-    QElapsedTimer startup;
-    startup.start();
-    frameCopies_ = frameRequests_ = 0;
-    startupMs_ = pingMs_ = copyMs_ = 0;
-    frameInputSamples_.clear();
-    telemetryClock_.invalidate();
-    session_ = QUuid::createUuid().toString(QUuid::Id128);
-    const auto python = workshopPython(root_);
-    if (python.isEmpty())
-        fail("工坊 Python 运行库缺失，请使用完整包");
-    mappingName_ = "Local\\OKWW-workshop-" + QUuid::createUuid().toString(QUuid::Id128);
-    mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 64 * 1024 * 1024,
-                                  reinterpret_cast<LPCWSTR>(mappingName_.utf16()));
-    if (!mapping_)
-        fail("无法创建工坊共享图像");
-    mapped_ = MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, 64 * 1024 * 1024);
-    if (!mapped_)
-        fail("无法映射工坊共享图像");
-    process_.setProcessEnvironment(environment());
-    process_.setWorkingDirectory(pythonRoot_);
-    process_.start(python, {pythonRoot_ + "/native/bridge/workshop_worker.py", "--root", pythonRoot_,
-                            "--data", data_, "--mapping", mappingName_});
-    if (!process_.waitForStarted(10000))
-        fail("工坊兼容引擎启动失败");
-    validateWorkshopHandshake(receive(90000));
-    loaded_ = true;
-    QJsonArray party;
-    for (auto c : h_.characters()) {
-        originalPolicies_.append({c, c->state.role, c->state.buffTime, c->checkFOnSwitch});
-        party.append(QJsonObject{{"class", c->state.className},
-                                 {"canonical", c->state.name},
-                                 {"index", c->state.index},
-                                 {"element", c->state.ringIndex},
-                                 {"role", c->state.role == Role::Healer   ? "Healer"
-                                          : c->state.role == Role::SubDps ? "SubDps"
-                                                                          : "MainDps"},
-                                 {"buff", c->state.buffTime}});
+    try {
+        QElapsedTimer startup;
+        startup.start();
+        frameCopies_ = frameRequests_ = 0;
+        startupMs_ = pingMs_ = copyMs_ = 0;
+        frameInputSamples_.clear();
+        telemetryClock_.invalidate();
+        session_ = QUuid::createUuid().toString(QUuid::Id128);
+        const auto python = workshopPython(root_);
+        if (python.isEmpty())
+            fail("工坊 Python 运行库缺失，请使用完整包");
+        mappingName_ = "Local\\OKWW-workshop-" + QUuid::createUuid().toString(QUuid::Id128);
+        mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 64 * 1024 * 1024,
+                                      reinterpret_cast<LPCWSTR>(mappingName_.utf16()));
+        if (!mapping_)
+            fail("无法创建工坊共享图像");
+        mapped_ = MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, 64 * 1024 * 1024);
+        if (!mapped_)
+            fail("无法映射工坊共享图像");
+        process_.setProcessEnvironment(environment());
+        process_.setWorkingDirectory(pythonRoot_);
+        process_.start(python, {pythonRoot_ + "/native/bridge/workshop_worker.py", "--root", pythonRoot_,
+                                "--data", data_, "--mapping", mappingName_});
+        if (!process_.waitForStarted(10000))
+            fail("工坊兼容引擎启动失败");
+        validateWorkshopHandshake(receive(90000));
+        loaded_ = true;
+        QJsonArray party;
+        for (auto c : h_.characters()) {
+            originalPolicies_.append({c, c->state.role, c->state.buffTime, c->checkFOnSwitch});
+            party.append(QJsonObject{{"class", c->state.className},
+                                     {"canonical", c->state.name},
+                                     {"index", c->state.index},
+                                     {"element", c->state.ringIndex},
+                                     {"role", c->state.role == Role::Healer   ? "Healer"
+                                              : c->state.role == Role::SubDps ? "SubDps"
+                                                                              : "MainDps"},
+                                     {"buff", c->state.buffTime}});
+        }
+        sync(call({{"op", "load"}, {"party", party}}));
+        startupMs_ = startup.nsecsElapsed() / 1e6;
+        pingSamples_.clear();
+        for (int i = 0; i < 15; ++i) {
+            QElapsedTimer ping;
+            ping.start();
+            call({{"op", "ping"}});
+            pingSamples_.append(ping.nsecsElapsed() / 1e6);
+        }
+        pingMs_ = percentile(pingSamples_, .5);
+        report();
+    } catch (...) {
+        stop();
+        throw;
     }
-    sync(call({{"op", "load"}, {"party", party}}));
-    startupMs_ = startup.nsecsElapsed() / 1e6;
-    pingSamples_.clear();
-    for (int i = 0; i < 15; ++i) {
-        QElapsedTimer ping;
-        ping.start();
-        call({{"op", "ping"}});
-        pingSamples_.append(ping.nsecsElapsed() / 1e6);
-    }
-    pingMs_ = percentile(pingSamples_, .5);
-    report();
 }
 QJsonObject PythonTeamMacro::call(QJsonObject request) {
     const bool wasBusy = h_.macroBusy;
     h_.macroBusy = true;
-    request["use_liberation"] = h_.useLiberation;
-    request["in_combat"] = h_.combatEngaged();
-    request["has_levitator"] = h_.hasLevitator;
-    request["current"] = h_.partyIndex();
-    request["f_rearm"] = h_.macroRearmAt;
-    request["f_age"] = h_.now() - h_.macroRearmAt;
-    requestId_ = QString::number(++requestSequence_);
-    request["protocol"] = workshopProtocolVersion;
-    request["api"] = workshopApiVersion;
-    request["session"] = session_;
-    request["request_id"] = requestId_;
-    request["task"] = h_.taskId();
-    request["task_config"] = h_.workshopTaskConfig();
-    request["host_state"] = workshopCombatState(h_);
     try {
+        request["use_liberation"] = h_.useLiberation;
+        request["in_combat"] = h_.combatEngaged();
+        request["has_levitator"] = h_.hasLevitator;
+        request["current"] = h_.partyIndex();
+        request["f_rearm"] = h_.macroRearmAt;
+        request["f_age"] = h_.now() - h_.macroRearmAt;
+        requestId_ = QString::number(++requestSequence_);
+        request["protocol"] = workshopProtocolVersion;
+        request["api"] = workshopApiVersion;
+        request["session"] = session_;
+        request["request_id"] = requestId_;
+        request["task"] = h_.taskId();
+        request["task_config"] = h_.workshopTaskConfig();
+        request["host_state"] = workshopCombatState(h_);
         write(request);
         const auto response = receive(600000);
         if (response["event"] != "reply" || response["session"] != session_ || response["request_id"] != requestId_)

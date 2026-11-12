@@ -389,6 +389,8 @@ void Capture::publish(const uint8_t *data, size_t length, int w, int h, int stri
         std::lock_guard lock(mutex_);
         f->sequence = ++seq_;
         latest_ = f;
+        if (error_ == "采集驱动返回了不完整图像")
+            error_.clear();
         arrivals_.push_back(stamp);
         if (arrivals_.size() > 240)
             arrivals_.pop_front();

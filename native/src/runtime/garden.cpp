@@ -217,11 +217,25 @@ void Garden::loop() {
     }
 }
 void Garden::openWeekly() {
-    navigation_.openBook("gray_book_quest");
-    c_.sleep(1);
-    c_.clickRelative(.343, .129, 1);
+    bool opened = false;
+    for (int attempt = 0; attempt < 2 && !opened; ++attempt) {
+        navigation_.openBook("gray_book_quest");
+        c_.sleep(.5);
+        c_.clickRelative(.343, .129, .5);
+        opened = c_.wait([&] { return weeklyProgress().has_value(); }, 6, .3);
+        if (!opened && c_.info)
+            c_.info("周常进度", QString("页面或计数尚未确认，重新打开 %1/2").arg(attempt + 1));
+    }
+    if (!opened) weeklyFailure("无法确认周常页面或游历值，已保存识别现场，不自动开始乐园");
+    // Claim only after proving this is the weekly overview. The second click
+    // dismisses the reward overlay; read progress again before starting a round.
     c_.clickRelative(.927, .893, 3);
     c_.clickRelative(.927, .893, 2);
+}
+void Garden::weeklyFailure(const QString &reason) {
+    if (c_.diagnostic)
+        c_.diagnostic(reason, {{"weekly_observation", weeklyObservation_}});
+    throw NavigationFailure(reason);
 }
 void Garden::run() {
     TaskScope scope(c_, "GardenTask", config_);
@@ -255,7 +269,7 @@ void Garden::run() {
             },
             5);
         if (!progress)
-            throw NavigationFailure("无法确认周任务进度，不自动重开乐园");
+            weeklyFailure("领奖后无法确认周任务进度，已保存识别现场，不自动重开乐园");
         if (c_.info)
             c_.info("本周游历值", QString("%1/6000").arg(*progress));
         if (*progress >= 6000)

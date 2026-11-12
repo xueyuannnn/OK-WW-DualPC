@@ -79,6 +79,7 @@ void Backend::start(const Config &cfg, bool simulation) {
         box_->connect();
         running_ = true;
         error_.clear();
+        inputFault_ = {};
     } catch (const std::exception &e) {
         error_ = errorText(e);
         stop();
@@ -105,6 +106,12 @@ void Backend::stop() {
     simulated_.reset();
 }
 FramePtr Backend::frameLocked() {
+    auto f = rawFrameLocked();
+    if (!f || nowNs() - f->captured > cfg_.d("capture.stale_after") * 1e9)
+        return nullptr;
+    return f;
+}
+FramePtr Backend::rawFrameLocked() {
     if (!running_)
         return nullptr;
     if (simulation_ && simulated_) {
@@ -113,10 +120,29 @@ FramePtr Backend::frameLocked() {
         f->sequence = uint64_t(f->captured / 16666667);
         return f;
     }
-    auto f = capture_ ? capture_->latest() : nullptr;
-    if (!f || nowNs() - f->captured > cfg_.d("capture.stale_after") * 1e9)
-        return nullptr;
-    return f;
+    return capture_ ? capture_->latest() : nullptr;
+}
+void Backend::disarmFaultLocked(const QString &reason, const QString &message) {
+    // Capture the first cause before releasing controls or a later frame can
+    // replace the evidence. Ordinary Pause/cleanup must not erase it.
+    const auto frame = rawFrameLocked();
+    const auto box = box_ ? box_->state() : QJsonObject{};
+    if (inputFault_.isEmpty()) {
+        inputFault_ = {{"reason", reason}, {"timestamp", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+            {"heartbeat_age_ms", heartbeat_ ? double(nowNs() - heartbeat_) / 1e6 : -1.},
+            {"frame_age_ms", frame ? double(nowNs() - frame->captured) / 1e6 : -1.},
+            {"frame_sequence", frame ? QString::number(frame->sequence) : QString{}},
+            {"stale_after_ms", cfg_.d("capture.stale_after") * 1000},
+            {"capture_error", capture_ ? capture_->error() : QString{}},
+            {"box_connected", box["connected"]}, {"keys", box["keys"]},
+            {"buttons", box["buttons"]}, {"modifiers", box["modifiers"]}};
+        error_ = "任务已暂停：" + message;
+    }
+    armed_ = false;
+    if (box_) {
+        try { box_->release(); }
+        catch (const std::exception &error) { inputFault_["release_error"] = errorText(error); }
+    }
 }
 QImage Backend::preview(QSize size, uint64_t &after) {
     FramePtr f;
@@ -137,6 +163,8 @@ void Backend::arm(bool enabled) {
         if (!box_->state()["keyboard"].toBool())
             fail(box_->state()["capability"].toString("盒子没有可用键盘路由"));
         heartbeat_ = nowNs();
+        error_.clear();
+        inputFault_ = {};
     }
     armed_ = enabled;
     if (!enabled && box_)
@@ -198,6 +226,7 @@ QJsonObject Backend::snapshot() {
             {"box", c},
             {"actual", actual},
             {"error", error_.isEmpty() && capture_ ? capture_->error() : error_},
+            {"input_fault", inputFault_},
             {"age_ms", f ? double(nowNs() - f->captured) / 1e6 : -1.0},
             {"simulation", simulation_}};
 }
@@ -205,18 +234,13 @@ void Backend::monitor() {
     while (!exit_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         std::lock_guard lock(mutex_);
-        if (armed_ &&
-            (!frameLocked() || !box_ || !box_->connected() || nowNs() - heartbeat_ > 1500000000LL)) {
-            armed_ = false;
-            error_ = "任务已暂停：视频、盒子或兼容引擎连接中断";
-            if (box_) {
-                try {
-                    box_->release();
-                } catch (const std::exception &e) {
-                    error_ += "；" + errorText(e);
-                }
-            }
-        }
+        if (!armed_) continue;
+        if (!box_ || !box_->connected())
+            disarmFaultLocked("box_disconnected", "键鼠盒子连接中断");
+        else if (!frameLocked())
+            disarmFaultLocked("capture_stale", "采集画面停止更新或已过期");
+        else if (nowNs() - heartbeat_ > 1500000000LL)
+            disarmFaultLocked("heartbeat_timeout", "任务心跳超过 1500 毫秒未更新");
     }
 }
 QJsonObject Backend::dispatch(const QJsonObject &q) {
@@ -258,20 +282,39 @@ QJsonObject Backend::dispatch(const QJsonObject &q) {
         box_->probe();
         return snapshot();
     }
-    if (!armed_ || !frameLocked() || !box_ || !box_->connected())
-        fail("C++ 输入通道已暂停或设备未就绪");
-    if (op == "move")
-        box_->move(q["x"].toInt(), q["y"].toInt());
-    else if (op == "absolute")
-        box_->absolute(q["x"].toInt(), q["y"].toInt(), q["width"].toInt(), q["height"].toInt());
-    else if (op == "button")
-        box_->button(q["name"].toString(), q["down"].toBool());
-    else if (op == "key")
-        box_->key(q["code"].toInt(), q["down"].toBool());
-    else if (op == "wheel")
-        box_->wheel(q["steps"].toInt());
-    else
-        fail("未知的原生输入操作");
+    // Releasing a control is always allowed, including after Pause or a stale
+    // frame. Never turn a cleanup key-up into a second, misleading exception.
+    if ((op == "key" || op == "button") && !q["down"].toBool()) {
+        if (box_ && box_->connected()) {
+            if (op == "key") box_->key(q["code"].toInt(), false);
+            else box_->button(q["name"].toString(), false);
+        }
+        return box_ ? box_->state() : QJsonObject{};
+    }
+    if (armed_ && (!box_ || !box_->connected()))
+        disarmFaultLocked("box_disconnected", "键鼠盒子连接中断");
+    else if (armed_ && !frameLocked())
+        disarmFaultLocked("capture_stale", "采集画面停止更新或已过期");
+    if (!armed_)
+        fail(error_.isEmpty() ? "C++ 输入通道已暂停，请先启动自动任务" : error_);
+    try {
+        if (op == "move")
+            box_->move(q["x"].toInt(), q["y"].toInt());
+        else if (op == "absolute")
+            box_->absolute(q["x"].toInt(), q["y"].toInt(), q["width"].toInt(), q["height"].toInt());
+        else if (op == "button")
+            box_->button(q["name"].toString(), q["down"].toBool());
+        else if (op == "key")
+            box_->key(q["code"].toInt(), q["down"].toBool());
+        else if (op == "wheel")
+            box_->wheel(q["steps"].toInt());
+        else
+            fail("未知的原生输入操作");
+    } catch (const std::exception &error) {
+        if (!box_->connected())
+            disarmFaultLocked("input_transport_error", "键鼠盒子通信失败：" + errorText(error));
+        throw;
+    }
     return box_->state();
 }
 void Backend::serve() {

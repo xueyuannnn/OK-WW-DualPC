@@ -248,6 +248,7 @@ const Templates::Scaled &Templates::scaled(const QString &name, QSize size) {
     return cache_[name] = {filtered(resized, s.filter), adjusted};
 }
 QVector<Match> Templates::find(const cv::Mat &frame, const QString &name, MatchOptions options) {
+    if (checkpoint_) checkpoint_();
     if (frame.empty())
         return {};
     const auto &feature = scaled(name, {frame.cols, frame.rows});
@@ -309,10 +310,13 @@ QVector<Match> Templates::find(const cv::Mat &frame, const QString &name, MatchO
             return {};
     }
     cv::Mat scores;
+    if (checkpoint_) checkpoint_();
     cv::matchTemplate(search, pattern, scores, cv::TM_CCOEFF_NORMED);
+    if (checkpoint_) checkpoint_();
     QVector<Match> matches;
     const int limit = options.limit <= 0 ? 1000 : std::min(1000, options.limit);
     while (matches.size() < limit) {
+        if (checkpoint_ && matches.size() % 16 == 0) checkpoint_();
         double score;
         cv::Point point;
         cv::minMaxLoc(scores, nullptr, &score, nullptr, &point);

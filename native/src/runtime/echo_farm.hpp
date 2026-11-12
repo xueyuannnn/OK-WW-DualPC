@@ -44,8 +44,8 @@ class EchoFarm {
         : c_(context), combat_(combat), navigation_(context),
           world_(
               context, [&combat] { return combat.active(); },
-              [&detector](const cv::Mat &frame, double threshold) {
-                  return detector.detect(frame, threshold);
+              [&detector, &context](const cv::Mat &frame, double threshold) {
+                  return detector.detect(frame, threshold, 0, [&] { context.execution.checkpoint(); });
               }) {}
     int run(bool enhanced = false, const QJsonObject &config = {});
 };

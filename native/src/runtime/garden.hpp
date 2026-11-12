@@ -20,6 +20,7 @@ struct PurchaseControls {
 QString normalizeGardenStyle(QString text);
 QString preferredGardenStyle(const QJsonObject &config);
 bool gardenPointsComplete(const QVector<TextLine> &lines);
+std::optional<int> gardenWeeklyPoints(const QVector<TextLine> &lines, const cv::Mat &frame);
 int selectGardenCard(const QVector<GardenCard> &cards);
 int gardenRarity(const cv::Mat &image, QRect label);
 double recommendationScore(const cv::Mat &image, const cv::Mat &badge, QRect bounds, double scale);
@@ -35,6 +36,7 @@ class Garden {
     bool blessingOpen_ = false, initialBlessingChecked_ = false;
     double speedChecked_ = -1e12;
     int speedAttempts_ = 0;
+    QJsonObject weeklyObservation_;
     std::optional<QPair<int, int>> turn();
     std::pair<std::optional<TextLine>, std::optional<int>> blessingControls();
     bool useBlessing(bool open = false);
@@ -43,6 +45,7 @@ class Garden {
     bool active();
     void loop();
     void openWeekly();
+    [[noreturn]] void weeklyFailure(const QString &reason);
     std::optional<int> money();
     QVector<GardenItem> inventory();
     bool waitPurchase(int before, int price);
@@ -51,6 +54,7 @@ class Garden {
     Garden(TaskContext &context, const QString &resources);
     std::optional<Match> rewardChoice();
     std::optional<int> weeklyProgress();
+    QJsonObject weeklyObservation() const { return weeklyObservation_; }
     int shop();
     void run();
 };

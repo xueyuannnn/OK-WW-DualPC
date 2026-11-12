@@ -727,6 +727,10 @@ QWidget *Window::devicePage() {
     addField(af, "每次最大移动量", "kmbox.move_chunk", true, 1, 32767);
     addDecimal(af, "回到角落后等待（秒）", "kmbox.home_wait", 0, 1);
     addDecimal(af, "移动间隔（秒）", "kmbox.move_interval", 0, .1);
+    addDecimal(af, "定位后等待（秒）", "kmbox.position_settle", .11, 1);
+    settings_["kmbox.position_settle"]->setToolTip("默认 0.12 秒；定位完成后再点击或滚轮，最少 0.11 秒。已经等过的时间不重复等待。");
+    addDecimal(af, "界面点击按住（秒）", "kmbox.ui_click_hold", .1, .5);
+    settings_["kmbox.ui_click_hold"]->setToolTip("默认 0.12 秒，仅用于内置任务的界面点击；角色连招和工坊明确指定的按住时间保留原值。");
     addDecimal(af, "应答超时（秒）", "kmbox.timeout", .01, 5);
     for (auto pair : {std::pair{"横向移动倍率", "kmbox.counts_per_pixel_x"},
                       std::pair{"纵向移动倍率", "kmbox.counts_per_pixel_y"}}) {
@@ -1256,23 +1260,33 @@ void Window::pauseExecution() {
     updateStartControl();
 }
 void Window::stopTask() {
-    // A task may be cancelled while its connector owns the backend mutex.
-    // Let that connection finish for preview; never queue device teardown.
-    const bool connecting = pendingStart_ && busy_;
-    pendingStart_.reset();
-    startupTimer_.stop();
-    if (!connecting)
-        pauseExecution();
-    else
-        automation_ = false;
+    if (pendingStart_) {
+        // Cancel the selected task, not the device session being connected.
+        pendingStart_->task.clear();
+        pendingStart_->exitAfter = false;
+        pendingStart_->limitSeconds = 0;
+    } else if (engineReady_ && automation_ && !currentTask_.isEmpty()) {
+        send({{"op", "stop_task"}, {"task", currentTask_}},
+             [this](auto state) {
+                 automation_ = !state["paused"].toBool(true);
+                 currentTask_.clear();
+                 updateStartControl();
+             }, [this](const QString &error) { showExecutionError(error); });
+    }
     taskStopped_ = true;
     updateStartControl();
     refreshTaskInfo();
-    log("当前任务已停止，采集卡与盒子保持连接；断开设备请到双机设置点击“停止”。");
+    log("当前任务已停止，实时触发继续运行；停止线程请到双机设置点击“停止”。");
 }
 void Window::pause() {
     if (pendingStart_) {
-        stopTask();
+        pendingStart_.reset();
+        startupTimer_.stop();
+        if (busy_)
+            automation_ = false;
+        else
+            pauseExecution();
+        updateStartControl();
         return;
     }
     pauseExecution();
@@ -1294,7 +1308,6 @@ void Window::startTask(QString id, bool exitAfter, double limitSeconds) {
         failStartup(errorText(e));
         return;
     }
-    pauseExecution();
     pendingStart_ = StartRequest{id, exitAfter, limitSeconds, config_};
     startupTimer_.start();
     updateStartControl();
@@ -1313,6 +1326,7 @@ void Window::continueStart() {
             return;
         }
         pendingStart_->connected = true;
+        pauseExecution();
         prepareConnection(pendingStart_->config);
         return;
     }

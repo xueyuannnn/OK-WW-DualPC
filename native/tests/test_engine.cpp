@@ -12,6 +12,90 @@ static Config simulationConfig() {
 class EngineTests final : public QObject {
     Q_OBJECT
   private slots:
+    void foregroundCompletionAndCancellationReturnToEnabledTriggers() {
+        const QString root = OKWW_SOURCE_ROOT;
+        QTemporaryDir data;
+        writeJson(data.path()+"/dualpc.json", simulationConfig().json);
+        Profile profile(data.path()+"/configs-dualpc", root+"/native/resources/catalog.json");
+        for (auto value : profile.catalog()["tasks"].toArray()) {
+            const auto task = value.toObject();
+            if (task["trigger"].toBool()) profile.set(task["id"].toString(), "_enabled", false);
+        }
+        const auto marker = data.path()+"/ticks.txt", hold = data.path()+"/hold.txt";
+        const auto createScript = [&](QString name, QString code) {
+            const auto id = scriptManage(root, data.path(), {{"op", "create"}, {"name", name}})["selected"].toString();
+            scriptManage(root, data.path(), {{"op", "save"}, {"script", id}, {"code", code}});
+            return id;
+        };
+        const auto trigger = createScript("SessionTick",
+            "from ok import TriggerTask\nfrom pathlib import Path\nclass SessionTick(TriggerTask):\n"
+            "    def run(self):\n        with Path(r'"+marker+"').open('a') as f: f.write('x')\n");
+        const auto task = createScript("Foreground",
+            "from ok import BaseTask\nfrom pathlib import Path\nclass Foreground(BaseTask):\n"
+            "    def run(self):\n        if Path(r'"+hold+"').exists():\n"
+            "            self.send_key_down('w')\n            self.mouse_down()\n"
+            "            while True: self.sleep(.05)\n");
+        Backend backend(false);
+        backend.start(Config::defaults(), true);
+        Engine engine(backend, root, data.path());
+        int catalogs = 0, done = 0, errors = 0, quits = 0, preparations = 0;
+        QJsonObject status;
+        connect(&engine, &Engine::message, &engine, [&](QJsonObject event) {
+            if (event["event"] == "catalog_changed") ++catalogs;
+            if (event["event"] == "task_done") ++done;
+            if (event["event"] == "error") { ++errors; qWarning() << event; }
+            if (event["event"] == "quit_requested") ++quits;
+            if (event["event"] == "log" && event["text"].toString().startsWith("正在准备任务")) ++preparations;
+            if (event["event"] == "status") status = event["data"].toObject();
+        });
+        engine.load();
+        QTRY_VERIFY_WITH_TIMEOUT(catalogs > 0, 15000);
+        engine.command({{"op", "trigger"}, {"task", trigger}, {"enabled", true}});
+        const auto ticks = [&] { return QFileInfo(marker).size(); };
+        engine.command({{"op", "start"}, {"task", task}});
+        QTRY_COMPARE_WITH_TIMEOUT(done, 1, 30000);
+        QTRY_VERIFY_WITH_TIMEOUT(ticks() > 0, 10000);
+        QVERIFY(!engine.idle());
+        QVERIFY(backend.snapshot()["armed"].toBool());
+        QTRY_VERIFY(!status["paused"].toBool(true) && status["current"].toString().isEmpty());
+        QVERIFY(readJson(data.path()+"/native-last-run.json")["success"].toBool());
+        const auto beforeStopInRealtime = ticks();
+        engine.command({{"op", "stop_task"}});
+        QTRY_VERIFY(ticks() > beforeStopInRealtime);
+
+        writeJson(hold, {});
+        engine.command({{"op", "start"}, {"task", task}});
+        QTRY_VERIFY_WITH_TIMEOUT(backend.snapshot()["box"].toObject()["keys"].toArray().contains(26), 15000);
+        const auto beforeCancel = ticks();
+        const auto preparationsBeforeCancel = preparations;
+        engine.command({{"op", "stop_task"}});
+        QVERIFY(backend.snapshot()["armed"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(ticks() > beforeCancel, 15000);
+        QCOMPARE(preparations, preparationsBeforeCancel);
+        const auto state = backend.snapshot();
+        QVERIFY(state["running"].toBool() && state["armed"].toBool());
+        QVERIFY(state["box"].toObject()["keys"].toArray().isEmpty());
+        QCOMPARE(state["box"].toObject()["buttons"].toInt(), 0);
+        QCOMPARE(done, 1);
+        QCOMPARE(errors, 0);
+        QCOMPARE(readJson(data.path()+"/native-scripts.json")[trigger].toObject()["enabled"].toBool(), true);
+
+        engine.command({{"op", "pause"}});
+        QTRY_VERIFY_WITH_TIMEOUT(engine.idle(), 5000);
+        const auto pausedTicks = ticks();
+        engine.command({{"op", "stop_task"}});
+        QTest::qWait(250);
+        QCOMPARE(ticks(), pausedTicks);
+        QVERIFY(engine.idle());
+        QVERIFY(!backend.snapshot()["armed"].toBool());
+        QFile::remove(hold);
+        engine.command({{"op", "start"}, {"task", task}, {"exit_after", true}});
+        QTRY_COMPARE_WITH_TIMEOUT(done, 2, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(engine.idle() && quits == 1, 5000);
+        QVERIFY(!backend.snapshot()["armed"].toBool());
+        QCOMPARE(ticks(), pausedTicks);
+        backend.stop();
+    }
     void unexpectedDeviceDisarmReportsFailureButExplicitPauseDoesNot() {
         const QString root = OKWW_SOURCE_ROOT;
         QTemporaryDir data;
@@ -215,9 +299,13 @@ class EngineTests final : public QObject {
         engine.load();
         QTRY_VERIFY_WITH_TIMEOUT(catalogs > 0, 15000);
         engine.command({{"op", "start"}, {"task", id}});
-        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(data.path() + "/native-last-run.json") && engine.idle(),
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(data.path() + "/native-last-run.json"),
                                  30000);
         QVERIFY(readJson(data.path() + "/native-last-run.json")["success"].toBool());
+        QVERIFY(!engine.idle());
+        QVERIFY(backend.snapshot()["armed"].toBool());
+        engine.command({{"op", "pause"}});
+        QTRY_VERIFY_WITH_TIMEOUT(engine.idle(), 5000);
         QFile result(marker);
         QVERIFY(result.open(QIODevice::ReadOnly));
         QCOMPARE(result.readAll(), QByteArray("xxx"));

@@ -21,6 +21,7 @@ class Ocr {
     explicit Ocr(const QString &modelDirectory);
     ~Ocr();
     QVector<TextLine> read(const cv::Mat &image, std::optional<QRect> area = {}, double threshold = .5,
-                           bool detection = true, bool angleClassification = false);
+                           bool detection = true, bool angleClassification = false,
+                           const std::function<void()> &checkpoint = {});
 };
 } // namespace okww::runtime

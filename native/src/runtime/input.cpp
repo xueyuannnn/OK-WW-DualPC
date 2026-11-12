@@ -11,9 +11,13 @@ QJsonObject Input::workshopCommand(QJsonObject command) {
         return {};
     }
     execution_.checkpoint();
+    if (op == "button" && command["down"].toBool() && buttons_.isEmpty())
+        settlePosition();
     const auto result = transport_(command);
-    if (op == "move" || op == "absolute")
+    if (op == "move" || op == "absolute") {
         position_.reset();
+        positionReadyAt_ = -1;
+    }
     if (op == "key") {
         const auto code = command["code"].toInt();
         if (command["down"].toBool())
@@ -116,8 +120,13 @@ void Input::key(QString key, double seconds) {
 void Input::buttonDown(QString button) {
     if (!QStringList{"left", "right", "middle"}.contains(button))
         fail("无效鼠标按键");
+    if (buttons_.isEmpty()) settlePosition();
     send({{"op", "button"}, {"name", button}, {"down", true}});
     buttons_.insert(button);
+}
+void Input::settlePosition() {
+    if (positionReadyAt_ >= 0)
+        execution_.wait(std::max(0., positionReadyAt_ - execution_.now()));
 }
 void Input::buttonUp(QString button) {
     try {
@@ -174,6 +183,7 @@ void Input::move(QPointF point) {
                    buttons_.isEmpty());
         }
         position_ = point;
+        positionReadyAt_ = execution_.now() + config_.d("kmbox.position_settle");
     } catch (...) {
         release();
         throw;
@@ -184,6 +194,7 @@ void Input::relative(double x, double y) {
         counts(pixelRound(x * config_.d("kmbox.counts_per_pixel_x")),
                pixelRound(y * config_.d("kmbox.counts_per_pixel_y")), false);
         position_.reset();
+        positionReadyAt_ = -1;
     } catch (...) {
         release();
         throw;
@@ -193,7 +204,6 @@ void Input::click(std::optional<QPointF> point, double seconds, QString button) 
     try {
         if (point) {
             move(*point);
-            execution_.wait(.06);
         }
         buttonDown(button);
         execution_.wait(std::max(point ? .04 : .02, seconds));
@@ -206,8 +216,8 @@ void Input::click(std::optional<QPointF> point, double seconds, QString button) 
 void Input::scroll(int steps, std::optional<QPointF> point) {
     if (point) {
         move(*point);
-        execution_.wait(.06);
     }
+    settlePosition();
     send({{"op", "wheel"}, {"steps", steps}});
 }
 void Input::swipe(QPointF from, QPointF to, double milliseconds, double settle) {
@@ -265,5 +275,6 @@ void Input::release() noexcept {
     keys_.clear();
     buttons_.clear();
     position_.reset();
+    positionReadyAt_ = -1;
 }
 } // namespace okww::runtime

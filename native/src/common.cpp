@@ -51,7 +51,9 @@ Config Config::defaults() {
                                    {"home_counts", 32767},
                                    {"home_wait", 0.05},
                                    {"move_chunk", 512},
-                                   {"move_interval", 0.002}}},
+                                   {"move_interval", 0.002},
+                                   {"position_settle", 0.12},
+                                   {"ui_click_hold", 0.12}}},
              {"game_language", "zh_CN"}}};
 }
 Config Config::load(const QString &p) {
@@ -125,6 +127,10 @@ void Config::validateBox() const {
     if (d("kmbox.timeout") <= 0 || d("kmbox.timeout") > 5 || d("kmbox.counts_per_pixel_x") <= 0 ||
         d("kmbox.counts_per_pixel_y") <= 0 || n("kmbox.desktop_width") <= 0 || n("kmbox.desktop_height") <= 0)
         fail("盒子超时、倍率或桌面尺寸无效");
+    if (!std::isfinite(d("kmbox.position_settle")) || !std::isfinite(d("kmbox.ui_click_hold")) ||
+        d("kmbox.position_settle") < .11 || d("kmbox.position_settle") > 1 ||
+        d("kmbox.ui_click_hold") < .1 || d("kmbox.ui_click_hold") > .5)
+        fail("定位后等待需要为 0.11 至 1 秒，界面点击按住需要为 0.1 至 0.5 秒");
     if (b("kmbox.dry_run"))
         return;
     if (s("kmbox.protocol") == "kmbox_net") {
@@ -247,7 +253,15 @@ QImage previewImage(const Frame &f, QSize target) {
         else
             // Integrate source pixels so thin text and lines survive reduction.
             cv::resize(bgr, resized, {size.width(), size.height()}, 0, 0, cv::INTER_AREA);
-        return QImage(resized.data, resized.cols, resized.rows, int(resized.step), QImage::Format_BGR888).copy();
+        // Converted/resized matrices own their pixels. Keep that allocation
+        // alive with the QImage instead of copying the entire RGB image again.
+        // Native BGR at full size still borrows the reusable capture buffer.
+        if (channels == 3 && !f.bottomUp && size == QSize(f.width, f.height))
+            return QImage(resized.data, resized.cols, resized.rows, int(resized.step),
+                          QImage::Format_BGR888).copy();
+        auto owner = new cv::Mat(std::move(resized));
+        return QImage(owner->data, owner->cols, owner->rows, int(owner->step), QImage::Format_BGR888,
+                      [](void *pixels) { delete static_cast<cv::Mat *>(pixels); }, owner);
     }
 #endif
     return frameImage(f).scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);

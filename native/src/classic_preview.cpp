@@ -87,8 +87,8 @@ QWidget *Window::buildClassicPreview() {
     actions->addStretch();
     auto stop = new QPushButton("紧急停止键鼠");
     classic::setFluentIcon(stop, "Cancel");
-    stop->setToolTip("停止任务并释放所有按键，采集卡与盒子保持连接。");
-    connect(stop, &QPushButton::clicked, this, [this] { stopTask(); });
+    stop->setToolTip("紧急暂停当前任务与全部实时触发并释放按键，采集预览保持连接。");
+    connect(stop, &QPushButton::clicked, this, [this] { pause(); });
     actions->addWidget(stop);
     layout->addLayout(actions);
     auto columns = new QHBoxLayout;

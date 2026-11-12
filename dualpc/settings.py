@@ -39,6 +39,8 @@ class BoxSettings:
     home_wait: float = 0.05
     move_chunk: int = 512
     move_interval: float = 0.002
+    position_settle: float = 0.12
+    ui_click_hold: float = 0.12
 
 
 @dataclass
@@ -73,6 +75,10 @@ class Settings:
             raise ValueError("move_interval must be between 0 and 0.1 seconds")
         if not math.isfinite(b.home_wait) or not 0 <= b.home_wait <= 1:
             raise ValueError("home_wait must be between 0 and 1 second")
+        if not math.isfinite(b.position_settle) or not 0.11 <= b.position_settle <= 1:
+            raise ValueError("position_settle must be between 0.11 and 1 second")
+        if not math.isfinite(b.ui_click_hold) or not 0.1 <= b.ui_click_hold <= 0.5:
+            raise ValueError("ui_click_hold must be between 0.1 and 0.5 seconds")
         if b.protocol != "kmbox_net":
             raise ValueError("Unknown input protocol; select KMBox Net")
         if not b.dry_run and b.protocol == "kmbox_net":

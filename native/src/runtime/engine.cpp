@@ -77,7 +77,7 @@ void Engine::postStatus(uint64_t generation, QString current) {
         this,
         [this, generation, current] {
             if (generation_ == generation)
-                emit message({{"event", "status"}, {"data", status(current)}});
+                emit message({{"event", "status"}, {"data", status(foreground_ ? current : QString{})}});
         },
         Qt::QueuedConnection);
 }
@@ -123,18 +123,23 @@ QJsonObject Engine::status(QString current) const {
     return {{"paused", bool(paused_)}, {"warming", bool(warming_)}, {"current", current}, {"tasks", states}};
 }
 void Engine::load() {
-    emit message({{"event", "ready"}, {"data", catalog()}});
     preloadModels();
     log("C++ 执行器已就绪；Python 工坊按需加载，采集和盒子仍由 C++ 管理。");
-    if (QDir(data_ + "/ok_tasks").exists() || QDir(data_ + "/ok_import").exists())
+    if (QDir(data_ + "/ok_tasks").exists() || QDir(data_ + "/ok_import").exists()) {
+        loadingScripts_ = true;
         scriptCommand({{"id", 0}, {"op", "script_catalog"}});
+    } else
+        emit message({{"event", "ready"}, {"data", catalog()}});
 }
 void Engine::pause() {
     std::lock_guard lock(lifecycle_);
     pendingTask_.reset();
     launchTimer_.stop();
     gate_.stop();
+    generation_ = 0;
     paused_ = true;
+    foreground_ = false;
+    cancelForeground_ = false;
     try {
         backend_.arm(false);
     } catch (const std::exception &e) {
@@ -168,6 +173,7 @@ void Engine::start(const QString &task, QJsonObject options) {
     pause();
     preloadModels();
     pendingTask_ = task;
+    foreground_ = !task.isEmpty();
     pendingOptions_ = options;
     pendingOptions_["scripts_snapshot"] = scripts_;
     tryLaunch();
@@ -225,11 +231,23 @@ void Engine::preloadModels() {
 void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
     SteadyClock clock;
     const auto began = clock.now();
-    const auto limit = options["limit_seconds"].toDouble();
+    auto limit = options["limit_seconds"].toDouble();
     QString failure;
     QString activeTask = selected, phase = "preparation", diagnosticReport;
     QJsonObject lastCombat;
-    bool completed = false, exitAfter = false;
+    QJsonArray stepDiagnostics;
+    bool completed = false, exitAfter = false, resultRecorded = false;
+    const auto recordResult = [&](const QString &task, bool success) {
+        try {
+            writeJson(data_ + "/native-last-run.json",
+                      {{"task", task}, {"success", success},
+                       {"error", success ? QString{} : failure},
+                       {"finished", QDateTime::currentDateTime().toString(Qt::ISODate)},
+                       {"diagnostic_report", diagnosticReport}, {"seconds", clock.now() - began}});
+        } catch (const std::exception &e) {
+            log("运行结果保存失败：" + errorText(e));
+        }
+    };
     EmergencyMemory emergency;
     try {
         KeepAwake awake;
@@ -274,6 +292,8 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                     ? QString("采集或盒子连接已中断，自动操作已暂停") : state["error"].toString(),
                     QString::fromUtf8(QJsonDocument(state).toJson(QJsonDocument::Indented)));
             }
+            if (taskRunning && foreground_ && cancelForeground_)
+                throw Cancelled();
             if (taskRunning && pollControls)
                 pollControls();
             if (limit > 0 && clock.now() - began >= limit)
@@ -283,6 +303,7 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
             config, {frame->width, frame->height}, backend_.snapshot()["box"].toObject()["absolute"].toBool(),
             [&](auto command) { return backend_.nativeCommand(command); }, execution);
         Templates activeTemplates(*templates_);
+        activeTemplates.setCheckpoint([&] { execution.checkpoint(); });
         const auto userTemplates = data_ + "/ok_templates/coco_annotations.json";
         if (QFile::exists(userTemplates))
             activeTemplates.add(userTemplates);
@@ -302,7 +323,10 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                 return retryRecognition([&] { return inference.get(latest); });
             },
             [&](const auto &image, auto area, double threshold) {
-                return retryRecognition([&] { return ocr_->read(image, area, threshold); });
+                return retryRecognition([&] {
+                    return ocr_->read(image, area, threshold, true, false,
+                                      [&] { execution.checkpoint(); });
+                });
             });
         context.info = [&](auto key, auto value) { log(key + "：" + value); };
         context.sourceSequence = [&] { return captureSequence; };
@@ -314,24 +338,48 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
             }, Qt::QueuedConnection);
         };
         context.notify = [&](QString title, QString text, bool error) { notify({title, text, {}, error}); };
+        context.diagnostic = [&](QString reason, QJsonObject event) {
+            event["error"] = reason;
+            event["task"] = context.task;
+            event["phase"] = "task_step";
+            // Capture before daily recovery backs out of the failed page.
+            // Diagnostic failures must not replace the task's original error.
+            try {
+                const auto folder = data_ + "/screenshots/errors";
+                const auto filePath = folder + '/' + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + "-step.png";
+                std::vector<uchar> bytes;
+                if (!context.frame.empty() && QDir().mkpath(folder) && cv::imencode(".png", context.frame, bytes)) {
+                    QSaveFile file(filePath);
+                    if (file.open(QIODevice::WriteOnly) && file.write(reinterpret_cast<const char *>(bytes.data()),
+                            qint64(bytes.size())) == qint64(bytes.size()) && file.commit())
+                        event["screenshot"] = filePath;
+                }
+                const auto saved = saveDiagnostic(data_, event);
+                if (stepDiagnostics.size() >= 3) stepDiagnostics.removeAt(0);
+                stepDiagnostics.append(saved["diagnostic_report"]);
+                log("步骤识别现场：" + saved["diagnostic_report"].toString());
+            } catch (const std::exception &error) {
+                log("步骤诊断保存失败：" + errorText(error));
+            }
+        };
         context.state = taskState_;
         context.gameLanguage = config.get("game_language").toString("zh_CN");
         context.physicalFDown = [] { return bool(GetAsyncKeyState('F') & 0x8000); };
-        TaskRunner runner(context, *echo_, root_, data_, teams_);
+        auto runner = std::make_unique<TaskRunner>(context, *echo_, root_, data_, teams_);
         ScriptRuntime scripts(context, root_, data_);
         scripts.builtin = [&](const QString &id) {
             const auto definitions =
-                businessTasks([&](const QString &task) { return runner.dispatch(task); });
+                businessTasks([&](const QString &task) { return runner->dispatch(task); });
             if (std::none_of(definitions.begin(), definitions.end(),
                              [&](const auto &task) { return task.id == id; }))
                 fail("脚本请求的内置任务不存在：" + id);
-            return runner.dispatch(id);
+            return runner->dispatch(id);
         };
         // Observe physical key edges on the execution thread, including while
         // a long macro is waiting. Scripted remote F is never seen as local F.
-        pollControls = [&] { runner.pollControls(); };
+        pollControls = [&] { runner->pollControls(); };
         auto runnable = builtinTasks();
-        runnable += businessTasks([&](const QString &id) { return runner.dispatch(id); });
+        runnable += businessTasks([&](const QString &id) { return runner->dispatch(id); });
         QMap<QString, QJsonObject> custom;
         for (auto value : options["scripts_snapshot"].toArray()) {
             const auto script = value.toObject();
@@ -373,9 +421,38 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                  }});
         }
         QMap<QString, double> next;
+        const auto resumeTriggers = [&] {
+            input.release();
+            {
+                std::lock_guard lock(lifecycle_);
+                if (!gate_.active(epoch)) throw Cancelled();
+                foreground_ = false;
+                cancelForeground_ = false;
+            }
+            selected.clear();
+            activeTask.clear();
+            context.task.clear();
+            context.taskOverrides = {};
+            context.state->inCombat = false;
+            // Boss callbacks and a previous workshop actor are task-local.
+            runner = std::make_unique<TaskRunner>(context, *echo_, root_, data_, teams_);
+            context.combatInfo({{"code_state", "pending"}, {"verified", false}});
+            limit = 0;
+            next.clear();
+            postStatus(epoch);
+        };
+        const auto cancelTask = [&] {
+            failure = "当前任务已停止";
+            recordResult(selected, false);
+            resultRecorded = true;
+            resumeTriggers();
+            log("当前任务已停止，实时触发继续运行。");
+        };
         double lastStatus = 0;
         while (true) {
             execution.checkpoint();
+            if (!selected.isEmpty() && cancelForeground_)
+                cancelTask();
             context.refresh();
             bool handled = false;
             for (const auto &task : runnable) {
@@ -396,6 +473,12 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                 taskRunning = true;
                 try {
                     handled = task.step(context);
+                } catch (const Cancelled &) {
+                    if (!gate_.active(epoch) || !cancelForeground_)
+                        throw;
+                    taskRunning = false;
+                    cancelTask();
+                    break;
                 } catch (const CombatEnded &error) {
                     if (task.id != "AutoCombatTask" || profile_.value(task.id, "_enabled", true).toBool())
                         throw;
@@ -406,11 +489,26 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                 taskRunning = false;
                 next[task.id] = execution.now() + task.interval;
                 if (!task.trigger) {
-                    completed = true;
+                    execution.checkpoint();
+                    input.release();
                     exitAfter = options["exit_after"].toBool() ||
                                 (!custom.contains(task.id) &&
                                  profile_.value(task.id, "Exit After Task", false).toBool());
-                    gate_.stop();
+                    recordResult(selected, true);
+                    resultRecorded = true;
+                    emit message({{"event", "task_done"}, {"task", selected}});
+                    QString name = selected;
+                    for (auto value : profile_.catalog()["tasks"].toArray())
+                        if (value.toObject()["id"] == selected)
+                            name = value.toObject()["name"].toString();
+                    notify({product::name + " 任务完成", name, {}});
+                    if (exitAfter) {
+                        completed = true;
+                        gate_.stop();
+                        break;
+                    }
+                    resumeTriggers();
+                    log("当前任务已完成，实时触发继续运行。");
                     break;
                 }
                 if (handled)
@@ -446,6 +544,7 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         QJsonObject errorEvent{{"event", "error"}, {"error", failure}, {"task", activeTask},
                                {"selected_task", selected}, {"phase", phase}, {"combat", lastCombat},
                                {"devices", backend_.snapshot()}, {"elapsed_seconds", clock.now() - began}};
+        errorEvent["step_diagnostics"] = stepDiagnostics;
         if (const auto bridgeError = dynamic_cast<const ExecutionFailure *>(&e))
             errorEvent["traceback"] = bridgeError->details;
         else
@@ -495,25 +594,8 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         }
     }
     postStatus(epoch);
-    try {
-        writeJson(data_ + "/native-last-run.json",
-                  {{"task", selected},
-                   {"success", completed},
-                   {"error", completed ? QString{} : failure},
-                   {"finished", QDateTime::currentDateTime().toString(Qt::ISODate)},
-                   {"diagnostic_report", diagnosticReport},
-                   {"seconds", clock.now() - began}});
-    } catch (const std::exception &e) {
-        log("运行结果保存失败：" + errorText(e));
-    }
-    if (completed) {
-        emit message({{"event", "task_done"}, {"task", selected}});
-        QString name = selected;
-        for (auto value : profile_.catalog()["tasks"].toArray())
-            if (value.toObject()["id"] == selected)
-                name = value.toObject()["name"].toString();
-        notify({product::name + " 任务完成", name, {}});
-    }
+    if (!resultRecorded)
+        recordResult(selected, completed);
     if (exitAfter)
         QMetaObject::invokeMethod(
             this,
@@ -624,6 +706,11 @@ void Engine::scriptCommand(QJsonObject request) {
                 emit message({{"id", id}, {"ok", true}, {"data", result}});
             } else
                 emit message({{"id", id}, {"ok", false}, {"error", response["error"]}});
+            // A queued UI start must not race the initial script-catalog scan.
+            if (loadingScripts_) {
+                loadingScripts_ = false;
+                emit message({{"event", "ready"}, {"data", catalog()}});
+            }
         });
         watcher->setFuture(QtConcurrent::run([root = root_, data = data_, command] {
             try {
@@ -704,8 +791,19 @@ void Engine::command(const QJsonObject &request) {
         }
         if (op == "catalog")
             result = catalog();
-        else if (op == "pause" || op == "stop_task" || op == "shutdown") {
+        else if (op == "pause" || op == "shutdown") {
             pause();
+            result = status();
+        } else if (op == "stop_task") {
+            // Explicit global pause/error must never be undone by a late task
+            // button. Cancelling a foreground task hands control to triggers.
+            if (pendingTask_ && !pendingTask_->isEmpty()) {
+                pendingTask_ = QString{};
+                pendingOptions_["exit_after"] = false;
+                pendingOptions_["limit_seconds"] = 0;
+                foreground_ = false;
+            } else if (foreground_ && !paused_)
+                cancelForeground_ = true;
             result = status();
         } else if (op == "start") {
             start(request["task"].toString(), request);

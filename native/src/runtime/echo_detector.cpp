@@ -1,4 +1,5 @@
 #include "echo_detector.hpp"
+#include "inference_wait.hpp"
 #include <openvino/openvino.hpp>
 #include <opencv2/imgproc.hpp>
 namespace okww::runtime {
@@ -23,7 +24,9 @@ struct EchoDetector::Impl {
 };
 EchoDetector::EchoDetector(const QString &model) : impl_(std::make_unique<Impl>(model)) {}
 EchoDetector::~EchoDetector() = default;
-QVector<Match> EchoDetector::detect(const cv::Mat &image, double threshold, int label) {
+QVector<Match> EchoDetector::detect(const cv::Mat &image, double threshold, int label,
+                                   const std::function<void()> &checkpoint) {
+    if (checkpoint) checkpoint();
     if (image.empty() || image.type() != CV_8UC3 || !std::isfinite(threshold) || threshold < 0 ||
         threshold > 1)
         fail("声骸识别图像或阈值无效");
@@ -45,7 +48,7 @@ QVector<Match> EchoDetector::detect(const cv::Mat &image, double threshold, int 
                 data[c * p.height * p.width + y * p.width + x] = bgr[2 - c] / 255.f;
         }
     impl_->request.set_input_tensor(tensor);
-    impl_->request.infer();
+    inferWithCheckpoint(impl_->request, checkpoint, "声骸识别");
     const auto out = impl_->request.get_output_tensor();
     const auto shape = out.get_shape();
     if (shape.size() != 3 || shape[0] != 1 || shape[1] < 5 || shape[1] > 1000 ||
@@ -55,6 +58,7 @@ QVector<Match> EchoDetector::detect(const cv::Mat &image, double threshold, int 
     const auto scores = out.data<const float>();
     QVector<Match> candidates;
     for (size_t row = 0; row < rows; ++row) {
+        if (checkpoint && row % 256 == 0) checkpoint();
         float confidence = scores[4 * rows + row];
         size_t category = 0;
         for (size_t c = 5; c < shape[1]; ++c)
@@ -80,6 +84,7 @@ QVector<Match> EchoDetector::detect(const cv::Mat &image, double threshold, int 
                      [](const auto &a, const auto &b) { return a.confidence > b.confidence; });
     QVector<Match> kept;
     for (const auto &candidate : candidates) {
+        if (checkpoint) checkpoint();
         bool suppressed = false;
         for (const auto &prior : kept) {
             const auto intersection = candidate.box.intersected(prior.box);

@@ -35,6 +35,7 @@ class TaskContext {
     std::function<uint64_t()> sourceSequence;
     std::function<void(QJsonObject)> combatInfo;
     std::function<void(QString, QString, bool)> notify;
+    std::function<void(QString, QJsonObject)> diagnostic;
     std::function<bool()> physicalFDown;
     std::function<QDateTime()> wallTime = [] { return QDateTime::currentDateTime(); };
     std::shared_ptr<TaskState> state = std::make_shared<TaskState>();

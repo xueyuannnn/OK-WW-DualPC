@@ -5,6 +5,40 @@ using namespace okww;
 class NativeTests : public QObject {
     Q_OBJECT
   private slots:
+    void previewOwnsConvertedPixelsAfterCaptureBufferIsReused() {
+        for (auto format : {PixelFormat::NV12, PixelFormat::BGR24}) {
+            QImage published, copied;
+            {
+                Frame frame;
+                frame.width = frame.height = 4;
+                frame.format = format;
+                frame.stride = format == PixelFormat::NV12 ? 4 : 12;
+                frame.bytes = QByteArray(format == PixelFormat::NV12 ? 24 : 48, char(128));
+                published = previewImage(frame, {4, 4});
+                copied = published.copy();
+                frame.bytes.fill(char(0));
+                QCOMPARE(published, copied);
+            }
+            QCOMPARE(published, copied);
+            auto shared = published;
+            shared.setPixelColor(0, 0, Qt::red);
+            QCOMPARE(published, copied);
+            QVERIFY(shared != published);
+        }
+    }
+    void captureAcceptsValidFrameAfterTruncatedDriverSample() {
+        Capture capture(Config::defaults());
+        QByteArray bytes(24, char(128));
+        capture.publish(reinterpret_cast<const uint8_t *>(bytes.constData()), 2,
+                        4, 4, 4, PixelFormat::NV12, false, nowNs());
+        QVERIFY(!capture.error().isEmpty());
+        QVERIFY(!capture.latest());
+        capture.publish(reinterpret_cast<const uint8_t *>(bytes.constData()), bytes.size(),
+                        4, 4, 4, PixelFormat::NV12, false, nowNs());
+        QVERIFY(capture.latest());
+        QVERIFY(capture.error().isEmpty());
+        QCOMPARE(capture.next(0)->bytes, bytes);
+    }
     void boxMoveTestRetainsArmedInputAndHeldControls_data() {
         QTest::addColumn<QString>("protocol");
         QTest::newRow("KMBox Net") << QString("kmbox_net");
@@ -351,6 +385,29 @@ class NativeTests : public QObject {
         QVERIFY(!state["armed"].toBool());
         QVERIFY(!backend.heartbeat());
         QVERIFY(state["box"].toObject()["keys"].toArray().isEmpty());
+        const auto fault = state["input_fault"].toObject();
+        QCOMPARE(fault["reason"].toString(), QString("heartbeat_timeout"));
+        QVERIFY(fault["heartbeat_age_ms"].toDouble() >= 1500);
+        QVERIFY(fault["frame_age_ms"].toDouble() < 150);
+        QVERIFY(fault["keys"].toArray().contains(4));
+        QVERIFY(fault["box_connected"].toBool());
+        QVERIFY(state["error"].toString().contains("心跳"));
+        QVERIFY(request({{"op", "key"}, {"code", 4}, {"down", false}})["ok"].toBool());
+        const auto denied = request({{"op", "key"}, {"code", 4}, {"down", true}});
+        QVERIFY(!denied["ok"].toBool());
+        QCOMPARE(denied["error"].toString(), state["error"].toString());
+        backend.arm(false);
+        QCOMPARE(backend.snapshot()["input_fault"].toObject(), fault);
+        backend.arm(true);
+        QVERIFY(backend.snapshot()["input_fault"].toObject().isEmpty());
+        QVERIFY(backend.snapshot()["error"].toString().isEmpty());
+        // Active progress remains armed beyond the hang deadline. This is not
+        // an unconditional background heartbeat: the earlier dead task stopped.
+        for (int i = 0; i < 20; ++i) {
+            QTest::qWait(100);
+            QVERIFY(backend.heartbeat());
+        }
+        QVERIFY(backend.snapshot()["armed"].toBool());
     }
 };
 QTEST_GUILESS_MAIN(NativeTests)

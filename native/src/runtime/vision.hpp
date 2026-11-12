@@ -52,11 +52,13 @@ class Templates {
     QMap<QString, cv::Mat> images_;
     QMap<QString, Scaled> cache_;
     QSize size_;
+    std::function<void()> checkpoint_;
     const Scaled &scaled(const QString &name, QSize size);
 
   public:
     explicit Templates(const QString &coco);
     void add(const QString &coco);
+    void setCheckpoint(std::function<void()> checkpoint) { checkpoint_ = std::move(checkpoint); }
     QStringList names() const { return sources_.keys(); }
     bool contains(const QString &name) const { return sources_.contains(name); }
     QRect box(const QString &name, QSize size) { return scaled(name, size).box; }

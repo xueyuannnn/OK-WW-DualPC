@@ -19,6 +19,8 @@ class Engine final : public QObject {
     std::atomic<bool> modelsReady_{false};
     QString modelError_;
     std::atomic<bool> paused_{true};
+    std::atomic<bool> foreground_{false};
+    std::atomic<bool> cancelForeground_{false};
     std::atomic<bool> workerFinished_{true}, warming_{false};
     std::mutex lifecycle_;
     std::optional<QString> pendingTask_;
@@ -35,6 +37,7 @@ class Engine final : public QObject {
     QJsonArray scripts_;
     QJsonArray scriptTemplates_;
     bool scriptsBusy_ = false;
+    bool loadingScripts_ = false;
     bool teamSwitchBusy_ = false;
     QJsonArray teamSwitchSnapshot_;
     QMap<QString, std::shared_ptr<std::atomic<bool>>> scriptEnabled_;

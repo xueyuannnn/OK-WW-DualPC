@@ -141,7 +141,6 @@ QJsonObject ScriptRuntime::rpc(QJsonObject request) {
         else if (action == "mouse_down") {
             if (positioned) {
                 c_.input.move(point);
-                c_.execution.wait(.06);
             }
             c_.input.buttonDown(key);
         } else if (action == "mouse_up")

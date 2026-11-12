@@ -59,6 +59,100 @@ class MacroProbe final : public TeamMacro {
 class RuntimeTests : public QObject {
     Q_OBJECT
   private slots:
+    void positionedActionsWaitAtLeast120msWithoutDelayingRawCombatOrDragging() {
+        Harness h;
+        Input input(h.config, {1920, 1080}, true, h.transport, h.execution);
+        input.taskClick({400, 300});
+        QCOMPARE(h.events[0]["op"].toString(), QString("absolute"));
+        QVERIFY(std::abs(h.events[1]["time"].toDouble() - .12) < 1e-9);
+        QVERIFY(std::abs(h.events[2]["time"].toDouble() - .24) < 1e-9);
+        input.move({600, 300});
+        h.execution.wait(.15);
+        const auto alreadyWaited = h.clock.now();
+        input.buttonDown();
+        QCOMPARE(h.events.last()["time"].toDouble(), alreadyWaited);
+        input.buttonUp();
+        input.release();
+        const auto raw = h.clock.now();
+        input.click({}, .005);
+        QVERIFY(std::abs(h.clock.now() - raw - .02) < 1e-9);
+        const auto drag = h.clock.now();
+        input.swipe({100, 100}, {500, 500}, 300);
+        QVERIFY(std::abs(h.clock.now() - drag - .42) < 1e-9);
+        input.move({700, 700});
+        const auto wheel = h.clock.now();
+        input.scroll(1);
+        QVERIFY(std::abs(h.events.last()["time"].toDouble() - wheel - .12) < 1e-9);
+        h.config.set("kmbox.position_settle", .1);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, h.config.validateBox());
+    }
+    void positionedActionCanBePausedBeforeAnyButtonIsPressed() {
+        Harness h;
+        Input input(h.config, {1920, 1080}, true, h.transport, h.execution);
+        h.clock.tick = [&] { if (h.clock.now() >= .05) h.gate.stop(); };
+        QVERIFY_THROWS_EXCEPTION(Cancelled, input.taskClick({400, 300}));
+        for (const auto &event : h.events)
+            QVERIFY(!(event["op"] == "button" && event["down"].toBool()));
+        QCOMPARE(h.events.last()["op"].toString(), QString("release"));
+    }
+    void echoInferenceCancellationCanBeFollowedByAnotherDetection() {
+        const QString root = OKWW_SOURCE_ROOT;
+        EchoDetector detector(root + "/assets/echo_model/echo.onnx");
+        const auto frame = readImage(root + "/assets/images/38.png");
+        const auto expected = detector.detect(frame);
+        int calls = 0;
+        QVERIFY_THROWS_EXCEPTION(Cancelled, detector.detect(frame, .5, 0, [&] {
+            if (++calls >= 3) throw Cancelled();
+        }));
+        const auto recovered = detector.detect(frame, .5, 0, [] {});
+        QCOMPARE(recovered.size(), expected.size());
+        for (int i = 0; i < recovered.size(); ++i) {
+            QCOMPARE(recovered[i].name, expected[i].name);
+            QCOMPARE(recovered[i].box, expected[i].box);
+        }
+    }
+    void templateSearchCancellationAndHeartbeatWorkForDirectCallers() {
+        const QString root = OKWW_SOURCE_ROOT;
+        Templates templates(root + "/assets/coco_annotations.json");
+        cv::Mat image(1080, 1920, CV_8UC3, cv::Scalar(17, 23, 31));
+        const auto expected = templates.find(image, "garden_not_interested", {.vertical = .4, .limit = 0});
+        int progress = 0;
+        templates.setCheckpoint([&] { ++progress; });
+        const auto actual = templates.find(image, "garden_not_interested", {.vertical = .4, .limit = 0});
+        QCOMPARE(actual.size(), expected.size());
+        QVERIFY(progress >= 3);
+        templates.setCheckpoint([&] { throw Cancelled(); });
+        QVERIFY_EXCEPTION_THROWN(templates.find(image, "garden_not_interested"), Cancelled);
+    }
+    void ocrProgressCancellationPreservesRequestForTheNextTask() {
+        const QString root = OKWW_SOURCE_ROOT;
+        auto models = root + "/assets/ocr/ppocrv5";
+        if (!QFile::exists(models + "/det/det.onnx"))
+            models = root + "/.venv/Lib/site-packages/onnxocr/models/ppocrv5";
+        if (!QFile::exists(models + "/det/det.onnx")) QSKIP("OCR models absent");
+        Ocr ocr(models);
+        const auto image = readImage(root + "/assets/images/38.png");
+        const auto expected = ocr.read(image);
+        QVERIFY(!expected.empty());
+        int progress = 0;
+        const auto actual = ocr.read(image, {}, .5, true, false, [&] { ++progress; });
+        QCOMPARE(actual.size(), expected.size());
+        for (int i = 0; i < actual.size(); ++i) {
+            QCOMPARE(actual[i].text, expected[i].text);
+            QCOMPARE(actual[i].box, expected[i].box);
+        }
+        QVERIFY(progress > 4);
+        int calls = 0;
+        // Entry and pre-inference checkpoints pass; cancellation happens once
+        // the async detector has started, not just before request submission.
+        QVERIFY_EXCEPTION_THROWN(ocr.read(image, {}, .5, true, false, [&] {
+            if (++calls >= 3) throw Cancelled();
+        }), Cancelled);
+        const auto recovered = ocr.read(image, {}, .5, true, false, [] {});
+        QCOMPARE(recovered.size(), expected.size());
+        for (int i = 0; i < recovered.size(); ++i)
+            QCOMPARE(recovered[i].text, expected[i].text);
+    }
     void movementWaitsOnlyBetweenReportsAndKeepsTheSameDisplacement() {
         Harness h;
         Input input(h.config, {1920, 1080}, false, h.transport, h.execution);

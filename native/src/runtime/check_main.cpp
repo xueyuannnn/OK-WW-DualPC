@@ -3,6 +3,7 @@
 #include "combat_vision.hpp"
 #include "echo_detector.hpp"
 #include "capture.hpp"
+#include "garden.hpp"
 #include <iostream>
 using namespace okww;
 using namespace okww::runtime;
@@ -18,8 +19,10 @@ int main(int argc, char **argv) {
          {"capture-config", "Read-only capture using this dualpc.json; never connect a box", "path"},
          {"capture-seconds", "Capture diagnostic duration, 1 to 30 seconds", "seconds", "5"},
          {"feature", "Template to match", "name"},
+         {"garden-scan", "Profile saved Garden template scan without issuing input"},
          {"echo", "Run original echo model on saved image"},
-         {"combat", "Analyze saved combat HUD without issuing input"}});
+         {"combat", "Analyze saved combat HUD without issuing input"},
+         {"garden", "Analyze saved weekly overview without issuing input"}});
     parser.process(app);
     QJsonObject report{{"runtime", "C++"}, {"hardware_input_sent", false}};
     try {
@@ -105,6 +108,24 @@ int main(int argc, char **argv) {
                 }
                 report["features"] = matches;
             }
+            if (parser.isSet("garden-scan")) {
+                Templates templates(root + "/assets/coco_annotations.json");
+                QElapsedTimer scan;
+                scan.start();
+                QJsonArray costs;
+                for (const auto &name : templates.names()) {
+                    if (!name.startsWith("garden_") || name == "garden_get_confirm_gray" ||
+                        name == "garden_not_interested_confirm") continue;
+                    MatchOptions options;
+                    options.limit = 0;
+                    if (name == "garden_not_interested") options.vertical = .4;
+                    const auto began = scan.nsecsElapsed();
+                    const auto matches = templates.find(image, name, options);
+                    costs.append(QJsonObject{{"name", name}, {"ms", (scan.nsecsElapsed()-began)/1e6},
+                                             {"matches", matches.size()}});
+                }
+                report["garden_scan"] = QJsonObject{{"elapsed_ms", scan.nsecsElapsed()/1e6}, {"templates", costs}};
+            }
             std::unique_ptr<Ocr> ocr;
             if (parser.isSet("models")) {
                 QElapsedTimer timer;
@@ -117,6 +138,37 @@ int main(int argc, char **argv) {
                     lines.append(line.json());
                 report["ocr_ms"] = timer.elapsed();
                 report["lines"] = lines;
+            }
+            if (parser.isSet("garden")) {
+                if (!ocr) fail("周常图像检查需要 --models");
+                Templates templates(root + "/assets/coco_annotations.json");
+                QTemporaryDir directory;
+                Profile profile(directory.path(), root + "/native/resources/catalog.json");
+                SteadyClock clock;
+                ExecutionGate gate;
+                Execution execution(gate, gate.start(), clock);
+                Input input(Config::defaults(), {image.cols, image.rows}, false,
+                            [](auto command) -> QJsonObject {
+                                if (command["op"] != "release") fail("离线图像检查禁止输入");
+                                return {};
+                            }, execution);
+                TaskContext context(execution, input, templates, profile, [&] { return image; },
+                    [&](const auto &frame, auto area, double threshold) { return ocr->read(frame, area, threshold); });
+                context.refresh();
+                QJsonArray probes;
+                for (const auto area : {gameBox(image, .19, .83, .275, .90),
+                                        gameBox(image, .16, .81, .30, .95),
+                                        gameBox(image, .05, .78, .98, .97),
+                                        gameBox(image, 0, 0, 1, 1)}) {
+                    QJsonArray lines;
+                    for (const auto &line : context.text(area)) lines.append(line.json());
+                    probes.append(QJsonObject{{"area", QJsonArray{area.x(), area.y(), area.width(), area.height()}},
+                                               {"lines", lines}});
+                }
+                Garden garden(context, root);
+                const auto points = garden.weeklyProgress();
+                report["garden"] = QJsonObject{{"progress", points ? QJsonValue(*points) : QJsonValue()},
+                                                {"probes", probes}, {"observation", garden.weeklyObservation()}};
             }
             if (parser.isSet("combat")) {
                 if (!ocr)

@@ -415,9 +415,10 @@ void Window::renderTaskCards(bool trigger) {
                     });
                 });
             } else {
-                auto pauseButton = action("暂停", this, [this] { pause(); });
+                auto pauseButton = action("暂停", this, [this] { stopTask(); });
+                pauseButton->setToolTip("暂停当前任务并释放按键，实时触发继续运行；点击开始重新执行此任务。");
                 auto stop = action("停止", this, [this] { stopTask(); });
-                stop->setToolTip("结束当前任务并释放按键；采集卡与盒子保持连接。");
+                stop->setToolTip("结束当前任务并释放按键，实时触发继续运行。停止线程请到双机设置。");
                 stop->setObjectName("primary");
                 auto run = action("开始", this, [this, id] {
                     if (pendingStart_ && pendingStart_->task == id)

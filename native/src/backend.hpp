@@ -9,6 +9,7 @@ class Backend {
     std::unique_ptr<Controller> box_;
     bool running_ = false, simulation_ = false, armed_ = false;
     QString error_;
+    QJsonObject inputFault_;
     i64 heartbeat_ = 0;
     FramePtr simulated_;
     std::atomic<bool> exit_{false};
@@ -23,6 +24,8 @@ class Backend {
     void monitor();
     QJsonObject dispatch(const QJsonObject &q);
     FramePtr frameLocked();
+    FramePtr rawFrameLocked();
+    void disarmFaultLocked(const QString &reason, const QString &message);
 
   public:
     static constexpr int mappingCapacity = 64 * 1024 * 1024;

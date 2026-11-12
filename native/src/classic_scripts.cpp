@@ -336,7 +336,7 @@ QWidget *Window::scriptsPage() {
             startTask(editingScript_);
         });
     });
-    addButton(runBar, "scriptPause", "暂停", [this] { pause(); });
+    addButton(runBar, "scriptPause", "暂停", [this] { stopTask(); });
     layout->addLayout(runBar);
     auto split = new QSplitter;
     auto snippets = new QListWidget;

@@ -16,10 +16,16 @@ class WorkshopHost final : public test::TeamReplay {
     QString contextTask = "AutoCombatTask";
     std::optional<int> hudIndex;
     bool resultVisible = false;
+    bool interruptPartyRead = false;
+    bool interruptWorkerStartup = false;
     int resultAfter = 0;
     QJsonObject taskConfig;
     QJsonObject workshopTaskConfig() const override { return taskConfig; }
     void workshopCheckpoint() override {
+        if (interruptWorkerStartup && !macroBusy) {
+            interruptWorkerStartup = false;
+            throw CombatInterrupted("offline worker startup interrupted");
+        }
         preciseWait(0);
         if (resultAfter && clock.elapsed() >= resultAfter)
             throw CombatEnded("offline result during Python wait");
@@ -27,7 +33,10 @@ class WorkshopHost final : public test::TeamReplay {
     void refreshObservation() override {
         if (resultVisible) throw CombatEnded("offline challenge result");
     }
-    int partyIndex() override { return hudIndex.value_or(TeamReplay::partyIndex()); }
+    int partyIndex() override {
+        if (interruptPartyRead) throw CombatInterrupted("offline party observation interrupted");
+        return hudIndex.value_or(TeamReplay::partyIndex());
+    }
     QString taskId() const override { return contextTask; }
     void workshopTelemetry(QJsonObject value) override { telemetry = std::move(value); }
     WorkshopHost() : TeamReplay({{"names", QJsonArray{"Baizhi", "Mortefi", "Verina"}}}) { clock.start(); }
@@ -100,6 +109,26 @@ class WorkshopTests final : public QObject {
             }
     }
   private slots:
+    void requestPreparationInterruptionRestoresBusyStateAndCanRunAgain() {
+        QTemporaryDir data;
+        seed(data.path());
+        TeamStore store(root, data.path());
+        WorkshopHost host;
+        auto macro = store.create(store.selection(host), host);
+        macro->reset();
+        host.interruptPartyRead = true;
+        QVERIFY_THROWS_EXCEPTION(CombatInterrupted, macro->perform(host.entry()));
+        QVERIFY(!host.macroBusy);
+        QVERIFY(host.keys.isEmpty());
+        QCOMPARE(host.buttons, 0);
+        host.interruptPartyRead = false;
+        host.interruptWorkerStartup = true;
+        QVERIFY_THROWS_EXCEPTION(CombatInterrupted, macro->reset());
+        QVERIFY(!host.macroBusy);
+        macro->reset();
+        QVERIFY(macro->perform(host.entry()));
+        QVERIFY(!host.macroBusy);
+    }
     void hostResultCannotBeSwallowedByWorkshopExceptionHandlers() {
         QTemporaryDir data;
         seed(data.path());

@@ -364,7 +364,7 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         };
         context.state = taskState_;
         context.gameLanguage = config.get("game_language").toString("zh_CN");
-        context.physicalFDown = [] { return bool(GetAsyncKeyState('F') & 0x8000); };
+        context.physicalFDown = [this] { return backend_.physicalKeyDown('F'); };
         auto runner = std::make_unique<TaskRunner>(context, *echo_, root_, data_, teams_);
         ScriptRuntime scripts(context, root_, data_);
         scripts.builtin = [&](const QString &id) {

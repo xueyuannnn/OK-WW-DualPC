@@ -176,6 +176,11 @@ class Window final : public QMainWindow {
               *fps_ = nullptr, *protocol_ = nullptr, *member_ = nullptr;
     QComboBox *codeSource_ = nullptr, *codeView_ = nullptr;
     QStackedWidget *boxForms_ = nullptr;
+    QStackedWidget *captureForms_ = nullptr;
+    QComboBox *captureSource_ = nullptr, *localCaptureTarget_ = nullptr, *localCaptureFps_ = nullptr,
+              *dxgiMonitor_ = nullptr, *dxgiCaptureFps_ = nullptr, *localInputTarget_ = nullptr;
+    QLabel *dxgiRefresh_ = nullptr;
+    void scanDesktopTargets();
     QHash<QString, QWidget *> settings_;
     Preview *preview_ = nullptr, *floatingPreview_ = nullptr;
     QWidget *floating_ = nullptr;

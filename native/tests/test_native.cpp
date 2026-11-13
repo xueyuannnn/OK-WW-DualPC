@@ -5,6 +5,85 @@ using namespace okww;
 class NativeTests : public QObject {
     Q_OBJECT
   private slots:
+    void localModesKeepLegacyDeviceSettingsAndValidateTheirOwnFields() {
+        auto config = Config::defaults();
+        QCOMPARE(config.s("capture.source"), QString("card"));
+        QCOMPARE(config.s("kmbox.protocol"), QString("kmbox_net"));
+        config.set("capture.source", "desktop");
+        config.set("capture.local_target", QJsonObject{{"kind","monitor"},{"id","test"}});
+        config.set("capture.fourcc", "P010"); // Inactive card settings cannot block desktop capture.
+        config.set("capture.width", 0);
+        config.validateCapture();
+        config.set("capture.local_target",QJsonObject{});
+        config.validateCapture(); // DXGI resolves the primary monitor without a saved target.
+        config.set("capture.local_backend", "WIN32");
+        config.validateCapture(); // Win32 also has a usable primary-monitor default.
+        config.set("capture.local_target", QJsonObject{{"kind","monitor"},{"id","test"}});
+        for (auto backend : {"DXGI", "WIN32"}) {
+            config.set("capture.local_backend", backend);
+            for (int fps : {1, 75, 540, 1000}) {
+                config.set("capture.local_fps",fps);
+                config.validateCapture();
+            }
+            for (double fps : {0., 1001., 60.5}) {
+                config.set("capture.local_fps",fps);
+                QVERIFY_THROWS_EXCEPTION(std::runtime_error, config.validateCapture());
+            }
+        }
+        config.set("capture.dxgi_follow_refresh",false);
+        config.set("capture.local_fps", 60);
+        config.set("capture.local_backend", "WIN32");
+        config.validateCapture();
+        config.set("kmbox.protocol", "sendinput");
+        config.validateBox(); // SendInput follows the foreground window without a configured target.
+        config.set("kmbox.target", QJsonObject{{"kind","window"},{"title","test"}});
+        config.validateBox(); // No KMBox host, UUID, or network port required.
+        config.set("kmbox.target_enabled",true);
+        config.validateBox();
+        config.set("kmbox.target",QJsonObject{});
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,config.validateBox());
+        config.set("kmbox.target_enabled",false);
+        QTemporaryDir data;
+        config.save(data.path()+"/local.json");
+        const auto saved = Config::load(data.path()+"/local.json");
+        QCOMPARE(saved.json, config.json);
+        config.set("capture.source","card");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, config.validateCapture());
+    }
+    void sendInputScanCodesAndVirtualDesktopMapping() {
+        QCOMPARE(desktopAbsolute({-1920,0},{-1920,0,3840,1080}),QPoint(0,0));
+        QCOMPARE(desktopAbsolute({1919,1079},{-1920,0,3840,1080}),QPoint(65535,65535));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, desktopAbsolute({1920,0},{-1920,0,3840,1080}));
+        const auto w = hidInput(26,true);
+        QCOMPARE(w.type,DWORD(INPUT_KEYBOARD));
+        QCOMPARE(w.ki.wScan,WORD(0x11));
+        QCOMPARE(w.ki.dwFlags,DWORD(KEYEVENTF_SCANCODE));
+        QCOMPARE(w.ki.dwExtraInfo,localInputTag);
+        const auto right = hidInput(79,false);
+        QCOMPARE(right.ki.wScan,WORD(0x4d));
+        QCOMPARE(right.ki.dwFlags,DWORD(KEYEVENTF_SCANCODE|KEYEVENTF_EXTENDEDKEY|KEYEVENTF_KEYUP));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, hidInput(200,true));
+    }
+    void sendInputDryRunReleasesOnlyItsOwnHeldControls() {
+        auto config=Config::defaults();
+        config.set("kmbox.protocol","sendinput"); config.set("kmbox.dry_run",true);
+        Controller controller(config);
+        controller.connect();
+        QVERIFY(controller.state()["absolute"].toBool());
+        QVERIFY(controller.history().isEmpty()); // Connecting must not disturb local user input.
+        controller.key(26,true); controller.key(224,true); controller.button("left",true);
+        controller.move(40,40); controller.absolute(1919,1079,1920,1080); controller.wheel(-2);
+        QCOMPARE(controller.history().size(),6);
+        INPUT absolute{}; memcpy(&absolute,controller.history()[4].constData(),sizeof(INPUT));
+        QCOMPARE(absolute.mi.dx,LONG(65535)); QCOMPARE(absolute.mi.dy,LONG(65535));
+        QCOMPARE(absolute.mi.dwFlags,DWORD(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK));
+        controller.release();
+        QCOMPARE(controller.history().size(),9);
+        QVERIFY(controller.state()["keys"].toArray().isEmpty());
+        QCOMPARE(controller.state()["buttons"].toInt(),0); QCOMPARE(controller.state()["modifiers"].toInt(),0);
+        controller.key(5,false); controller.button("right",false); controller.release(); controller.close();
+        QCOMPARE(controller.history().size(),9); // Unowned key-up is not sent to the desktop.
+    }
     void previewOwnsConvertedPixelsAfterCaptureBufferIsReused() {
         for (auto format : {PixelFormat::NV12, PixelFormat::BGR24}) {
             QImage published, copied;

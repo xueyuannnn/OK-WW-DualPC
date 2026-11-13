@@ -1,5 +1,6 @@
 #pragma once
 #include "common.hpp"
+#include "desktop.hpp"
 namespace okww {
 class Controller {
     Config cfg_;
@@ -13,6 +14,10 @@ class Controller {
     QList<QByteArray> history_;
     std::deque<double> latencyMs_;
     double latencyP50_ = 0, latencyP95_ = 0;
+    std::unique_ptr<DesktopTarget> captureTarget_;
+    std::unique_ptr<DesktopTarget> target_;
+    bool local() const { return cfg_.s("kmbox.protocol") == "sendinput"; }
+    void localSend(std::vector<INPUT> inputs, bool releasing = false);
     void noteLatency(i64 began);
     void recordPacket(const QByteArray &data);
     void exchange(uint32_t command, const QByteArray &payload = {});

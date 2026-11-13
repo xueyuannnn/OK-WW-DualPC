@@ -36,6 +36,7 @@ class Capture {
     void run();
     void runDs();
     void runMf();
+    void runDesktop();
 
   public:
     explicit Capture(Config c) : config_(std::move(c)) {}

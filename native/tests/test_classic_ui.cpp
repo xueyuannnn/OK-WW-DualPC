@@ -1486,21 +1486,98 @@ class ClassicUiTests final : public QObject {
         QCOMPARE(daily->mapTo(window.get(), QPoint{}), taskPosition);
         QCOMPARE(statusPanel->height(), 108);
     }
-    void boxConfigurationOnlyOffersKmboxNet() {
+    void deviceSourceSelectionsShowOnlyTheRelevantForms() {
         QTemporaryDir data;
         auto window = create(data);
         auto protocols = window->findChild<QComboBox *>("boxProtocol");
         auto forms = window->findChild<QStackedWidget *>("boxConnectionForms");
         QVERIFY(protocols);
         QVERIFY(forms);
-        QCOMPARE(protocols->count(), 1);
-        QCOMPARE(forms->count(), 1);
+        QCOMPARE(protocols->count(), 2);
+        QCOMPARE(forms->count(), 2);
         QCOMPARE(protocols->itemData(0).toString(), QString("kmbox_net"));
-        for (int i = 0; i < 1; ++i) {
+        for (int i = 0; i < 2; ++i) {
             protocols->setCurrentIndex(i);
             QCOMPARE(forms->currentIndex(), i);
         }
         QVERIFY(!window->findChild<QSpinBox *>("kmbox.hid_vid"));
+        auto capture=window->findChild<QComboBox *>("captureSource");
+        auto captureForms=window->findChild<QStackedWidget *>("captureSourceForms");
+        QVERIFY(capture && captureForms);
+        QCOMPARE(capture->count(),3);
+        QCOMPARE(captureForms->currentIndex(),0);
+        capture->setCurrentIndex(1); QCOMPARE(captureForms->currentIndex(),1);
+        auto inputTarget=window->findChild<QComboBox *>("localInputTarget");
+        auto inputBody=window->findChild<QWidget *>("sendInputAdvanced");
+        auto inputAdvanced=inputBody ? inputBody->parentWidget()->findChild<QPushButton *>("disclosure",Qt::FindDirectChildrenOnly) : nullptr;
+        QVERIFY(inputTarget && inputAdvanced);
+        QVERIFY(inputTarget->currentData().toMap().isEmpty());
+        QVERIFY(!inputTarget->isVisible());
+        inputAdvanced->click();
+        QVERIFY(inputTarget->isVisible());
+        inputTarget->addItem("测试窗口",QVariantMap{{"kind","window"},{"title","test"}});
+        inputTarget->setCurrentIndex(inputTarget->count()-1);
+        inputAdvanced->click();
+        QVERIFY(!inputTarget->isVisible());
+        auto display=window->findChild<QComboBox *>("dxgiMonitor");
+        QVERIFY(display && display->currentData().toString().isEmpty());
+        auto dxgiBody=window->findChild<QWidget *>("dxgiTargetSettings");
+        auto dxgiAdvanced=dxgiBody ? dxgiBody->parentWidget()->parentWidget()->findChild<QPushButton *>("disclosure",Qt::FindDirectChildrenOnly) : nullptr;
+        QVERIFY(dxgiAdvanced);
+        QVERIFY(!display->isVisible());
+        dxgiAdvanced->click();
+        QVERIFY(display->isVisible());
+        QVERIFY(window->findChild<QPushButton *>("refreshDxgiDisplays")->isVisible());
+        QVERIFY(!window->findChild<QComboBox *>("localCaptureTarget")->isVisible());
+        dxgiAdvanced->click();
+        QVERIFY(!display->isVisible());
+        QVERIFY(window->findChild<QLabel *>("dxgiRefreshRate")->text().contains("显示器"));
+        QVERIFY(!window->findChild<QComboBox *>("localCaptureFps")->isVisible());
+        auto dxgiFps=window->findChild<QComboBox *>("dxgiCaptureFps");
+        auto win32Fps=window->findChild<QComboBox *>("localCaptureFps");
+        QVERIFY(dxgiFps && dxgiFps->isVisible() && dxgiFps->isEditable());
+        QCOMPARE(dxgiFps->currentText(),QString("跟随显示器刷新率"));
+        dxgiFps->setCurrentText("75");
+        QTRY_VERIFY(QFile::exists(data.path()+"/native-device-settings.json"));
+        QTRY_COMPARE(readJson(data.path()+"/native-device-settings.json")["config"].toObject()["capture"].toObject()["local_fps"].toInt(),75);
+        QVERIFY(!readJson(data.path()+"/native-device-settings.json")["config"].toObject()["capture"].toObject()["dxgi_follow_refresh"].toBool());
+        const auto dxgiArtifacts=qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!dxgiArtifacts.isEmpty()) {QTest::qWait(50); window->grab().save(dxgiArtifacts+"/dxgi-foreground.png");}
+        capture->setCurrentIndex(2); QCOMPARE(captureForms->currentIndex(),2);
+        auto captureTarget=window->findChild<QComboBox *>("localCaptureTarget");
+        auto captureBody=window->findChild<QWidget *>("win32TargetSettings");
+        auto captureAdvanced=captureBody ? captureBody->parentWidget()->parentWidget()->findChild<QPushButton *>("disclosure",Qt::FindDirectChildrenOnly) : nullptr;
+        QVERIFY(captureTarget && captureAdvanced);
+        QVERIFY(win32Fps->isVisible());
+        QCOMPARE(win32Fps->currentText(),QString("75"));
+        win32Fps->setCurrentText("90");
+        QCOMPARE(dxgiFps->currentText(),QString("90"));
+        QVERIFY(!captureTarget->isVisible());
+        captureAdvanced->click(); QVERIFY(captureTarget->isVisible());
+        QVERIFY(!display->isVisible());
+        captureAdvanced->click(); QVERIFY(!captureTarget->isVisible());
+        const auto artifacts=qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!artifacts.isEmpty()) {QTest::qWait(50); window->grab().save(artifacts+"/local-capture-sendinput.png");}
+        QVERIFY(window->findChild<QComboBox *>("localCaptureFps")->isEditable());
+        QTRY_COMPARE(readJson(data.path()+"/native-device-settings.json")["config"].toObject()["capture"].toObject()["local_backend"].toString(),QString("WIN32"));
+        auto saved=readJson(data.path()+"/native-device-settings.json")["config"].toObject();
+        QCOMPARE(saved["capture"].toObject()["local_backend"].toString(),QString("WIN32"));
+        QTRY_COMPARE(readJson(data.path()+"/native-device-settings.json")["config"].toObject()["capture"].toObject()["local_fps"].toInt(),90);
+        QCOMPARE(saved["kmbox"].toObject()["protocol"].toString(),QString("sendinput"));
+        QVERIFY(saved["kmbox"].toObject()["target_enabled"].toBool());
+        QCOMPARE(saved["kmbox"].toObject()["target"].toObject()["title"].toString(),QString("test"));
+        inputTarget->setCurrentIndex(0);
+        QTRY_VERIFY(!readJson(data.path()+"/native-device-settings.json")["config"].toObject()["kmbox"].toObject()["target_enabled"].toBool());
+        capture->setCurrentIndex(1);
+        dxgiFps->setCurrentIndex(0);
+        QTRY_VERIFY(readJson(data.path()+"/native-device-settings.json")["config"].toObject()["capture"].toObject()["dxgi_follow_refresh"].toBool());
+        QCOMPARE(win32Fps->currentText(),QString("90"));
+        capture->setCurrentIndex(0); protocols->setCurrentIndex(0);
+        QCOMPARE(captureForms->currentIndex(),0); QCOMPARE(forms->currentIndex(),0);
+        captureAdvanced->click();
+        QVERIFY(!display->isVisible() && !captureTarget->isVisible());
+        captureAdvanced->click();
+        if (!artifacts.isEmpty()) {QTest::qWait(50); window->grab().save(artifacts+"/capture-card-kmbox.png");}
     }
     void completePortraitAssetsCoverEveryBuiltInCharacter() {
         const auto manifest = readJson(root + "/native/resources/portraits/manifest.json");

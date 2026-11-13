@@ -3,6 +3,7 @@
 #include "combat_vision.hpp"
 #include "echo_detector.hpp"
 #include "capture.hpp"
+#include "desktop.hpp"
 #include "garden.hpp"
 #include <iostream>
 using namespace okww;
@@ -18,6 +19,7 @@ int main(int argc, char **argv) {
          {"report", "JSON report", "path"},
          {"capture-config", "Read-only capture using this dualpc.json; never connect a box", "path"},
          {"capture-seconds", "Capture diagnostic duration, 1 to 30 seconds", "seconds", "5"},
+         {"desktop-targets", "List local monitors and windows without capturing or sending input"},
          {"feature", "Template to match", "name"},
          {"garden-scan", "Profile saved Garden template scan without issuing input"},
          {"echo", "Run original echo model on saved image"},
@@ -27,7 +29,9 @@ int main(int argc, char **argv) {
     QJsonObject report{{"runtime", "C++"}, {"hardware_input_sent", false}};
     try {
         const QString root = parser.value("root");
-        if (parser.isSet("capture-config")) {
+        if (parser.isSet("desktop-targets")) {
+            report["targets"] = desktopTargets();
+        } else if (parser.isSet("capture-config")) {
             if (parser.isSet("image") || !parser.isSet("report"))
                 fail("采集诊断需要 --report，且不能同时指定 --image");
             const auto path = parser.value("capture-config");
@@ -40,7 +44,7 @@ int main(int argc, char **argv) {
             const auto config = Config::load(path);
             config.validateCapture();
             QJsonArray available;
-            for (const auto &mode : modes(config))
+            if (config.s("capture.source") != "desktop") for (const auto &mode : modes(config))
                 if (mode.width == config.n("capture.width") && mode.height == config.n("capture.height") &&
                     mode.fourcc == config.s("capture.fourcc"))
                     available.append(mode.json());

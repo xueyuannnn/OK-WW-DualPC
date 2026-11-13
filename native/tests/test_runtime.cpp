@@ -59,6 +59,25 @@ class MacroProbe final : public TeamMacro {
 class RuntimeTests : public QObject {
     Q_OBJECT
   private slots:
+    void localInputUsesAbsolutePointsAndIgnoresKmboxRelativeCalibration() {
+        Harness h;
+        h.config.set("kmbox.protocol","sendinput");
+        h.config.set("kmbox.counts_per_pixel_x",3.5);
+        h.config.set("kmbox.counts_per_pixel_y",.5);
+        h.config.set("kmbox.move_interval",.1);
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        input.relative(40,40);
+        QCOMPARE(h.events.size(),1);
+        QCOMPARE(h.events[0]["x"].toInt(),40); QCOMPARE(h.events[0]["y"].toInt(),40);
+        QCOMPARE(h.clock.now(),0.);
+        input.move({800,600});
+        QCOMPARE(h.events[1]["op"].toString(),QString("absolute"));
+        QCOMPARE(h.events[1]["x"].toInt(),800);
+        input.buttonDown();
+        QVERIFY(h.events.last()["time"].toDouble() >= .12);
+        input.buttonUp();
+        input.release();
+    }
     void positionedActionsWaitAtLeast120msWithoutDelayingRawCombatOrDragging() {
         Harness h;
         Input input(h.config, {1920, 1080}, true, h.transport, h.execution);

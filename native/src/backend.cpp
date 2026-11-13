@@ -77,6 +77,8 @@ void Backend::start(const Config &cfg, bool simulation) {
         }
         box_ = std::make_unique<Controller>(cfg_);
         box_->connect();
+        if (cfg_.s("kmbox.protocol") == "sendinput" && !cfg_.b("kmbox.dry_run"))
+            physicalKeys_ = std::make_unique<PhysicalKeys>();
         running_ = true;
         error_.clear();
         inputFault_ = {};
@@ -100,6 +102,7 @@ void Backend::stop() {
     if (box_)
         box_->close();
     box_.reset();
+    physicalKeys_.reset();
     if (capture_)
         capture_->stop();
     capture_.reset();
@@ -181,8 +184,9 @@ QJsonObject Backend::testMove() {
     std::lock_guard lock(mutex_);
     if (!box_ || !box_->connected())
         fail("请先连接键鼠盒子，再测试移动");
-    const int x = int(std::lround(40 * cfg_.d("kmbox.counts_per_pixel_x"))),
-              y = int(std::lround(40 * cfg_.d("kmbox.counts_per_pixel_y")));
+    const bool local = cfg_.s("kmbox.protocol") == "sendinput";
+    const int x = local ? 40 : int(std::lround(40 * cfg_.d("kmbox.counts_per_pixel_x"))),
+              y = local ? 40 : int(std::lround(40 * cfg_.d("kmbox.counts_per_pixel_y")));
     try {
         // Serialize with task input and retain its held buttons and keys. A
         // successful test must not cancel a heavy attack or interrupt movement.
@@ -198,6 +202,14 @@ QJsonObject Backend::testMove() {
     }
     return {{"dry_run", cfg_.b("kmbox.dry_run")}, {"armed", armed_},
             {"counts_x", x}, {"counts_y", y}};
+}
+bool Backend::physicalKeyDown(int vk) {
+    std::lock_guard lock(mutex_);
+    return physicalKeys_ ? physicalKeys_->down(vk) : bool(GetAsyncKeyState(vk) & 0x8000);
+}
+bool Backend::physicalHotkey(int vk) {
+    std::lock_guard lock(mutex_);
+    return !physicalKeys_ || physicalKeys_->physicalHotkey(vk);
 }
 FramePtr Backend::latestFrame() {
     std::lock_guard lock(mutex_);
@@ -311,7 +323,9 @@ QJsonObject Backend::dispatch(const QJsonObject &q) {
         else
             fail("未知的原生输入操作");
     } catch (const std::exception &error) {
-        if (!box_->connected())
+        if (cfg_.s("kmbox.protocol") == "sendinput")
+            disarmFaultLocked("local_input_error", "本机输入异常：" + errorText(error));
+        else if (!box_->connected())
             disarmFaultLocked("input_transport_error", "键鼠盒子通信失败：" + errorText(error));
         throw;
     }

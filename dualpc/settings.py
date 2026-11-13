@@ -21,11 +21,19 @@ class CaptureSettings:
     device_name: str = "GC573"
     device_path: str = ""
     ffmpeg_path: str = "ffmpeg"
+    source: str = "card"
+    local_backend: str = "DXGI"
+    dxgi_monitor: str = ""
+    dxgi_follow_refresh: bool = True
+    local_target: dict = field(default_factory=dict)
+    local_fps: int = 60
 
 
 @dataclass
 class BoxSettings:
     protocol: str = "kmbox_net"
+    target: dict = field(default_factory=dict)
+    target_enabled: bool = False
     host: str = ""
     port: int = 0
     uuid: str = ""
@@ -51,36 +59,47 @@ class Settings:
 
     def validate(self):
         c, b = self.capture, self.kmbox
-        if c.backend not in {"DSHOW", "MSMF", "FFMPEG"}:
+        local = c.source == 'desktop'
+        if c.source not in {"card", "desktop"}:
+            raise ValueError("请选择采集方式")
+        if c.source == "desktop":
+            if c.local_backend not in {"DXGI", "WIN32"} or not isinstance(c.local_fps, int) or not 1 <= c.local_fps <= 1000:
+                raise ValueError("请选择本机截图方式，采集帧率需为 1–1000 的整数")
+            if c.local_backend == 'WIN32' and c.local_target and c.local_target.get('kind') not in {'window', 'monitor'}:
+                raise ValueError("请选择本机截图目标")
+        if not local and c.backend not in {"DSHOW", "MSMF", "FFMPEG"}:
             raise ValueError("capture.backend must be DSHOW, MSMF or FFMPEG")
-        if c.backend == "FFMPEG" and not c.device_name:
+        if not local and c.backend == "FFMPEG" and not c.device_name:
             raise ValueError("FFMPEG DirectShow capture requires the exact video device name")
-        if c.device_index < 0 or min(c.width, c.height, c.output_width, c.output_height, c.fps) <= 0:
+        if min(c.output_width, c.output_height) <= 0 or (not local and (c.device_index < 0 or min(c.width, c.height, c.fps) <= 0)):
             raise ValueError("Invalid capture index, resolution or frame rate")
-        if not math.isfinite(c.fps):
+        if not local and not math.isfinite(c.fps):
             raise ValueError("Capture frame rate must be finite")
         if abs(c.output_width / c.output_height - 16 / 9) > 0.01 or c.output_width < 1280 or c.output_height < 720:
             raise ValueError("OK-WW requires a 16:9 inference image of at least 1280x720")
         if not math.isfinite(c.stale_after) or c.stale_after <= 0:
             raise ValueError("stale_after must be positive")
-        if c.fourcc and len(c.fourcc) != 4:
+        if not local and c.fourcc and len(c.fourcc) != 4:
             raise ValueError("fourcc must contain four characters or be empty")
         if c.crop is not None and (len(c.crop) != 4 or min(c.crop[:2]) < 0 or min(c.crop[2:]) <= 0):
             raise ValueError("crop must be [x, y, width, height] in source pixels")
-        if min(b.desktop_width, b.desktop_height) <= 0 or not 1 <= b.move_chunk <= 32767 or not 1 <= b.home_counts <= 32767:
+        local_input = b.protocol == 'sendinput'
+        if min(b.desktop_width, b.desktop_height) <= 0 or (not local_input and (not 1 <= b.move_chunk <= 32767 or not 1 <= b.home_counts <= 32767)):
             raise ValueError("Invalid desktop size or movement limits")
-        if any(not math.isfinite(v) or v <= 0 for v in (b.timeout, b.counts_per_pixel_x, b.counts_per_pixel_y)):
+        if not local_input and any(not math.isfinite(v) or v <= 0 for v in (b.timeout, b.counts_per_pixel_x, b.counts_per_pixel_y)):
             raise ValueError("Timeout and cursor scales must be positive and finite")
-        if not math.isfinite(b.move_interval) or not 0 <= b.move_interval <= 0.1:
+        if not local_input and (not math.isfinite(b.move_interval) or not 0 <= b.move_interval <= 0.1):
             raise ValueError("move_interval must be between 0 and 0.1 seconds")
-        if not math.isfinite(b.home_wait) or not 0 <= b.home_wait <= 1:
+        if not local_input and (not math.isfinite(b.home_wait) or not 0 <= b.home_wait <= 1):
             raise ValueError("home_wait must be between 0 and 1 second")
         if not math.isfinite(b.position_settle) or not 0.11 <= b.position_settle <= 1:
             raise ValueError("position_settle must be between 0.11 and 1 second")
         if not math.isfinite(b.ui_click_hold) or not 0.1 <= b.ui_click_hold <= 0.5:
             raise ValueError("ui_click_hold must be between 0.1 and 0.5 seconds")
-        if b.protocol != "kmbox_net":
-            raise ValueError("Unknown input protocol; select KMBox Net")
+        if b.protocol not in {"kmbox_net", "sendinput"}:
+            raise ValueError("请选择 KMBox Net 或 SendInput")
+        if b.protocol == 'sendinput' and b.target_enabled and b.target.get('kind') != 'window':
+            raise ValueError('请在高级设置中选择 SendInput 窗口，或使用当前前台窗口')
         if not b.dry_run and b.protocol == "kmbox_net":
             import ipaddress
             ipaddress.IPv4Address(b.host)

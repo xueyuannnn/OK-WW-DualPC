@@ -29,6 +29,12 @@ Config Config::defaults() {
                                      {"device_name", ""},
                                      {"device_path", ""},
                                      {"backend", "DSHOW"},
+                                     {"source", "card"},
+                                     {"local_backend", "DXGI"},
+                                     {"dxgi_monitor", ""},
+                                     {"dxgi_follow_refresh", true},
+                                     {"local_target", QJsonObject{}},
+                                     {"local_fps", 60},
                                      {"width", 1920},
                                      {"height", 1080},
                                      {"fps", 60},
@@ -39,6 +45,8 @@ Config Config::defaults() {
                                      {"stale_after", 0.15},
                                      {"ffmpeg_path", "ffmpeg"}}},
              {"kmbox", QJsonObject{{"protocol", "kmbox_net"},
+                                   {"target_enabled", false},
+                                   {"target", QJsonObject{}},
                                    {"host", ""},
                                    {"port", 0},
                                    {"uuid", ""},
@@ -103,15 +111,26 @@ void Config::set(const QString &path, const QJsonValue &v) {
     json[keys[0]] = sub;
 }
 void Config::validateCapture() const {
-    if (s("capture.fourcc") == "P010")
+    const bool local = s("capture.source") == "desktop";
+    if (!QStringList{"card", "desktop"}.contains(s("capture.source")))
+        fail("请选择采集方式");
+    if (local && (!QStringList{"DXGI", "WIN32"}.contains(s("capture.local_backend")) ||
+                  !std::isfinite(d("capture.local_fps")) || d("capture.local_fps") != n("capture.local_fps") ||
+                  n("capture.local_fps") < 1 || n("capture.local_fps") > 1000))
+        fail("请选择本机截图方式，采集帧率需为 1–1000 的整数");
+    const auto localTarget=get("capture.local_target").toObject();
+    if (local && s("capture.local_backend")=="WIN32" && !localTarget.isEmpty() &&
+        !QStringList{"monitor","window"}.contains(localTarget["kind"].toString()))
+        fail("请选择有效的本机截图目标");
+    if (!local && s("capture.fourcc") == "P010")
         fail("P010 尚未完成驱动稳定性验证，请选择 NV12 或其他 8 位格式");
-    if (!QStringList{"DSHOW", "MSMF"}.contains(s("capture.backend")))
+    if (!local && !QStringList{"DSHOW", "MSMF"}.contains(s("capture.backend")))
         fail("C++ 采集支持 DirectShow / Media Foundation，请重新选择后端");
-    if (n("capture.width") < 2 || n("capture.height") < 2 || n("capture.width") > 8192 ||
+    if (!local && (n("capture.width") < 2 || n("capture.height") < 2 || n("capture.width") > 8192 ||
         n("capture.height") > 8192 || !std::isfinite(d("capture.fps")) || d("capture.fps") <= 0 ||
-        d("capture.fps") > 1000)
+        d("capture.fps") > 1000))
         fail("采集分辨率或帧率无效");
-    if (!QStringList{"NV12", "P010", "YUY2", "UYVY", "I420", "IYUV", "RGB3", "RGB4", "MJPG"}.contains(
+    if (!local && !QStringList{"NV12", "P010", "YUY2", "UYVY", "I420", "IYUV", "RGB3", "RGB4", "MJPG"}.contains(
             s("capture.fourcc")))
         fail("请选择受支持的图像格式");
     if (n("capture.output_width") < 1280 || n("capture.output_height") < 720 ||
@@ -122,10 +141,14 @@ void Config::validateCapture() const {
         fail("图像过期时间无效");
 }
 void Config::validateBox() const {
-    if (s("kmbox.protocol") != "kmbox_net")
-        fail("当前版本仅支持 KMBox Net，请检查盒子配置");
-    if (d("kmbox.timeout") <= 0 || d("kmbox.timeout") > 5 || d("kmbox.counts_per_pixel_x") <= 0 ||
-        d("kmbox.counts_per_pixel_y") <= 0 || n("kmbox.desktop_width") <= 0 || n("kmbox.desktop_height") <= 0)
+    if (!QStringList{"kmbox_net", "sendinput"}.contains(s("kmbox.protocol")))
+        fail("请选择 KMBox Net 或 SendInput");
+    if (s("kmbox.protocol")=="sendinput" && b("kmbox.target_enabled") &&
+        get("kmbox.target").toObject()["kind"].toString()!="window")
+        fail("请在高级设置中选择 SendInput 目标窗口，或切回当前前台窗口");
+    if (n("kmbox.desktop_width") <= 0 || n("kmbox.desktop_height") <= 0 ||
+        (s("kmbox.protocol") != "sendinput" && (d("kmbox.timeout") <= 0 || d("kmbox.timeout") > 5 ||
+        d("kmbox.counts_per_pixel_x") <= 0 || d("kmbox.counts_per_pixel_y") <= 0)))
         fail("盒子超时、倍率或桌面尺寸无效");
     if (!std::isfinite(d("kmbox.position_settle")) || !std::isfinite(d("kmbox.ui_click_hold")) ||
         d("kmbox.position_settle") < .11 || d("kmbox.position_settle") > 1 ||

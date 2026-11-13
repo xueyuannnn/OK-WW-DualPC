@@ -14,11 +14,11 @@ set(CLASSIC_ICONS resources/classic-ui.qrc resources/fluent-icons.qrc resources/
 set(CLASSIC_UI src/classic_ui.cpp src/classic_ui.hpp src/classic_calendar.cpp src/classic_window.cpp
     src/classic_characters.cpp src/classic_workshop.cpp src/classic_editor.cpp src/classic_editor.hpp src/classic_settings.cpp src/classic_schedule.cpp src/classic_preview.cpp src/classic_task_info.cpp)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Network Concurrent Test)
-add_library(okww_native STATIC src/common.cpp src/capture.cpp src/controller.cpp src/backend.cpp)
+add_library(okww_native STATIC src/common.cpp src/capture.cpp src/capture_desktop.cpp src/desktop.cpp src/controller.cpp src/backend.cpp)
 target_include_directories(okww_native PUBLIC src)
 target_compile_definitions(okww_native PUBLIC UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(okww_native PUBLIC /utf-8 /W4 /permissive- /EHsc)
-target_link_libraries(okww_native PUBLIC Qt6::Core Qt6::Gui Qt6::Network ws2_32 ole32 oleaut32 strmiids mfplat mfreadwrite mfuuid mf windowsapp)
+target_link_libraries(okww_native PUBLIC Qt6::Core Qt6::Gui Qt6::Network ws2_32 ole32 oleaut32 strmiids mfplat mfreadwrite mfuuid mf windowsapp d3d11 dxgi user32 gdi32)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../main_dualpc.py")
     set(OKWW_COMPAT_DEFAULT ON)
 else()

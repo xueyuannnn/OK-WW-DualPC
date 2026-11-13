@@ -164,8 +164,13 @@ def install_native_io(channel, direct_input=False):
     class NativeController(KMBoxNet):
         def __init__(self, settings):
             # Reuse only the controller facade/state, never open its UDP socket.
-            super().__init__(settings)
-            self.supports_absolute = False
+            if settings.protocol == 'sendinput':
+                from dataclasses import replace
+                super().__init__(replace(settings, uuid=''))
+                self.settings = settings
+            else:
+                super().__init__(settings)
+            self.supports_absolute = settings.protocol == 'sendinput'
             self.supports_keyboard = True
             self.max_keys = 10
 
@@ -175,6 +180,7 @@ def install_native_io(channel, direct_input=False):
                 raise RuntimeError("C++ 盒子尚未连接")
             self.connected = True
             self.supports_keyboard = state.get("keyboard", False)
+            self.supports_absolute = state.get("absolute", False)
             self.capability_status = state.get("capability", "")
 
         def move(self, x, y):

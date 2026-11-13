@@ -159,7 +159,7 @@ QWidget *Window::buildClassicAbout() {
     featureGrid->setContentsMargins(16, 16, 16, 16);
     featureGrid->setSpacing(12);
     const QVector<QStringList> descriptions{
-        {"双机设备", "检测采集卡，选择分辨率、帧率和图像格式；通过 KMBox Net 控制键鼠。"},
+        {"双机设备", "选择采集卡、DXGI 或 Win32 采集；使用 KMBox Net 或 SendInput 控制键鼠。"},
         {"战斗与任务", "自动战斗、每日任务、4C 声骸循环、噩梦巢穴与周常乐园。"},
         {"角色代码工坊", "导入、编辑和导出 Python 队伍代码，可按队伍切换内置与工坊连招。"},
         {"预览与控制", "独立预览、置顶与帧率选择；一键连接、停止和设备测试。"}};

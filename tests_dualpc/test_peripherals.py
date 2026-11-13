@@ -13,7 +13,7 @@ def test_removed_protocol_is_rejected_before_connecting(protocol, dry_run):
     settings = Settings()
     settings.kmbox.protocol = protocol
     settings.kmbox.dry_run = dry_run
-    with pytest.raises(ValueError, match="Unknown input protocol"):
+    with pytest.raises(ValueError, match="KMBox Net.*SendInput"):
         settings.validate()
     with pytest.raises(ValueError, match="Unsupported controller protocol"):
         create_controller(settings.kmbox)

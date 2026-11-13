@@ -72,6 +72,18 @@ void Controller::connect() {
     try {
         index_ = 0;
         latencyMs_.clear();
+        if (local()) {
+            if (!cfg_.b("kmbox.dry_run")) {
+                if (cfg_.b("kmbox.target_enabled"))
+                    target_=std::make_unique<DesktopTarget>(cfg_.get("kmbox.target").toObject());
+                if (cfg_.s("capture.source") == "desktop") {
+                    captureTarget_ = std::make_unique<DesktopTarget>(desktopCaptureTarget(cfg_));
+                }
+            }
+            capability_ = "SendInput · 本机键盘与鼠标";
+            connected_ = true;
+            return;
+        }
         uuid_ = cfg_.s("kmbox.uuid").toUInt(nullptr, 16);
         if (!cfg_.b("kmbox.dry_run")) {
             socket_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -112,17 +124,47 @@ void Controller::move(int x, int y) {
     std::lock_guard lock(mutex_);
     if (std::abs(int64_t(x)) > 32767 || std::abs(int64_t(y)) > 32767)
         fail("移动超出 HID 范围");
-    mouse(MOVE, x, y);
+    if (local()) {
+        INPUT input{}; input.type = INPUT_MOUSE;
+        input.mi.dx = x; input.mi.dy = y; input.mi.dwFlags = MOUSEEVENTF_MOVE;
+        localSend({input});
+    } else mouse(MOVE, x, y);
 }
 
-void Controller::absolute(int, int, int, int) {
-    fail("KMBox Net 使用相对定位");
+void Controller::absolute(int x, int y, int width, int height) {
+    std::lock_guard lock(mutex_);
+    if (!local()) fail("KMBox Net 使用相对定位");
+    if (width < 1 || height < 1 || x < 0 || y < 0 || x >= width || y >= height) fail("SendInput 坐标无效");
+    // Local screenshots already supply desktop coordinates. With an external
+    // capture source, map the image onto the current foreground client area.
+    const QRect rect = captureTarget_ ? captureTarget_->rect() : target_ ? target_->rect() :
+        cfg_.b("kmbox.dry_run") ? QRect(0,0,width,height) : foregroundClientRect();
+    const QPoint point(rect.x() + int(int64_t(x)*rect.width()/width), rect.y() + int(int64_t(y)*rect.height()/height));
+    if (target_ && !target_->rect().contains(point)) fail("点击位置位于指定窗口外，请检查高级设置中的窗口与截图配置");
+    const QRect desktop = cfg_.b("kmbox.dry_run") ? rect : virtualDesktopRect();
+    const auto normal = desktopAbsolute(point, desktop);
+    INPUT input{}; input.type = INPUT_MOUSE;
+    input.mi.dx = normal.x(); input.mi.dy = normal.y();
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    localSend({input});
 }
 void Controller::button(const QString &name, bool down) {
     std::lock_guard lock(mutex_);
     int i = QStringList{"left", "right", "middle", "x1", "x2"}.indexOf(name);
     if (i < 0)
         fail("未知鼠标按键");
+    if (local()) {
+        if (!down && !(buttons_ & (1 << i))) return;
+        static constexpr DWORD downs[]{MOUSEEVENTF_LEFTDOWN,MOUSEEVENTF_RIGHTDOWN,MOUSEEVENTF_MIDDLEDOWN,MOUSEEVENTF_XDOWN,MOUSEEVENTF_XDOWN};
+        static constexpr DWORD ups[]{MOUSEEVENTF_LEFTUP,MOUSEEVENTF_RIGHTUP,MOUSEEVENTF_MIDDLEUP,MOUSEEVENTF_XUP,MOUSEEVENTF_XUP};
+        INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = down ? downs[i] : ups[i];
+        if (i >= 3) input.mi.mouseData = i == 3 ? XBUTTON1 : XBUTTON2;
+        // Retain failed-down state so emergency cleanup can still send key-up.
+        if (down) buttons_ |= 1 << i;
+        localSend({input}, !down);
+        if (!down) buttons_ &= ~(1 << i);
+        return;
+    }
     buttons_ = down ? buttons_ | (1 << i) : buttons_ & ~(1 << i);
     mouse(i == 0 ? LEFT : i == 2 ? MIDDLE : RIGHT);
 }
@@ -132,6 +174,19 @@ void Controller::key(int code, bool down) {
     if (code < 1 || code > 255)
         fail("无效 HID 键码");
     bool mod = code >= 0xe0 && code <= 0xe7;
+    if (local()) {
+        const bool held = mod ? bool(modifiers_ & (1 << (code-0xe0))) : keys_.contains(code);
+        if (!down && !held) return;
+        const auto input = hidInput(code, down);
+        if (down) {
+            if (mod) modifiers_ |= 1 << (code-0xe0); else keys_.insert(code);
+        }
+        localSend({input}, !down);
+        if (!down) {
+            if (mod) modifiers_ &= ~(1 << (code-0xe0)); else keys_.erase(code);
+        }
+        return;
+    }
     if (mod)
         modifiers_ = down ? modifiers_ | (1 << (code - 0xe0)) : modifiers_ & ~(1 << (code - 0xe0));
     else if (down) {
@@ -147,6 +202,11 @@ void Controller::wheel(int steps) {
     std::lock_guard lock(mutex_);
     if (std::abs(int64_t(steps)) > 10000)
         fail("滚轮步数过大");
+    if (local()) {
+        INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+        input.mi.mouseData = DWORD(steps * WHEEL_DELTA);
+        localSend({input}); return;
+    }
     while (steps) {
         const int n = std::clamp(steps, -127, 127);
         mouse(WHEEL, 0, 0, n);
@@ -158,11 +218,23 @@ void Controller::probe() {
     std::lock_guard lock(mutex_);
     if (!connected_)
         fail("盒子未连接");
-    move(0, 0);
+    if (!local()) move(0, 0);
 }
 
 void Controller::release() {
     std::lock_guard lock(mutex_);
+    if (local()) {
+        // Release only controls this connection pressed, never the user's keys.
+        const auto keys = keys_;
+        const auto modifiers = modifiers_, buttons = buttons_;
+        std::exception_ptr error;
+        const auto attempt = [&](auto action) { try { action(); } catch (...) {if (!error) error = std::current_exception();} };
+        for (auto code : keys) attempt([&]{key(code,false);});
+        for (int i=0;i<8;++i) if (modifiers & (1<<i)) attempt([&]{key(0xe0+i,false);});
+        for (int i=0;i<5;++i) if (buttons & (1<<i)) attempt([&]{button(QStringList{"left","right","middle","x1","x2"}[i],false);});
+        if (error) std::rethrow_exception(error);
+        return;
+    }
     buttons_ = modifiers_ = 0;
     keys_.clear();
     std::exception_ptr error;
@@ -193,6 +265,8 @@ void Controller::close() noexcept {
         closesocket(socket_);
     socket_ = INVALID_SOCKET;
     connected_ = false;
+    captureTarget_.reset();
+    target_.reset();
     buttons_ = modifiers_ = 0;
     keys_.clear();
 }
@@ -208,7 +282,8 @@ QJsonObject Controller::state() {
         keys.append(k);
     return {{"connected", connected_},
             {"keyboard", true},
-            {"absolute", false},
+            {"absolute", local()},
+            {"protocol", cfg_.s("kmbox.protocol")},
             {"capability", capability_},
             {"buttons", buttons_},
             {"modifiers", modifiers_},
@@ -217,6 +292,25 @@ QJsonObject Controller::state() {
             {"transport_samples", int(latencyMs_.size())},
             {"transport_p50_ms", latencyMs_.empty() ? QJsonValue() : QJsonValue(latencyP50_)},
             {"transport_p95_ms", latencyMs_.empty() ? QJsonValue() : QJsonValue(latencyP95_)},
-            {"transport_scope", "host send to matching protocol reply; excludes game/USB consumption"}};
+            {"transport_scope", local() ? "Windows SendInput call; excludes application consumption" : "host send to matching protocol reply; excludes game/USB consumption"}};
+}
+void Controller::localSend(std::vector<INPUT> inputs, bool releasing) {
+    if (!connected_) fail("SendInput 未连接");
+    if (target_ && !releasing) {
+        target_->rect();
+        if (!target_->foreground()) fail("SendInput 指定窗口不在前台，请切到该窗口后继续，或在高级设置中使用当前前台窗口");
+    }
+    for (auto &input : inputs) {
+        if (input.type == INPUT_MOUSE) input.mi.dwExtraInfo = localInputTag;
+        if (input.type == INPUT_KEYBOARD) input.ki.dwExtraInfo = localInputTag;
+    }
+    if (cfg_.b("kmbox.dry_run")) {
+        recordPacket(QByteArray(reinterpret_cast<const char *>(inputs.data()), qsizetype(inputs.size()*sizeof(INPUT))));
+        return;
+    }
+    const auto began = nowNs();
+    const auto sent = SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
+    if (sent != inputs.size()) fail("SendInput 未完整发送输入，请检查目标程序权限是否高于本软件");
+    noteLatency(began);
 }
 } // namespace okww

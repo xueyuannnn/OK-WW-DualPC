@@ -138,11 +138,12 @@ void Input::buttonUp(QString button) {
     }
 }
 void Input::counts(int x, int y, bool precise) {
-    const int chunk = precise ? std::min(config_.n("kmbox.move_chunk"), 127) : config_.n("kmbox.move_chunk");
+    const bool local = config_.s("kmbox.protocol") == "sendinput";
+    const int chunk = local ? 32767 : precise ? std::min(config_.n("kmbox.move_chunk"), 127) : config_.n("kmbox.move_chunk");
     if (chunk <= 0)
         fail("鼠标分段参数无效");
     const double interval =
-        precise ? std::max(config_.d("kmbox.move_interval"), .008) : config_.d("kmbox.move_interval");
+        local ? 0 : precise ? std::max(config_.d("kmbox.move_interval"), .008) : config_.d("kmbox.move_interval");
     const int steps =
         std::max(1, int((std::max(std::abs(int64_t(x)), std::abs(int64_t(y))) + chunk - 1) / chunk));
     if (steps > 100000)
@@ -191,8 +192,9 @@ void Input::move(QPointF point) {
 }
 void Input::relative(double x, double y) {
     try {
-        counts(pixelRound(x * config_.d("kmbox.counts_per_pixel_x")),
-               pixelRound(y * config_.d("kmbox.counts_per_pixel_y")), false);
+        const bool local = config_.s("kmbox.protocol") == "sendinput";
+        counts(pixelRound(x * (local ? 1 : config_.d("kmbox.counts_per_pixel_x"))),
+               pixelRound(y * (local ? 1 : config_.d("kmbox.counts_per_pixel_y"))), false);
         position_.reset();
         positionReadyAt_ = -1;
     } catch (...) {

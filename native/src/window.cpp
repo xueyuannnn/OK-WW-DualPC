@@ -57,8 +57,8 @@ static QFrame *card(const QString &name, QVBoxLayout *layout) {
     outer->setContentsMargins(16, 16, 16, 16);
     outer->setSpacing(6);
     outer->addWidget(new QLabel(name));
-    const QString subtitle = name.startsWith("01") ? "选择接收游戏机 HDMI 画面的采集卡，一次检测设备及驱动支持的参数。"
-                             : name.startsWith("02") ? "填写 KMBox Net 的 IP、端口和 UUID，连接后可测试鼠标移动。"
+    const QString subtitle = name.startsWith("01") ? "选择采集卡或本机截图方式，展开对应参数。"
+                             : name.startsWith("02") ? "选择 KMBox Net 或本机 SendInput，展开对应连接设置。"
                                                      : "修改后点击右上角“开始”生效；设备调试可单独应用配置。";
     auto hint = new QLabel(subtitle);
     hint->setWordWrap(true);
@@ -261,6 +261,7 @@ bool Window::nativeEvent(const QByteArray &, void *message, qintptr *result) {
         }
     }
     if (m->message == WM_HOTKEY && m->wParam == 1) {
+        if (!backend_.physicalHotkey(HIWORD(m->lParam))) { *result = 0; return true; }
 #ifdef OKWW_NATIVE_ONLY
         if (recording_) {
             backend_.arm(false);
@@ -489,7 +490,25 @@ QWidget *Window::devicePage() {
     connectionLayout->addWidget(connectionTaskStatus_);
     layout->addWidget(connection);
     layout->addWidget(diagnostics);
-    auto cap = new QVBoxLayout;
+    auto captureLayout = new QVBoxLayout;
+    auto sourceRow = new QHBoxLayout;
+    auto sourceLabel = new QLabel("采集方式");
+    sourceLabel->setFixedWidth(116);
+    captureSource_ = new classic::ComboBox;
+    captureSource_->setObjectName("captureSource");
+    captureSource_->addItem("采集卡采集", "card");
+    captureSource_->addItem("DXGI 截图 · 本机桌面", "DXGI");
+    captureSource_->addItem("Win32 截图 · 本机桌面", "WIN32");
+    const auto source = deviceDraftConfig_.s("capture.source") == "desktop" ? deviceDraftConfig_.s("capture.local_backend") : "card";
+    captureSource_->setCurrentIndex(std::max(0, captureSource_->findData(source)));
+    sourceRow->addWidget(sourceLabel); sourceRow->addWidget(captureSource_,1);
+    captureLayout->addLayout(sourceRow);
+    captureForms_ = new CurrentPageStack;
+    captureForms_->setObjectName("captureSourceForms");
+    captureForms_->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Maximum);
+    auto cardCapture = new QWidget;
+    auto cap = new QVBoxLayout(cardCapture);
+    cap->setContentsMargins(0,10,0,0);
     auto row = new QHBoxLayout;
     backendChoice_ = new classic::ComboBox;
     backendChoice_->setObjectName("captureBackend");
@@ -553,7 +572,74 @@ QWidget *Window::devicePage() {
     auto note = new QLabel("列表来自采集卡驱动。运行状态分别显示协商参数和实测收帧率；预览帧率独立设置。");
     note->setWordWrap(true);
     cap->addWidget(note);
-    layout->addWidget(card("01  视频采集", cap));
+    captureForms_->addWidget(cardCapture);
+    auto dxgiPanel=new QWidget;
+    auto dxgiForm=new QFormLayout(dxgiPanel);
+    dxgiForm->setContentsMargins(0,10,0,0);
+    dxgiMonitor_=new classic::ComboBox;
+    dxgiMonitor_->setObjectName("dxgiMonitor");
+    dxgiMonitor_->addItem("主显示器 · 自动选择",QString{});
+    auto dxgiTargetSettings=new QWidget;
+    dxgiTargetSettings->setObjectName("dxgiTargetSettings");
+    auto dxgiTargetForm=new QFormLayout(dxgiTargetSettings);
+    dxgiTargetForm->setContentsMargins(0,0,0,0);
+    auto dxgiTargetRow=new QHBoxLayout;
+    dxgiTargetRow->addWidget(dxgiMonitor_,1);
+    auto refreshDxgi=button("刷新显示器",[this]{scanDesktopTargets();},this);
+    refreshDxgi->setObjectName("refreshDxgiDisplays");
+    dxgiTargetRow->addWidget(refreshDxgi);
+    dxgiTargetForm->addRow("DXGI 采集显示器",dxgiTargetRow);
+    dxgiCaptureFps_=new classic::ComboBox;
+    dxgiCaptureFps_->setObjectName("dxgiCaptureFps");
+    dxgiCaptureFps_->setEditable(true);
+    dxgiCaptureFps_->addItem("跟随显示器刷新率");
+    for (int fps : {30,60,120,144,165,240}) dxgiCaptureFps_->addItem(QString::number(fps));
+    dxgiCaptureFps_->lineEdit()->setValidator(new QRegularExpressionValidator(
+        QRegularExpression("跟随显示器刷新率|[1-9][0-9]{0,2}|1000"),dxgiCaptureFps_));
+    if (!deviceDraftConfig_.b("capture.dxgi_follow_refresh"))
+        dxgiCaptureFps_->setCurrentText(QString::number(deviceDraftConfig_.n("capture.local_fps")));
+    dxgiRefresh_=new QLabel("连接时读取显示器刷新率");
+    dxgiRefresh_->setObjectName("dxgiRefreshRate");
+    dxgiRefresh_->setProperty("caption",true);
+    dxgiForm->addRow("采集帧率",dxgiCaptureFps_);
+    dxgiForm->addRow(dxgiRefresh_);
+    auto dxgiHint=new QLabel("默认采集主显示器，需要切换显示器时展开高级设置。帧率可跟随显示器刷新率，也可选择或输入 1–1000。实际收帧率以运行状态为准。");
+    dxgiHint->setObjectName("caption"); dxgiHint->setWordWrap(true);
+    dxgiForm->addRow(dxgiHint);
+    captureForms_->addWidget(dxgiPanel);
+    auto localCapture = new QWidget;
+    auto localCaptureLayout = new QFormLayout(localCapture);
+    localCaptureLayout->setContentsMargins(0,10,0,0);
+    auto targetRow = new QHBoxLayout;
+    auto win32TargetSettings=new QWidget;
+    win32TargetSettings->setObjectName("win32TargetSettings");
+    auto win32TargetForm=new QFormLayout(win32TargetSettings);
+    win32TargetForm->setContentsMargins(0,0,0,0);
+    localCaptureTarget_ = new classic::ComboBox;
+    localCaptureTarget_->setObjectName("localCaptureTarget");
+    localCaptureTarget_->setMinimumWidth(180);
+    localCaptureTarget_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    localCaptureTarget_->setMinimumContentsLength(24);
+    const auto savedTarget = deviceDraftConfig_.get("capture.local_target").toObject();
+    localCaptureTarget_->addItem(savedTarget.isEmpty() ? "主显示器（默认）" : savedTarget["label"].toString(), savedTarget.toVariantMap());
+    targetRow->addWidget(localCaptureTarget_,1);
+    auto refreshLocal = button("刷新列表", [this]{scanDesktopTargets();}, this);
+    refreshLocal->setObjectName("refreshLocalCapture");
+    targetRow->addWidget(refreshLocal);
+    win32TargetForm->addRow("Win32 截图目标",targetRow);
+    localCaptureFps_ = new classic::ComboBox;
+    localCaptureFps_->setObjectName("localCaptureFps");
+    localCaptureFps_->setEditable(true);
+    localCaptureFps_->lineEdit()->setValidator(new QIntValidator(1,1000,localCaptureFps_));
+    for (int fps : {30,60,120,144,165,240}) localCaptureFps_->addItem(QString::number(fps));
+    localCaptureFps_->setCurrentText(QString::number(deviceDraftConfig_.n("capture.local_fps")));
+    localCaptureLayout->addRow("采集帧率",localCaptureFps_);
+    auto localCaptureHint = new QLabel("帧率可选或直接输入 1–1000。默认采集主显示器；指定窗口请展开高级设置，窗口需保持可见。");
+    localCaptureHint->setWordWrap(true); localCaptureHint->setObjectName("caption");
+    localCaptureLayout->addRow(localCaptureHint);
+    captureForms_->addWidget(localCapture);
+    captureLayout->addWidget(captureForms_);
+    layout->addWidget(card("01  视频采集", captureLayout));
     connect(resolution_, &QComboBox::currentIndexChanged, this, [this] { filterModes(); });
     connect(format_, &QComboBox::currentIndexChanged, this, [this] { filterModes(); });
     connect(deviceChoice_, &QComboBox::currentIndexChanged, this, [this] { selectCaptureDevice(); });
@@ -570,9 +656,10 @@ QWidget *Window::devicePage() {
     protocol_ = new classic::ComboBox;
     protocol_->setObjectName("boxProtocol");
     protocol_->addItem("KMBox Net · 网络", "kmbox_net");
+    protocol_->addItem("SendInput · 本机键鼠", "sendinput");
     protocol_->setCurrentIndex(std::max(0, protocol_->findData(deviceDraftConfig_.s("kmbox.protocol"))));
     auto protocolRow = new QHBoxLayout;
-    auto protocolLabel = new QLabel("控制器类型");
+    auto protocolLabel = new QLabel("输入方式");
     protocolLabel->setFixedWidth(116);
     protocolRow->addWidget(protocolLabel);
     protocolRow->addWidget(protocol_, 1);
@@ -611,6 +698,8 @@ QWidget *Window::devicePage() {
     };
     auto captureAdvanced = new QWidget;
     auto caf = new QFormLayout(captureAdvanced);
+    caf->addRow(dxgiTargetSettings);
+    caf->addRow(win32TargetSettings);
     caf->addRow("采集后端", backendChoice_);
     auto inference = new classic::ComboBox;
     inferenceResolution_ = inference;
@@ -676,10 +765,11 @@ QWidget *Window::devicePage() {
     cropFields->setVisible(cropToggle->isChecked());
     caf->addRow(cropFields);
     connect(cropToggle, &QCheckBox::toggled, cropFields, &QWidget::setVisible);
-    auto expandCapture = new QPushButton("高级采集选项");
+    auto expandCapture = new QPushButton("高级设置");
+    expandCapture->setObjectName("captureAdvancedToggle");
     classic::setDisclosureButton(expandCapture);
-    cap->addWidget(expandCapture);
-    cap->addWidget(captureAdvanced);
+    captureLayout->addWidget(expandCapture);
+    captureLayout->addWidget(captureAdvanced);
     captureAdvanced->hide();
     connect(expandCapture, &QPushButton::toggled, captureAdvanced, &QWidget::setVisible);
     auto net = new QWidget;
@@ -700,6 +790,33 @@ QWidget *Window::devicePage() {
     qobject_cast<QLineEdit *>(settings_["kmbox.uuid"])->setPlaceholderText("盒子屏幕上的 UUID");
     qobject_cast<QSpinBox *>(settings_["kmbox.port"])->setSpecialValueText("未填写");
     boxForms_->addWidget(net);
+    auto localInput = new QWidget;
+    auto localInputForm = new QFormLayout(localInput);
+    localInputForm->setContentsMargins(0,8,0,0);
+    auto inputHint = new QLabel("默认跟随当前前台窗口，无需配置。需要指定窗口时展开“高级设置”；运行时保持游戏或远程窗口在前台。远程软件是否转发输入取决于其自身设置。");
+    inputHint->setObjectName("sendInputForegroundHint");
+    inputHint->setWordWrap(true); inputHint->setObjectName("caption");
+    localInputForm->addRow(inputHint);
+    auto localInputAdvanced=new QWidget;
+    localInputAdvanced->setObjectName("sendInputAdvanced");
+    auto localInputAdvancedForm=new QFormLayout(localInputAdvanced);
+    localInputAdvancedForm->setContentsMargins(0,0,0,0);
+    auto inputTargetRow=new QHBoxLayout;
+    localInputTarget_=new classic::ComboBox;
+    localInputTarget_->setObjectName("localInputTarget");
+    localInputTarget_->setMinimumContentsLength(24);
+    localInputTarget_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    const auto savedInput=deviceDraftConfig_.b("kmbox.target_enabled") ? deviceDraftConfig_.get("kmbox.target").toObject() : QJsonObject{};
+    localInputTarget_->addItem(savedInput.isEmpty() ? "当前前台窗口（默认）" : savedInput["label"].toString(),savedInput.toVariantMap());
+    inputTargetRow->addWidget(localInputTarget_,1);
+    auto inputRefresh=button("刷新窗口",[this]{scanDesktopTargets();},this);
+    inputRefresh->setObjectName("refreshLocalInput");
+    inputTargetRow->addWidget(inputRefresh);
+    localInputAdvancedForm->addRow("SendInput 窗口",inputTargetRow);
+    auto inputTargetHint=new QLabel("通常保持默认即可。指定窗口后，该窗口需保持前台；失去焦点时暂停输入。切回默认可继续跟随当前操作的窗口。");
+    inputTargetHint->setWordWrap(true); inputTargetHint->setObjectName("caption");
+    localInputAdvancedForm->addRow(inputTargetHint);
+    boxForms_->addWidget(localInput);
     box->addWidget(boxForms_);
     auto testBar = new QHBoxLayout;
     testBar->addStretch();
@@ -717,6 +834,7 @@ QWidget *Window::devicePage() {
     moveHint->setWordWrap(true);
     box->addWidget(moveHint);
     auto expand = new QPushButton("鼠标定位与移动倍率");
+    expand->setObjectName("inputAdvancedToggle");
     classic::setDisclosureButton(expand);
     box->addWidget(expand);
     auto advanced = new QWidget;
@@ -744,8 +862,32 @@ QWidget *Window::devicePage() {
         af->addRow(pair.first, classic::sliderEditor(n, true));
     }
     box->addWidget(advanced);
+    box->addWidget(localInputAdvanced);
+    localInputAdvanced->hide();
     advanced->setVisible(false);
-    connect(expand, &QPushButton::toggled, advanced, &QWidget::setVisible);
+    const auto updateInputForm = [this,expand,advanced,localInputAdvanced,moveHint] {
+        const bool local = protocol_->currentData().toString() == "sendinput";
+        boxForms_->setCurrentIndex(local ? 1 : 0);
+        expand->setText(local ? "高级设置" : "鼠标定位与移动倍率");
+        advanced->setVisible(!local && expand->isChecked());
+        localInputAdvanced->setVisible(local && expand->isChecked());
+        moveHint->setText(local ? "连接后可测试本机鼠标向右、向下移动，移动距离受 Windows 指针速度影响。" : "连接盒子后可测试鼠标向右、向下各移动 40 px。实际移动距离受游戏机鼠标速度、指针加速和移动倍率影响。");
+    };
+    connect(protocol_, &QComboBox::currentIndexChanged, this, updateInputForm);
+    connect(expand,&QPushButton::toggled,this,updateInputForm);
+    updateInputForm();
+    const auto updateCaptureForm = [this,caf,manual,dxgiTargetSettings,win32TargetSettings] {
+        const bool cardMode = captureSource_->currentData().toString() == "card";
+        captureForms_->setCurrentIndex(cardMode ? 0 : captureSource_->currentData().toString()=="DXGI" ? 1 : 2);
+        caf->setRowVisible(backendChoice_,cardMode);
+        caf->setRowVisible(manualCapture_,cardMode);
+        caf->setRowVisible(manual,cardMode && manualCapture_->isChecked());
+        caf->setRowVisible(dxgiTargetSettings,captureSource_->currentData().toString()=="DXGI");
+        caf->setRowVisible(win32TargetSettings,captureSource_->currentData().toString()=="WIN32");
+    };
+    connect(captureSource_, &QComboBox::currentIndexChanged, this, updateCaptureForm);
+    connect(manualCapture_, &QCheckBox::toggled, this, updateCaptureForm);
+    updateCaptureForm();
     layout->addWidget(card("02  键鼠控制", box));
     layout->addWidget(buildClassicPreview());
     layout->addStretch();
@@ -768,12 +910,36 @@ QWidget *Window::devicePage() {
             connect(field, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     }
     manualCapture_->setChecked(deviceUiState_["manual_capture"].toBool());
-    for (auto choice : {backendChoice_, deviceChoice_, resolution_, format_, fps_, protocol_, inferenceResolution_})
+    updateCaptureForm();
+    connect(captureSource_, &QComboBox::currentIndexChanged, this, [this] {
+        if (captureSource_->currentData().toString() != "card") scanDesktopTargets();
+    });
+    for (auto choice : {backendChoice_, deviceChoice_, resolution_, format_, fps_, protocol_, inferenceResolution_, captureSource_, localCaptureTarget_, dxgiMonitor_, localInputTarget_})
         connect(choice, &QComboBox::currentIndexChanged, this, &Window::queueDeviceSave);
+    connect(localCaptureFps_, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+        // Share the manual limit while retaining DXGI's independent automatic option.
+        if (dxgiCaptureFps_->currentText()!=dxgiCaptureFps_->itemText(0)) {
+            const QSignalBlocker blocker(dxgiCaptureFps_);
+            dxgiCaptureFps_->setCurrentText(text);
+        }
+        queueDeviceSave();
+    });
+    connect(dxgiCaptureFps_, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+        if (text!=dxgiCaptureFps_->itemText(0)) {
+            const QSignalBlocker blocker(localCaptureFps_);
+            localCaptureFps_->setCurrentText(text);
+        }
+        queueDeviceSave();
+    });
     connect(manualCapture_, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     connect(cropToggle, &QCheckBox::toggled, this, &Window::queueDeviceSave);
     for (auto spin : cropSpins)
         connect(spin, &QSpinBox::valueChanged, this, &Window::queueDeviceSave);
+    connect(dxgiMonitor_,&QComboBox::currentIndexChanged,this,[this] {
+        const auto rate=dxgiMonitor_->currentData(Qt::UserRole+1).toDouble();
+        dxgiRefresh_->setText(rate>0 ? QString("显示器刷新率 · %1 Hz").arg(rate,0,'f',2) : "连接时读取显示器刷新率");
+    });
+    scanDesktopTargets();
     deviceAutoSaveReady_ = true;
     return page;
 }
@@ -879,6 +1045,51 @@ void Window::runAsync(std::function<QJsonObject()> work, std::function<void(QJso
             return QJsonObject{{"_error", errorText(e)}};
         }
     }));
+}
+void Window::scanDesktopTargets() {
+    const auto targets = desktopTargets();
+    const auto update = [&](QComboBox *choice, bool windowsOnly) {
+        const QSignalBlocker blocker(choice);
+        const auto previous = QJsonObject::fromVariantMap(choice->currentData().toMap());
+        choice->clear();
+        choice->addItem(windowsOnly ? "当前前台窗口（默认）" : "主显示器（默认）", QVariantMap{});
+        int selected = 0, bestRank = 0;
+        for (auto value : targets) {
+            const auto target = value.toObject();
+            if (windowsOnly && target["kind"].toString() != "window") continue;
+            choice->addItem(target["label"].toString(),target.toVariantMap());
+            const bool sameMonitor = target["kind"].toString() == "monitor" && target["id"] == previous["id"];
+            const bool sameWindow = target["kind"].toString() == "window" && target["exe"] == previous["exe"] &&
+                target["title"] == previous["title"] && target["class"] == previous["class"];
+            const int rank = sameMonitor ? 3 : sameWindow ?
+                (target["hwnd"] == previous["hwnd"] && target["pid"] == previous["pid"] ? 3 : 1) : 0;
+            if (rank > bestRank) {selected = choice->count()-1; bestRank = rank;}
+        }
+        if (!previous.isEmpty() && !selected) {
+            choice->addItem("未找到 · " + previous["label"].toString(),previous.toVariantMap());
+            selected = choice->count()-1;
+        }
+        choice->setCurrentIndex(selected);
+    };
+    update(localCaptureTarget_,false);
+    update(localInputTarget_,true);
+    const QSignalBlocker blocker(dxgiMonitor_);
+    const auto selected=dxgiMonitor_->count()>1 ? dxgiMonitor_->currentData().toString() : deviceDraftConfig_.s("capture.dxgi_monitor");
+    dxgiMonitor_->clear(); dxgiMonitor_->addItem("主显示器 · 自动选择",QString{});
+    int selectedIndex=0;
+    for (auto value:targets) {
+        const auto display=value.toObject();
+        if (display["kind"].toString()!="monitor") continue;
+        const double rate=display["refresh_hz"].toDouble();
+        dxgiMonitor_->addItem(display["label"].toString(),display["id"].toString());
+        dxgiMonitor_->setItemData(dxgiMonitor_->count()-1,rate,Qt::UserRole+1);
+        if (display["primary"].toBool()) dxgiMonitor_->setItemData(0,rate,Qt::UserRole+1);
+        if (display["id"].toString()==selected) selectedIndex=dxgiMonitor_->count()-1;
+    }
+    dxgiMonitor_->setCurrentIndex(selectedIndex);
+    const double rate=dxgiMonitor_->currentData(Qt::UserRole+1).toDouble();
+    dxgiRefresh_->setText(rate>0 ? QString("显示器刷新率 · %1 Hz").arg(rate,0,'f',2) : "连接时读取显示器刷新率");
+    queueDeviceSave();
 }
 void Window::scanDevices() {
     if (busy_)
@@ -996,6 +1207,16 @@ void Window::filterModes() {
 Config Window::deviceConfiguration(bool requireSelection) const {
     auto current = deviceDraftConfig_;
     current.set("kmbox.dry_run", false);
+    const bool local = captureSource_->currentData().toString() != "card";
+    current.set("capture.source",local ? "desktop" : "card");
+    if (local) current.set("capture.local_backend",captureSource_->currentData().toString());
+    current.set("capture.local_target",QJsonObject::fromVariantMap(localCaptureTarget_->currentData().toMap()));
+    current.set("capture.local_fps",localCaptureFps_->currentText().toInt());
+    current.set("capture.dxgi_follow_refresh",dxgiCaptureFps_->currentText()==dxgiCaptureFps_->itemText(0));
+    current.set("capture.dxgi_monitor",dxgiMonitor_->currentData().toString());
+    const auto inputTarget=QJsonObject::fromVariantMap(localInputTarget_->currentData().toMap());
+    current.set("kmbox.target",inputTarget);
+    current.set("kmbox.target_enabled",!inputTarget.isEmpty());
     auto d = QJsonObject::fromVariantMap(deviceChoice_->currentData().toMap());
     current.set("capture.backend", backendChoice_->currentData().toString());
     current.set("capture.device_name", d["name"].toString());
@@ -1003,7 +1224,7 @@ Config Window::deviceConfiguration(bool requireSelection) const {
     current.set("capture.device_index", d["index"].toInt());
     auto size = resolution_->currentData().toList();
     const bool complete = size.size() == 2 && fps_->currentData().isValid() && format_->currentIndex() >= 0;
-    if (!manualCapture_->isChecked() && !complete && requireSelection)
+    if (!local && !manualCapture_->isChecked() && !complete && requireSelection)
         fail("请选择采集设备及分辨率、图像格式和帧率，或使用手动参数");
     if (!manualCapture_->isChecked() && complete) {
         current.set("capture.width", size[0].toInt());
@@ -1111,7 +1332,7 @@ void Window::prepareConnection(const Config &config) {
     if (engine_.state() != QProcess::NotRunning)
         engine_.write("{\"op\":\"shutdown\"}\n");
 #endif
-    log("正在后台连接采集卡与盒子…");
+    log("正在后台连接视频采集与键鼠控制…");
     runAsync(
         [this, config] {
             QElapsedTimer elapsed;
@@ -1554,16 +1775,18 @@ void Window::updateStatus() {
                             : box["connected"].toBool() ? "已连接"
                                                         : "未连接");
     if (!s["dry_run"].toBool() && box["transport_samples"].toInt() > 0) {
-        boxConnection_->setText(boxConnection_->text() + QString(" · 应答 %1 ms（P95 %2 ms）")
+        const bool local = box["protocol"].toString() == "sendinput";
+        boxConnection_->setText(boxConnection_->text() + (local ? QString(" · 调用 %1 ms（P95 %2 ms）") : QString(" · 应答 %1 ms（P95 %2 ms）"))
             .arg(box["transport_p50_ms"].toDouble(), 0, 'f', 1)
             .arg(box["transport_p95_ms"].toDouble(), 0, 'f', 1));
-        boxConnection_->setToolTip("最近 128 次主机发送至协议应答的通信时间，不包含游戏处理和 USB 报告生效时间。");
+        boxConnection_->setToolTip(local ? "最近 128 次 Windows SendInput 调用耗时，不代表目标程序接收或游戏响应时间。" : "最近 128 次主机发送至协议应答的通信时间，不包含游戏处理和 USB 报告生效时间。");
     }
     frameParameters_->setText(
-        captured ? QString("%1 × %2 · %3\n协商 %4 FPS")
+        captured ? QString("%1 × %2 · %3\n%4 %5 FPS")
                        .arg(actual["width"].toInt())
                        .arg(actual["height"].toInt())
                        .arg(actual["fourcc"].toString())
+                       .arg(QStringList{"DXGI","WIN32"}.contains(actual["backend"].toString()) ? "上限" : "协商")
                        .arg(actual["negotiated_fps"].toDouble(actual["requested_fps"].toDouble()))
                  : "—");
     frameAge_->setText(

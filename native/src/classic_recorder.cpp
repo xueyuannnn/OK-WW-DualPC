@@ -222,6 +222,10 @@ class RecordingSurface final : public QWidget {
 };
 } // namespace
 void Window::recordScript() {
+    if (config_.s("kmbox.protocol") == "sendinput") {
+        QMessageBox::information(this,"录制","预览录制用于向远端 KMBox 转发操作。SendInput 需要目标窗口保持前台，请使用脚本编辑或导入已有脚本。");
+        return;
+    }
     if (automation_ || pendingStart_ || busy_ || scriptOperation_ || !nativeEngine_ ||
         !nativeEngine_->idle()) {
         QMessageBox::information(this, "录制", "请先暂停自动任务，等待按键释放，再开始录制。");

@@ -405,7 +405,7 @@ void Capture::start() {
     thread_ = std::thread(&Capture::run, this);
     std::unique_lock lock(mutex_);
     if (!cv_.wait_for(lock, std::chrono::seconds(8), [&] { return ready_ || !error_.isEmpty(); }))
-        fail("采集卡启动超时");
+        fail("视频采集启动超时");
     if (!error_.isEmpty())
         fail(error_);
 }
@@ -430,8 +430,9 @@ QJsonObject Capture::actual() {
     return {{"width", latest_->width},
             {"height", latest_->height},
             {"fourcc", formatName(latest_->format)},
-            {"backend", config_.s("capture.backend")},
-            {"requested_fps", config_.d("capture.fps")},
+            {"backend", config_.s("capture.source") == "desktop" ? config_.s("capture.local_backend") : config_.s("capture.backend")},
+            {"requested_fps", config_.s("capture.source") == "desktop" ?
+                (config_.s("capture.local_backend")=="DXGI" ? negotiatedFps_ : config_.d("capture.local_fps")) : config_.d("capture.fps")},
             {"negotiated_fps", negotiatedFps_}};
 }
 double Capture::fps() {
@@ -452,7 +453,9 @@ void Capture::run() {
         ComInit com;
         hr(com.result, "初始化采集 COM 失败");
         SetThreadDescription(GetCurrentThread(), L"OKWW Capture");
-        if (config_.s("capture.backend") == "DSHOW")
+        if (config_.s("capture.source") == "desktop")
+            runDesktop();
+        else if (config_.s("capture.backend") == "DSHOW")
             runDs();
         else
             runMf();

@@ -9,6 +9,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
 from native_io import decode_frame
 
 
+@pytest.mark.parametrize('protocol,absolute', [('kmbox_net', False), ('sendinput', True)])
+def test_workshop_controller_uses_the_host_input_capabilities(monkeypatch, protocol, absolute):
+    import dualpc.capture
+    import dualpc.controllers
+    import dualpc.device
+    import dualpc.interaction
+    from dualpc.settings import BoxSettings
+    from native_io import install_native_io
+    # Restore the process-wide compatibility factories after checking the facade.
+    for module, name in [(dualpc.capture, 'CaptureReader'), (dualpc.controllers, 'create_controller'),
+                         (dualpc.device, 'CaptureReader'), (dualpc.interaction, 'create_controller')]:
+        monkeypatch.setattr(module, name, getattr(module, name))
+    calls = []
+
+    class Channel:
+        def request(self, op, **fields):
+            calls.append((op, fields))
+            return {'box': {'connected': True, 'keyboard': True, 'absolute': absolute}}
+
+    _, controller_class = install_native_io(Channel())
+    settings = BoxSettings(protocol=protocol, uuid='unfinished' if absolute else '')
+    controller = controller_class(settings)
+    controller.connect()
+    assert controller.supports_absolute is absolute
+    controller.absolute(400, 300, 1920, 1080)
+    assert calls[-1] == ('absolute', {'x': 400, 'y': 300, 'width': 1920, 'height': 1080})
+    controller.close(release=False)
+
+
 @pytest.mark.parametrize("fmt,channels", [("RGB3", 3), ("RGB4", 4)])
 def test_bottom_up_and_stride(fmt, channels):
     raw = np.zeros((2, 12), dtype=np.uint8)

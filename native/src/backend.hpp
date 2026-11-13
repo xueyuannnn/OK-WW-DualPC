@@ -7,6 +7,7 @@ class Backend {
     Config cfg_;
     std::unique_ptr<Capture> capture_;
     std::unique_ptr<Controller> box_;
+    std::unique_ptr<PhysicalKeys> physicalKeys_;
     bool running_ = false, simulation_ = false, armed_ = false;
     QString error_;
     QJsonObject inputFault_;
@@ -37,6 +38,8 @@ class Backend {
     void arm(bool enabled);
     bool heartbeat();
     QJsonObject testMove();
+    bool physicalKeyDown(int vk);
+    bool physicalHotkey(int vk);
     QJsonObject snapshot();
     FramePtr latestFrame();
     QJsonObject nativeCommand(QJsonObject command);

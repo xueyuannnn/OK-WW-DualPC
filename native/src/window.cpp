@@ -639,6 +639,10 @@ QWidget *Window::devicePage() {
     localCaptureLayout->addRow(localCaptureHint);
     captureForms_->addWidget(localCapture);
     captureLayout->addWidget(captureForms_);
+    auto remoteFullscreenHint=new QLabel("若使用远程软件，请开启远程软件的全屏模式，并确保游戏画面为 16:9 全屏。");
+    remoteFullscreenHint->setObjectName("remoteFullscreenHint");
+    remoteFullscreenHint->setWordWrap(true);
+    captureLayout->addWidget(remoteFullscreenHint);
     layout->addWidget(card("01  视频采集", captureLayout));
     connect(resolution_, &QComboBox::currentIndexChanged, this, [this] { filterModes(); });
     connect(format_, &QComboBox::currentIndexChanged, this, [this] { filterModes(); });
@@ -876,9 +880,10 @@ QWidget *Window::devicePage() {
     connect(protocol_, &QComboBox::currentIndexChanged, this, updateInputForm);
     connect(expand,&QPushButton::toggled,this,updateInputForm);
     updateInputForm();
-    const auto updateCaptureForm = [this,caf,manual,dxgiTargetSettings,win32TargetSettings] {
+    const auto updateCaptureForm = [this,caf,manual,dxgiTargetSettings,win32TargetSettings,remoteFullscreenHint] {
         const bool cardMode = captureSource_->currentData().toString() == "card";
         captureForms_->setCurrentIndex(cardMode ? 0 : captureSource_->currentData().toString()=="DXGI" ? 1 : 2);
+        remoteFullscreenHint->setVisible(!cardMode);
         caf->setRowVisible(backendChoice_,cardMode);
         caf->setRowVisible(manualCapture_,cardMode);
         caf->setRowVisible(manual,cardMode && manualCapture_->isChecked());

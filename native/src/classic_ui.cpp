@@ -473,6 +473,14 @@ QString stylesheet(bool dark, const QColor &accent) {
         QTabBar::tab:selected { border-bottom-color:#0067c0; }
     )")
                       .arg(background, card, foreground, muted, border, hover, dark ? "dark" : "light");
+    result += QString(R"(
+        QLabel#remoteFullscreenHint {
+            font-size:18px; font-weight:700; color:%1; background:%2;
+            border:1px solid %3; border-left:4px solid %4;
+            border-radius:8px; padding:12px 14px;
+        }
+    )").arg(dark ? "#ffd783" : "#805100", dark ? "#352c1c" : "#fff6dc",
+           dark ? "#6b5525" : "#f0cf78", dark ? "#f5c65d" : "#d99400");
     result.replace("#0067c0", accent.name());
     result.replace("#1975c5", accent.lighter(110).name());
     if (dark) {

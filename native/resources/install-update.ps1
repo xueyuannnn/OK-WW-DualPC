@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$Plan,
     [ValidateSet('Prepare','Install')][string]$Mode = 'Prepare',
     [switch]$NoRestart

@@ -19,6 +19,13 @@ def sha(data):
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows installer')
 class AppUpdateTests(unittest.TestCase):
+    def test_windows_powershell_encoding_is_explicit(self):
+        # Windows PowerShell 5.1 otherwise decodes non-ASCII UTF-8 as the
+        # machine ANSI code page before parsing, including quoted UI text.
+        source = SCRIPT.read_bytes()
+        self.assertTrue(source.startswith(b'\xef\xbb\xbf'))
+        self.assertIn('软件', source.decode('utf-8-sig'))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='okww-update-')
         def cleanup():

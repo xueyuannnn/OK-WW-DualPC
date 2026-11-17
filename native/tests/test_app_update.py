@@ -94,6 +94,29 @@ class AppUpdateTests(unittest.TestCase):
         self.assertEqual((self.root / 'obsolete.py').read_bytes(), b'old managed code')
         self.assertEqual(self.profile.read_bytes(), b'private config')
 
+    def test_short_windows_paths_use_one_normalization_rule(self):
+        import ctypes
+        from ctypes import wintypes
+        short_path = ctypes.WinDLL('kernel32', use_last_error=True).GetShortPathNameW
+        short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        short_path.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = short_path(self.temp.name, buffer, len(buffer))
+        self.assertGreater(length, 0)
+        self.assertLess(length, len(buffer))
+        if buffer.value.casefold() == self.temp.name.casefold():
+            self.skipTest('8.3 filenames are disabled on this volume')
+        self.root = Path(buffer.value) / self.root.relative_to(self.temp.name)
+        self.job = self.root / '.updates/job-test'
+        self.plan = self.job / 'plan.json'
+        self.exe = self.root / 'OKWW-DualPC-Native-Dev.exe'
+        self.profile = self.root / 'native-full-data/configs-dualpc/teams.json'
+        self.archive()
+        self.run_installer('Prepare')
+        self.run_installer('Install')
+        self.assertEqual(self.exe.read_bytes(), b'new app')
+        self.assertEqual(self.profile.read_bytes(), b'private config')
+
     def test_complete_update_preserves_profile_and_removes_only_managed_files(self):
         local = self.root / 'my-custom-script.py'
         local.write_bytes(b'user script')

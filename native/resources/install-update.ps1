@@ -8,8 +8,8 @@ Set-StrictMode -Version Latest
 [AppContext]::SetSwitch('Switch.System.IO.UseLegacyPathHandling', $false)
 [AppContext]::SetSwitch('Switch.System.IO.BlockLongPaths', $false)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-$job = '\\?\' + [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($Plan)).Replace('/','\')
-$log = [IO.Path]::Combine($job, 'update.log')
+$job = $null
+$log = $null
 $changed = New-Object 'System.Collections.Generic.List[object]'
 $committed = $false
 $profileRelative = ''
@@ -37,6 +37,10 @@ function Full([string]$path) {
     }
     return [IO.Path]::GetFullPath($path).TrimEnd('\')
 }
+# Normalize the command-line path and JSON paths identically. Calling
+# GetFullPath before adding the extended prefix can expand 8.3 components.
+$job = Full ([IO.Path]::GetDirectoryName($Plan))
+$log = [IO.Path]::Combine($job, 'update.log')
 function Inside([string]$base, [string]$relative) {
     if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':') -or $relative.Contains('\') -or
         $relative -match '(^|/)\.\.?(/|$)' -or $relative -match '[\x00-\x1f]' -or

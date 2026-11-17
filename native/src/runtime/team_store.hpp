@@ -18,6 +18,21 @@ class TeamStore {
     QMap<QString, Module> modules_;
     mutable QByteArray validatedPythonSources_;
     mutable std::shared_ptr<WorkshopFileSession> fileSession_;
+    friend struct TeamStoreContractAccess;
+    struct CatalogResult {
+        QJsonArray array;
+        QString string;
+        std::unique_ptr<TeamMacro> macro;
+    };
+    CatalogResult runCatalog(int method, QString id = {}, CombatHost *host = nullptr) const;
+    struct MutationResult {
+        QJsonObject object;
+        QString string;
+    };
+    MutationResult runMutation(int method, const QJsonArray &value = {}, QString parameter = {},
+                               const QString &text = {});
+    QJsonObject runEditor(const QJsonArray &value, const QString &member, const QString &source,
+                          const QString &view) const;
     static QStringList members(const QJsonValue &value);
     static QString key(const QStringList &team);
     QString folder(const QStringList &team) const;

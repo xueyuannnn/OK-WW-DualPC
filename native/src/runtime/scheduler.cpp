@@ -1,289 +1,697 @@
 #include "scheduler.hpp"
 #include "scripts.hpp"
-#include <sddl.h>
+#include "workflow_abi.hpp"
 #include <QCryptographicHash>
 #include <QXmlStreamWriter>
+#include <sddl.h>
 namespace okww::runtime {
 namespace {
 const QStringList days{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
 const QStringList months{"January", "February", "March",     "April",   "May",      "June",
                          "July",    "August",   "September", "October", "November", "December"};
+[[noreturn]] void scheduleFailure(int code, const QString &detail = {}) {
+    const QStringList messages{"无法读取当前 Windows 用户",
+                               "无法读取 Windows 用户标识",
+                               "无法转换 Windows 用户标识",
+                               "无法启动 Windows 任务计划工具",
+                               "Windows 任务计划操作超时",
+                               "Windows 任务计划操作失败：" + detail,
+                               "计划参数无效：" + detail,
+                               "计划任务需要选择有效的一次性任务",
+                               "计划重复方式无效",
+                               "计划开始日期和时间无效",
+                               "不能修改此配置以外的计划任务",
+                               "无法创建计划任务临时目录",
+                               "无法写入计划任务文件",
+                               "计划不存在"};
+    fail(messages.at(code));
+}
 int number(const QJsonObject &s, const char *key, int fallback, int low, int high) {
-    const auto v = s.value(key);
-    const double n = v.isUndefined() ? fallback : v.toDouble(-1);
-    if (!std::isfinite(n) || n != std::floor(n) || n < low || n > high)
-        fail(QString("计划参数无效：") + key);
-    return int(n);
+    const auto value = s.value(key);
+    const std::array args{double(fallback), double(low), double(high)};
+    const auto result = rust::workflowRun(rust::WorkflowMethod::ScheduleNumber, args,
+                                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                                              switch (op) {
+                                              case rust::WorkflowOp::ScheduleNumberUndefined:
+                                                  out[0] = value.isUndefined();
+                                                  break;
+                                              case rust::WorkflowOp::ScheduleNumberValue:
+                                                  out[0] = value.toDouble(-1);
+                                                  break;
+                                              case rust::WorkflowOp::ScheduleFailure:
+                                                  scheduleFailure(int(a[0]), QString::fromLatin1(key));
+                                                  break;
+                                              default:
+                                                  fail("Rust 计划数值宿主无效");
+                                              }
+                                          });
+    return int(result[0]);
 }
 } // namespace
 Scheduler::Scheduler(QString executable, QString root, QString data, QString user, ScheduleCommand command)
     : executable_(QFileInfo(executable).absoluteFilePath()), root_(QDir(root).absolutePath()),
-      data_(QDir(data).absolutePath()), user_(user.isEmpty() ? currentUser() : std::move(user)),
-      command_(command ? std::move(command) : runCommand) {
-    prefix_ = "\\OKWW-Cpp-" +
-              QString::fromLatin1(
-                  QCryptographicHash::hash(data_.toCaseFolded().toUtf8(), QCryptographicHash::Sha256)
-                      .toHex()
-                      .left(12)) +
-              "-";
+      data_(QDir(data).absolutePath()), user_(std::move(user)), command_(std::move(command)) {
+    rust::workflowRun(
+        rust::WorkflowMethod::ScheduleInitialize, {}, [&](rust::WorkflowOp op, const double *, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ScheduleUserEmpty:
+                out[0] = user_.isEmpty();
+                break;
+            case rust::WorkflowOp::ScheduleFillCurrentUser:
+                user_ = currentUser();
+                break;
+            case rust::WorkflowOp::ScheduleHasCommand:
+                out[0] = bool(command_);
+                break;
+            case rust::WorkflowOp::ScheduleFillDefaultCommand:
+                command_ = runCommand;
+                break;
+            case rust::WorkflowOp::ScheduleBuildPrefix:
+                prefix_ = "\\OKWW-Cpp-" +
+                          QString::fromLatin1(QCryptographicHash::hash(data_.toCaseFolded().toUtf8(),
+                                                                       QCryptographicHash::Sha256)
+                                                  .toHex()
+                                                  .left(12)) +
+                          "-";
+                break;
+            default:
+                fail("Rust 计划初始化宿主无效");
+            }
+        });
 }
 QString Scheduler::currentUser() {
     HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
-        fail("无法读取当前 Windows 用户");
     DWORD required = 0;
-    GetTokenInformation(token, TokenUser, nullptr, 0, &required);
-    QByteArray buffer(int(required), 0);
-    const bool read = GetTokenInformation(token, TokenUser, buffer.data(), required, &required);
-    CloseHandle(token);
-    if (!read)
-        fail("无法读取 Windows 用户标识");
+    QByteArray buffer;
     LPWSTR value = nullptr;
-    if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(buffer.data())->User.Sid, &value))
-        fail("无法转换 Windows 用户标识");
-    const auto result = QString::fromWCharArray(value);
-    LocalFree(value);
+    QString result;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleCurrentUser, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleOpenToken:
+                              out[0] = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token);
+                              break;
+                          case rust::WorkflowOp::ScheduleQueryTokenSize:
+                              GetTokenInformation(token, TokenUser, nullptr, 0, &required);
+                              break;
+                          case rust::WorkflowOp::ScheduleAllocateToken:
+                              buffer = QByteArray(int(required), 0);
+                              break;
+                          case rust::WorkflowOp::ScheduleReadToken:
+                              out[0] =
+                                  GetTokenInformation(token, TokenUser, buffer.data(), required, &required);
+                              break;
+                          case rust::WorkflowOp::ScheduleCloseToken:
+                              CloseHandle(token);
+                              break;
+                          case rust::WorkflowOp::ScheduleConvertSid:
+                              out[0] = ConvertSidToStringSidW(
+                                  reinterpret_cast<TOKEN_USER *>(buffer.data())->User.Sid, &value);
+                              break;
+                          case rust::WorkflowOp::ScheduleReadSidString:
+                              result = QString::fromWCharArray(value);
+                              break;
+                          case rust::WorkflowOp::ScheduleFreeSid:
+                              LocalFree(value);
+                              break;
+                          case rust::WorkflowOp::ScheduleFailure:
+                              scheduleFailure(int(a[0]));
+                              break;
+                          default:
+                              fail("Rust Windows 用户宿主无效");
+                          }
+                      });
     return result;
 }
 QByteArray Scheduler::runCommand(const QStringList &arguments) {
     QProcess p;
-    p.setCreateProcessArgumentsModifier([](auto *args) { args->flags |= CREATE_NO_WINDOW; });
-    p.start(qEnvironmentVariable("SystemRoot") + "/System32/schtasks.exe", arguments);
-    if (!p.waitForStarted(5000))
-        fail("无法启动 Windows 任务计划工具");
-    if (!p.waitForFinished(10000)) {
-        p.kill();
-        p.waitForFinished(1000);
-        fail("Windows 任务计划操作超时");
-    }
-    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
-        fail("Windows 任务计划操作失败：" + QString::fromLocal8Bit(p.readAllStandardError()).trimmed());
-    return p.readAllStandardOutput();
+    QByteArray result;
+    rust::workflowRun(
+        rust::WorkflowMethod::ScheduleRunCommand, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ScheduleHideCommandWindow:
+                p.setCreateProcessArgumentsModifier([](auto *args) { args->flags |= CREATE_NO_WINDOW; });
+                break;
+            case rust::WorkflowOp::ScheduleStartCommand:
+                p.start(qEnvironmentVariable("SystemRoot") + "/System32/schtasks.exe", arguments);
+                break;
+            case rust::WorkflowOp::ScheduleCommandStarted:
+                out[0] = p.waitForStarted(int(a[0]));
+                break;
+            case rust::WorkflowOp::ScheduleCommandFinished:
+                out[0] = p.waitForFinished(int(a[0]));
+                break;
+            case rust::WorkflowOp::ScheduleKillCommand:
+                p.kill();
+                break;
+            case rust::WorkflowOp::ScheduleWaitCommand:
+                p.waitForFinished(int(a[0]));
+                break;
+            case rust::WorkflowOp::ScheduleCommandNormal:
+                out[0] = p.exitStatus() == QProcess::NormalExit;
+                break;
+            case rust::WorkflowOp::ScheduleCommandExitCode:
+                out[0] = p.exitCode();
+                break;
+            case rust::WorkflowOp::ScheduleReadCommandOutput:
+                result = p.readAllStandardOutput();
+                break;
+            case rust::WorkflowOp::ScheduleFailure:
+                if (int(a[0]) == 5)
+                    scheduleFailure(5, QString::fromLocal8Bit(p.readAllStandardError()).trimmed());
+                else
+                    scheduleFailure(int(a[0]));
+                break;
+            default:
+                fail("Rust 计划进程宿主无效");
+            }
+        });
+    return result;
 }
 QString Scheduler::quoteArgument(const QString &arg) {
-    QString result = "\"";
-    int slashes = 0;
-    for (auto c : arg) {
-        if (c == '\\') {
-            ++slashes;
-            continue;
-        }
-        if (c == '\"')
-            result += QString(slashes * 2 + 1, '\\') + c;
-        else
-            result += QString(slashes, '\\') + c;
-        slashes = 0;
-    }
-    return result + QString(slashes * 2, '\\') + '\"';
+    QString result;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleQuoteArgument, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleQuoteStart:
+                              result = "\"";
+                              break;
+                          case rust::WorkflowOp::ScheduleQuoteLength:
+                              out[0] = double(arg.size());
+                              break;
+                          case rust::WorkflowOp::ScheduleQuoteUnit:
+                              out[0] = arg.at(int(a[0])).unicode();
+                              break;
+                          case rust::WorkflowOp::ScheduleQuoteAppendUnit:
+                              result += QString(int(a[1]), '\\') + arg.at(int(a[0]));
+                              break;
+                          case rust::WorkflowOp::ScheduleQuoteFinish:
+                              result += QString(int(a[0]), '\\') + '\"';
+                              break;
+                          default:
+                              fail("Rust 计划参数转义宿主无效");
+                          }
+                      });
+    return result;
 }
 QString Scheduler::xml(const QJsonObject &s) const {
     const auto task = s["task"].toString();
-    const auto catalog = readJson(root_ + "/native/resources/catalog.json");
-    bool found = false;
-    for (auto value : catalog["tasks"].toArray()) {
-        auto entry = value.toObject();
-        if (entry["id"] == task && !entry["trigger"].toBool())
-            found = true;
-    }
-    for (auto value : scriptCatalog(data_)) {
-        const auto entry = value.toObject();
-        if (entry["id"] == task && !entry["trigger"].toBool() && entry["native_supported"].toBool())
-            found = true;
-    }
-    if (!found)
-        fail("计划任务需要选择有效的一次性任务");
-    const auto kind = s["kind"].toString("Daily");
-    if (!QStringList{"Once", "Daily", "Weekly", "Monthly", "Days", "Hours"}.contains(kind))
-        fail("计划重复方式无效");
-    const auto start = QDateTime::fromString(s["start"].toString(), Qt::ISODate);
-    if (!start.isValid())
-        fail("计划开始日期和时间无效");
-    const int interval = number(s, "interval", 1, 1, kind == "Hours" ? 744 : 365);
-    const int weekday = number(s, "weekday", 1, 1, 7), monthday = number(s, "monthday", 1, 1, 31);
-    const int limit = number(s, "limit_hours", 0, 0, 168);
+    QJsonObject catalog, entry;
+    QJsonArray nativeTasks, scripts;
+    QDateTime start;
     QString text;
-    QXmlStreamWriter w(&text);
-    w.setAutoFormatting(true);
-    w.writeStartDocument();
-    w.writeStartElement("Task");
-    w.writeDefaultNamespace("http://schemas.microsoft.com/windows/2004/02/mit/task");
-    w.writeAttribute("version", "1.2");
-    w.writeStartElement("RegistrationInfo");
-    w.writeTextElement("Author", "OKWW C++");
-    w.writeTextElement("Description", s["label"].toString(task));
-    w.writeEndElement();
-    w.writeStartElement("Triggers");
-    w.writeStartElement(kind == "Once" || kind == "Hours" ? "TimeTrigger" : "CalendarTrigger");
-    if (kind == "Hours") {
-        w.writeStartElement("Repetition");
-        w.writeTextElement("Interval", QString("PT%1H").arg(interval));
-        w.writeTextElement("StopAtDurationEnd", "false");
-        w.writeEndElement();
-    }
-    w.writeTextElement("StartBoundary", start.toString("yyyy-MM-ddTHH:mm:ss"));
-    w.writeTextElement("Enabled", "true");
-    if (kind == "Daily" || kind == "Days") {
-        w.writeStartElement("ScheduleByDay");
-        w.writeTextElement("DaysInterval", QString::number(kind == "Days" ? interval : 1));
-        w.writeEndElement();
-    } else if (kind == "Weekly") {
-        w.writeStartElement("ScheduleByWeek");
-        w.writeTextElement("WeeksInterval", "1");
-        w.writeStartElement("DaysOfWeek");
-        w.writeEmptyElement(days[weekday - 1]);
-        w.writeEndElement();
-        w.writeEndElement();
-    } else if (kind == "Monthly") {
-        w.writeStartElement("ScheduleByMonth");
-        w.writeStartElement("DaysOfMonth");
-        w.writeTextElement("Day", QString::number(monthday));
-        w.writeEndElement();
-        w.writeStartElement("Months");
-        for (const auto &month : months)
-            w.writeEmptyElement(month);
-        w.writeEndElement();
-        w.writeEndElement();
-    }
-    w.writeEndElement();
-    w.writeEndElement();
-    w.writeStartElement("Principals");
-    w.writeStartElement("Principal");
-    w.writeAttribute("id", "Author");
-    w.writeTextElement("UserId", user_);
-    w.writeTextElement("LogonType", "InteractiveToken");
-    w.writeTextElement("RunLevel", "LeastPrivilege");
-    w.writeEndElement();
-    w.writeEndElement();
-    w.writeStartElement("Settings");
-    for (const auto &pair : QVector<QPair<QString, QString>>{{"MultipleInstancesPolicy", "IgnoreNew"},
-                                                             {"DisallowStartIfOnBatteries", "false"},
-                                                             {"StopIfGoingOnBatteries", "false"},
-                                                             {"AllowHardTerminate", "false"},
-                                                             {"StartWhenAvailable", "true"},
-                                                             {"RunOnlyIfNetworkAvailable", "false"},
-                                                             {"AllowStartOnDemand", "true"},
-                                                             {"Enabled", "true"},
-                                                             {"Hidden", "false"},
-                                                             {"ExecutionTimeLimit", "PT0S"},
-                                                             {"Priority", "7"}})
-        w.writeTextElement(pair.first, pair.first == "Enabled"
-                                           ? (s["enabled"].toBool(true) ? "true" : "false")
-                                           : pair.second);
-    w.writeEndElement();
-    QStringList args{"--root",     root_, "--data",          data_,
-                     "--run-task", task,  "--limit-seconds", QString::number(limit * 3600)};
-    if (s["exit_after"].toBool(true))
-        args.append("--exit-after-task");
-    for (auto &arg : args)
-        arg = quoteArgument(arg);
-    w.writeStartElement("Actions");
-    w.writeAttribute("Context", "Author");
-    w.writeStartElement("Exec");
-    w.writeTextElement("Command", executable_);
-    w.writeTextElement("Arguments", args.join(' '));
-    w.writeTextElement("WorkingDirectory", root_);
-    w.writeEndElement();
-    w.writeEndElement();
-    w.writeEndElement();
-    w.writeEndDocument();
+    std::optional<QXmlStreamWriter> w;
+    QStringList arguments;
+    const QStringList tags{"Task",
+                           "RegistrationInfo",
+                           "Author",
+                           "Description",
+                           "Triggers",
+                           "TimeTrigger",
+                           "CalendarTrigger",
+                           "Repetition",
+                           "Interval",
+                           "StopAtDurationEnd",
+                           "StartBoundary",
+                           "Enabled",
+                           "ScheduleByDay",
+                           "DaysInterval",
+                           "ScheduleByWeek",
+                           "WeeksInterval",
+                           "DaysOfWeek",
+                           "ScheduleByMonth",
+                           "DaysOfMonth",
+                           "Day",
+                           "Months",
+                           "Principals",
+                           "Principal",
+                           "UserId",
+                           "LogonType",
+                           "RunLevel",
+                           "Settings",
+                           "MultipleInstancesPolicy",
+                           "DisallowStartIfOnBatteries",
+                           "StopIfGoingOnBatteries",
+                           "AllowHardTerminate",
+                           "StartWhenAvailable",
+                           "RunOnlyIfNetworkAvailable",
+                           "AllowStartOnDemand",
+                           "Hidden",
+                           "ExecutionTimeLimit",
+                           "Priority",
+                           "Actions",
+                           "Exec",
+                           "Command",
+                           "Arguments",
+                           "WorkingDirectory"};
+    rust::workflowRun(
+        rust::WorkflowMethod::ScheduleXml, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ScheduleReadTaskCatalogue:
+                catalog = readJson(root_ + "/native/resources/catalog.json");
+                nativeTasks = catalog["tasks"].toArray();
+                break;
+            case rust::WorkflowOp::ScheduleNativeTaskCount:
+                out[0] = double(nativeTasks.size());
+                break;
+            case rust::WorkflowOp::ScheduleLoadNativeTask:
+                entry = nativeTasks.at(int(a[0])).toObject();
+                break;
+            case rust::WorkflowOp::ScheduleEntryMatches:
+                out[0] = entry["id"] == task;
+                break;
+            case rust::WorkflowOp::ScheduleEntryTrigger:
+                out[0] = entry["trigger"].toBool();
+                break;
+            case rust::WorkflowOp::ScheduleReadScriptCatalogue:
+                scripts = scriptCatalog(data_);
+                break;
+            case rust::WorkflowOp::ScheduleScriptTaskCount:
+                out[0] = double(scripts.size());
+                break;
+            case rust::WorkflowOp::ScheduleLoadScriptTask:
+                entry = scripts.at(int(a[0])).toObject();
+                break;
+            case rust::WorkflowOp::ScheduleEntrySupported:
+                out[0] = entry["native_supported"].toBool();
+                break;
+            case rust::WorkflowOp::ScheduleKind:
+                out[0] = QStringList{"Once", "Daily", "Weekly", "Monthly", "Days", "Hours"}.indexOf(
+                    s["kind"].toString("Daily"));
+                break;
+            case rust::WorkflowOp::ScheduleParseStart:
+                start = QDateTime::fromString(s["start"].toString(), Qt::ISODate);
+                break;
+            case rust::WorkflowOp::ScheduleStartValid:
+                out[0] = start.isValid();
+                break;
+            case rust::WorkflowOp::ScheduleReadNumber: {
+                const std::array keys{"interval", "weekday", "monthday", "limit_hours"};
+                out[0] = number(s, keys.at(size_t(a[0])), int(a[1]), int(a[2]), int(a[3]));
+                break;
+            }
+            case rust::WorkflowOp::ScheduleCreateXmlWriter:
+                w.emplace(&text);
+                w->setAutoFormatting(true);
+                break;
+            case rust::WorkflowOp::ScheduleXmlDocument:
+                w->writeStartDocument();
+                break;
+            case rust::WorkflowOp::ScheduleXmlBegin:
+                w->writeStartElement(tags.at(int(a[0])));
+                break;
+            case rust::WorkflowOp::ScheduleXmlEnd:
+                w->writeEndElement();
+                break;
+            case rust::WorkflowOp::ScheduleXmlNamespace:
+                w->writeDefaultNamespace("http://schemas.microsoft.com/windows/2004/02/mit/task");
+                break;
+            case rust::WorkflowOp::ScheduleXmlAttribute:
+                switch (int(a[0])) {
+                case 0:
+                    w->writeAttribute("version", "1.2");
+                    break;
+                case 1:
+                    w->writeAttribute("id", "Author");
+                    break;
+                case 2:
+                    w->writeAttribute("Context", "Author");
+                    break;
+                }
+                break;
+            case rust::WorkflowOp::ScheduleXmlText: {
+                QString value;
+                switch (int(a[1])) {
+                case 0:
+                    value = "OKWW C++";
+                    break;
+                case 1:
+                    value = s["label"].toString(task);
+                    break;
+                case 2:
+                    value = QString("PT%1H").arg(int(a[2]));
+                    break;
+                case 3:
+                    value = "false";
+                    break;
+                case 4:
+                    value = start.toString("yyyy-MM-ddTHH:mm:ss");
+                    break;
+                case 5:
+                    value = "true";
+                    break;
+                case 6:
+                    value = QString::number(int(a[2]));
+                    break;
+                case 7:
+                    value = user_;
+                    break;
+                case 8:
+                    value = "InteractiveToken";
+                    break;
+                case 9:
+                    value = "LeastPrivilege";
+                    break;
+                case 10:
+                    value = "IgnoreNew";
+                    break;
+                case 11:
+                    value = s["enabled"].toBool(true) ? "true" : "false";
+                    break;
+                case 12:
+                    value = "PT0S";
+                    break;
+                case 13:
+                    value = executable_;
+                    break;
+                case 14:
+                    value = arguments.join(' ');
+                    break;
+                case 15:
+                    value = root_;
+                    break;
+                }
+                w->writeTextElement(tags.at(int(a[0])), value);
+                break;
+            }
+            case rust::WorkflowOp::ScheduleXmlWeekday:
+                w->writeEmptyElement(days.at(int(a[0])));
+                break;
+            case rust::WorkflowOp::ScheduleXmlMonth:
+                w->writeEmptyElement(months.at(int(a[0])));
+                break;
+            case rust::WorkflowOp::ScheduleBuildArguments:
+                arguments = {"--root",     root_, "--data",          data_,
+                             "--run-task", task,  "--limit-seconds", QString::number(int(a[0]))};
+                break;
+            case rust::WorkflowOp::ScheduleExitAfter:
+                out[0] = s["exit_after"].toBool(true);
+                break;
+            case rust::WorkflowOp::ScheduleAppendExitArgument:
+                arguments.append("--exit-after-task");
+                break;
+            case rust::WorkflowOp::ScheduleArgumentCount:
+                out[0] = double(arguments.size());
+                break;
+            case rust::WorkflowOp::ScheduleQuoteArgument: {
+                const auto index = int(a[0]);
+                arguments[index] = quoteArgument(arguments[index]);
+                break;
+            }
+            case rust::WorkflowOp::ScheduleXmlDocumentEnd:
+                w->writeEndDocument();
+                break;
+            case rust::WorkflowOp::ScheduleFailure:
+                scheduleFailure(int(a[0]));
+                break;
+            default:
+                fail("Rust 计划 XML 宿主无效");
+            }
+        });
     return text;
 }
 QJsonObject Scheduler::registry() const {
     const auto path = data_ + "/native-schedules.json";
-    return QFile::exists(path) ? readJson(path) : QJsonObject{};
+    QJsonObject result;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleRegistry, {},
+                      [&](rust::WorkflowOp op, const double *, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleRegistryExists:
+                              out[0] = QFile::exists(path);
+                              break;
+                          case rust::WorkflowOp::ScheduleReadRegistry:
+                              result = readJson(path);
+                              break;
+                          default:
+                              fail("Rust 计划记录宿主无效");
+                          }
+                      });
+    return result;
 }
 void Scheduler::save(QJsonObject value) const {
-    QDir().mkpath(data_);
-    writeJson(data_ + "/native-schedules.json", value);
+    rust::workflowRun(rust::WorkflowMethod::ScheduleSave, {},
+                      [&](rust::WorkflowOp op, const double *, double *) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleMakeDirectory:
+                              QDir().mkpath(data_);
+                              break;
+                          case rust::WorkflowOp::ScheduleWriteRegistry:
+                              writeJson(data_ + "/native-schedules.json", value);
+                              break;
+                          default:
+                              fail("Rust 计划保存宿主无效");
+                          }
+                      });
 }
 void Scheduler::validateName(const QString &name) const {
-    if (!name.startsWith(prefix_) ||
-        !QRegularExpression("^[0-9a-f]{32}$").match(name.mid(prefix_.size())).hasMatch())
-        fail("不能修改此配置以外的计划任务");
+    rust::workflowRun(
+        rust::WorkflowMethod::ScheduleValidateName, {},
+        [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ScheduleNamePrefix:
+                out[0] = name.startsWith(prefix_);
+                break;
+            case rust::WorkflowOp::ScheduleNameId:
+                out[0] = QRegularExpression("^[0-9a-f]{32}$").match(name.mid(prefix_.size())).hasMatch();
+                break;
+            case rust::WorkflowOp::ScheduleFailure:
+                scheduleFailure(int(a[0]));
+                break;
+            default:
+                fail("Rust 计划名称宿主无效");
+            }
+        });
 }
 QJsonArray Scheduler::list() const {
-    QJsonArray out;
-    auto all = registry();
-    for (auto it = all.begin(); it != all.end(); ++it) {
-        validateName(it.key());
-        auto s = it.value().toObject();
-        s["name"] = it.key();
-        out.append(s);
-    }
-    return out;
+    QJsonObject all, s;
+    QStringList keys;
+    QString name;
+    QJsonArray result;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleList, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleLoadRegistry:
+                              all = registry();
+                              keys = all.keys();
+                              break;
+                          case rust::WorkflowOp::ScheduleRegistryCount:
+                              out[0] = double(keys.size());
+                              break;
+                          case rust::WorkflowOp::ScheduleSelectEntry:
+                              name = keys.at(int(a[0]));
+                              s = all.value(name).toObject();
+                              break;
+                          case rust::WorkflowOp::ScheduleValidateSelectedName:
+                              validateName(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleAppendEntry:
+                              s["name"] = name;
+                              result.append(s);
+                              break;
+                          default:
+                              fail("Rust 计划列表宿主无效");
+                          }
+                      });
+    return result;
 }
 void Scheduler::registerTask(const QString &name, const QString &definition) const {
-    QTemporaryDir directory(QDir::tempPath() + "/okww-schedule-XXXXXX");
-    if (!directory.isValid())
-        fail("无法创建计划任务临时目录");
-    const auto path = directory.filePath("schedule.xml");
-    // QTemporaryFile keeps its native handle open even after close(). Windows
-    // schtasks needs to reopen this file; destroy an ordinary QFile first.
-    {
-        QFile file(path);
-        const auto bytes = definition.toUtf8();
-        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.flush())
-            fail("无法写入计划任务文件");
-    }
-    command_({"/Create", "/TN", name, "/XML", path, "/F"});
+    std::optional<QTemporaryDir> directory;
+    std::optional<QFile> file;
+    QString path;
+    QByteArray bytes;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleRegister, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleCreateTemporaryDirectory:
+                              directory.emplace(QDir::tempPath() + "/okww-schedule-XXXXXX");
+                              break;
+                          case rust::WorkflowOp::ScheduleTemporaryDirectoryValid:
+                              out[0] = directory->isValid();
+                              break;
+                          case rust::WorkflowOp::ScheduleTemporaryPath:
+                              path = directory->filePath("schedule.xml");
+                              break;
+                          case rust::WorkflowOp::ScheduleCreateFile:
+                              file.emplace(path);
+                              break;
+                          case rust::WorkflowOp::ScheduleEncodeXml:
+                              bytes = definition.toUtf8();
+                              break;
+                          case rust::WorkflowOp::ScheduleOpenFile:
+                              out[0] = file->open(QIODevice::WriteOnly);
+                              break;
+                          case rust::WorkflowOp::ScheduleWriteFile:
+                              out[0] = file->write(bytes) == bytes.size();
+                              break;
+                          case rust::WorkflowOp::ScheduleFlushFile:
+                              out[0] = file->flush();
+                              break;
+                          case rust::WorkflowOp::ScheduleDestroyFile:
+                              file.reset();
+                              break;
+                          case rust::WorkflowOp::ScheduleInvokeCreate:
+                              command_({"/Create", "/TN", name, "/XML", path, "/F"});
+                              break;
+                          case rust::WorkflowOp::ScheduleFailure:
+                              scheduleFailure(int(a[0]));
+                              break;
+                          default:
+                              fail("Rust 计划注册宿主无效");
+                          }
+                      });
 }
 QString Scheduler::add(QJsonObject s) {
-    s["enabled"] = true;
-    const auto definition = xml(s);
-    const auto name = prefix_ + QUuid::createUuid().toString(QUuid::Id128);
-    registerTask(name, definition);
-    auto all = registry();
-    all[name] = s;
-    try {
-        save(all);
-    } catch (...) {
-        try {
-            command_({"/Delete", "/TN", name, "/F"});
-        } catch (...) {
-        }
-        throw;
-    }
+    QString definition, name;
+    QJsonObject all;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleAdd, {},
+                      [&](rust::WorkflowOp op, const double *, double *) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleSetNewEnabled:
+                              s["enabled"] = true;
+                              break;
+                          case rust::WorkflowOp::ScheduleBuildDefinition:
+                              definition = xml(s);
+                              break;
+                          case rust::WorkflowOp::ScheduleGenerateName:
+                              name = prefix_ + QUuid::createUuid().toString(QUuid::Id128);
+                              break;
+                          case rust::WorkflowOp::ScheduleRegisterDefinition:
+                              registerTask(name, definition);
+                              break;
+                          case rust::WorkflowOp::ScheduleLoadRegistry:
+                              all = registry();
+                              break;
+                          case rust::WorkflowOp::ScheduleStoreSettings:
+                              all[name] = s;
+                              break;
+                          case rust::WorkflowOp::ScheduleSaveRegistry:
+                              save(all);
+                              break;
+                          case rust::WorkflowOp::ScheduleInvokeDelete:
+                              command_({"/Delete", "/TN", name, "/F"});
+                              break;
+                          case rust::WorkflowOp::ScheduleReturnName:
+                              break;
+                          default:
+                              fail("Rust 计划创建宿主无效");
+                          }
+                      });
     return name;
 }
 void Scheduler::update(const QString &name, QJsonObject s) {
-    validateName(name);
-    auto all = registry();
-    if (!all.contains(name))
-        fail("计划不存在");
-    const auto previous = all[name].toObject();
-    s.remove("name");
-    s["enabled"] = previous["enabled"].toBool();
-    const auto definition = xml(s);
-    registerTask(name, definition);
-    all[name] = s;
-    try {
-        save(all);
-    } catch (...) {
-        try {
-            registerTask(name, xml(previous));
-        } catch (...) {
-        }
-        throw;
-    }
+    QJsonObject all, previous;
+    QString definition;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleUpdate, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleValidateRequestedName:
+                              validateName(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleLoadRegistry:
+                              all = registry();
+                              break;
+                          case rust::WorkflowOp::ScheduleRequestedExists:
+                              out[0] = all.contains(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleReadPrevious:
+                              previous = all[name].toObject();
+                              break;
+                          case rust::WorkflowOp::ScheduleRemoveSettingsName:
+                              s.remove("name");
+                              break;
+                          case rust::WorkflowOp::ScheduleRestoreEnabled:
+                              s["enabled"] = previous["enabled"].toBool();
+                              break;
+                          case rust::WorkflowOp::ScheduleBuildDefinition:
+                              definition = xml(s);
+                              break;
+                          case rust::WorkflowOp::ScheduleRegisterDefinition:
+                              registerTask(name, definition);
+                              break;
+                          case rust::WorkflowOp::ScheduleStoreSettings:
+                              all[name] = s;
+                              break;
+                          case rust::WorkflowOp::ScheduleSaveRegistry:
+                              save(all);
+                              break;
+                          case rust::WorkflowOp::ScheduleRollbackDefinition:
+                              registerTask(name, xml(previous));
+                              break;
+                          case rust::WorkflowOp::ScheduleFailure:
+                              scheduleFailure(int(a[0]));
+                              break;
+                          default:
+                              fail("Rust 计划修改宿主无效");
+                          }
+                      });
 }
 void Scheduler::remove(const QString &name) {
-    validateName(name);
-    auto all = registry();
-    if (!all.contains(name))
-        fail("计划不存在");
-    command_({"/Delete", "/TN", name, "/F"});
-    all.remove(name);
-    save(all);
+    QJsonObject all;
+    rust::workflowRun(rust::WorkflowMethod::ScheduleRemove, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleValidateRequestedName:
+                              validateName(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleLoadRegistry:
+                              all = registry();
+                              break;
+                          case rust::WorkflowOp::ScheduleRequestedExists:
+                              out[0] = all.contains(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleInvokeDelete:
+                              command_({"/Delete", "/TN", name, "/F"});
+                              break;
+                          case rust::WorkflowOp::ScheduleRemoveEntry:
+                              all.remove(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleSaveRegistry:
+                              save(all);
+                              break;
+                          case rust::WorkflowOp::ScheduleFailure:
+                              scheduleFailure(int(a[0]));
+                              break;
+                          default:
+                              fail("Rust 计划删除宿主无效");
+                          }
+                      });
 }
 void Scheduler::setEnabled(const QString &name, bool enabled) {
-    validateName(name);
-    auto all = registry();
-    if (!all.contains(name))
-        fail("计划不存在");
-    command_({"/Change", "/TN", name, enabled ? "/ENABLE" : "/DISABLE"});
-    auto s = all[name].toObject();
-    s["enabled"] = enabled;
-    all[name] = s;
-    save(all);
+    QJsonObject all, previous;
+    const std::array args{double(enabled)};
+    rust::workflowRun(rust::WorkflowMethod::ScheduleSetEnabled, args,
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ScheduleValidateRequestedName:
+                              validateName(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleLoadRegistry:
+                              all = registry();
+                              break;
+                          case rust::WorkflowOp::ScheduleRequestedExists:
+                              out[0] = all.contains(name);
+                              break;
+                          case rust::WorkflowOp::ScheduleInvokeEnabled:
+                              command_({"/Change", "/TN", name, a[0] ? "/ENABLE" : "/DISABLE"});
+                              break;
+                          case rust::WorkflowOp::ScheduleReadPrevious:
+                              previous = all[name].toObject();
+                              break;
+                          case rust::WorkflowOp::ScheduleUpdateEnabled:
+                              previous["enabled"] = bool(a[0]);
+                              break;
+                          case rust::WorkflowOp::ScheduleStorePrevious:
+                              all[name] = previous;
+                              break;
+                          case rust::WorkflowOp::ScheduleSaveRegistry:
+                              save(all);
+                              break;
+                          case rust::WorkflowOp::ScheduleFailure:
+                              scheduleFailure(int(a[0]));
+                              break;
+                          default:
+                              fail("Rust 计划启停宿主无效");
+                          }
+                      });
 }
 } // namespace okww::runtime

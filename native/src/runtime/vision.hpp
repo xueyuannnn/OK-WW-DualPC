@@ -36,6 +36,7 @@ struct MatchOptions {
     double templateTop = 1, searchHeight = 1;
     int targetHeight = 0;
     double rotation = 0;
+    double blurSigma = 0;
 };
 class Templates {
     struct Source {

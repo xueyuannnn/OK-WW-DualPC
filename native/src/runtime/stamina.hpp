@@ -10,7 +10,8 @@ struct StaminaSpend {
     int used = 0;
     bool repeat = false;
 };
-StaminaSpend planStaminaSpend(StaminaValues before, int once, int remaining, bool exactCount);
+StaminaSpend planStaminaSpend(StaminaValues before, int once, int remaining, bool exactCount,
+                              bool preferDouble = true);
 StaminaSpend claimStamina(TaskContext &context, int once, int remaining, bool exactCount = false);
 class CubeBudget {
     QString path_, day_;
@@ -21,7 +22,7 @@ class CubeBudget {
 
   public:
     CubeBudget(QString path, int limit = 4, QDateTime now = QDateTime::currentDateTime());
-    int remaining() const { return std::max(0, limit_ - data_["reserved"].toInt()); }
+    int remaining() const;
     int used() const { return data_["reserved"].toInt(); }
     int limit() const { return limit_; }
     bool pending() const { return data_["pending"].toBool(); }

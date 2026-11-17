@@ -1,5 +1,8 @@
 # Local environments and dependency downloads
 .venv/
+/.rust-tools/
+/target/
+/build-rust/
 venv/
 node_modules/
 /native/deps/
@@ -56,6 +59,7 @@ __pycache__/
 /cache/
 /working/
 /updates/
+/.updates/
 /update/
 /assets/result.json
 /tests/configs/

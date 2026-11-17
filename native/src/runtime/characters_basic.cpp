@@ -1,227 +1,71 @@
 #include "character_registry.hpp"
 namespace okww::runtime {
 namespace {
+// Qt/native object adapters only; sequences are in rust/src/rotation/basic.rs.
 class Verina final : public Character {
     double lastHeavy_ = -1;
     void doPerform() override {
-        const double start = host_.now();
-        normalAttacks(.6);
-        auto stop = [&] { return isConFull() || elapsed(start) >= 6.5; };
-        if (!stop()) {
-            if (liberationAvailable())
-                liberation();
-            if (!stop()) {
-                if (resonanceAvailable())
-                    resonance({.sendClick = true, .timeout = 0});
-                if (!stop()) {
-                    if (echoAvailable())
-                        echo({.timeout = 0});
-                    if (!stop()) {
-                        host_.wait([&] { return host_.inTeam(); }, 2);
-                        sleep(.8);
-                        if (host_.forte(Forte::Mouse) && elapsed(lastHeavy_) >= 8) {
-                            heavyAttack(.7);
-                            lastHeavy_ = host_.now();
-                        }
-                        host_.tap(host_.jumpKey(), .01);
-                        normalAttacks(.5);
-                    }
-                }
-            }
-        }
-        switchNext();
+        rustRun(rust::RotationMethod::BasicPerform, {0.}, {}, {}, {}, nullptr, {&lastHeavy_, 1});
     }
 
   public:
     using Character::Character;
-    int switchPriority(const Character *current, bool intro, bool low) override {
-        if (intro && current && current->state.name == "char_hiyuki")
-            return int(SwitchPriority::Must);
-        return Character::switchPriority(current, intro, low);
+    int switchPriority(const Character *current, bool intro, bool) override {
+        return int(rustRun(rust::RotationMethod::VerinaPriority,
+                           {double(intro), double(current != nullptr),
+                            double(current && current->state.name == "char_hiyuki")})[0]);
     }
 };
 class Mortefi final : public Character {
-    void doPerform() override {
-        waitDown();
-        const bool liberated = liberation();
-        resonance();
-        echo();
-        if (!liberated)
-            liberation({.waitIfReady = 1});
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {1.}); }
 
   public:
     using Character::Character;
 };
 class Sanhua final : public Character {
-    void doPerform() override {
-        bool liberated = false;
-        double sleepTime = .85;
-        sleep(.02);
-        double start = host_.now();
-        host_.mouseDown();
-        try {
-            waitDown(false);
-            if (liberation({.sendClick = false})) {
-                liberated = true;
-                sleepTime += .1;
-                sleep(.15, false);
-            } else if (resonanceAvailable()) {
-                host_.mouseUp();
-                resonance({.sendClick = false});
-                start = host_.now();
-                host_.mouseDown();
-                sleep(.1, false);
-            }
-            sleepTime -= elapsed(start);
-            if (sleepTime > 0)
-                sleep(sleepTime, false);
-            host_.mouseUp();
-        } catch (...) {
-            try {
-                host_.mouseUp();
-            } catch (...) {
-            }
-            throw;
-        }
-        sleep(.8);
-        if (liberated) {
-            resonance({.sendClick = false});
-            sleep(.3);
-        }
-        if (isConFull())
-            echo();
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {2.}); }
 
   public:
     using Character::Character;
 };
 class Baizhi final : public Character {
-    void doPerform() override {
-        if (state.hasIntro)
-            normalAttacks(1.2, .1, 0, true);
-        liberation({.conLessThan = 1});
-        resonance();
-        echo();
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {3.}); }
 
   public:
     using Character::Character;
 };
 class Yuanwu final : public Character {
-    void doPerform() override {
-        if (liberation({.conLessThan = 1})) {
-            resonance();
-            switchNext();
-            return;
-        }
-        if (state.hasIntro) {
-            normalAttacks(1.2);
-            switchNext();
-            return;
-        }
-        resonance();
-        echo();
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {4.}); }
 
   public:
     using Character::Character;
 };
 class Taoqi final : public Character {
-    void doPerform() override {
-        if (state.hasIntro) {
-            waitDown();
-            normalAttacks(2.5);
-        } else {
-            liberation();
-            resonance();
-            echo({.sleepTime = .1});
-        }
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {5.}); }
 
   public:
     using Character::Character;
 };
 class Calcharo final : public Character {
-    void doPerform() override {
-        if (state.hasIntro) {
-            sleep(1);
-            host_.wait([&] { return host_.inTeam(); }, 3);
-            host_.checkCombat();
-        }
-        Character::doPerform();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {6.}); }
 
   public:
     using Character::Character;
 };
 class Jianxin final : public Character {
-    void doPerform() override {
-        if (state.hasIntro)
-            normalAttacks(1);
-        liberation();
-        if (resonanceAvailable())
-            resonance();
-        if (echoAvailable())
-            echo();
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {7.}); }
 
   public:
     using Character::Character;
 };
 class Yinlin final : public Character {
-    void doPerform() override {
-        if (state.hasIntro)
-            sleep(.4);
-        const bool liberated = liberation();
-        if (host_.forte(Forte::Mouse)) {
-            if (!state.hasIntro && !liberated)
-                normalAttack();
-            heavyAttack();
-            sleep(.4);
-        } else if (resonance({.sendClick = false}).clicked)
-            sleep(.1);
-        else if (echoAvailable())
-            echo();
-        else
-            heavyAttack();
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {8.}); }
 
   public:
     using Character::Character;
 };
 class Danjin final : public Character {
-    void doPerform() override {
-        if (liberation()) {
-            sleep(1.2);
-            echo({.timeout = 2});
-            switchNext();
-            return;
-        }
-        if (host_.forte(Forte::Bar) && state.hasIntro) {
-            heavyAttack(.8);
-            sleep(.2);
-            normalAttack();
-            sleep(.1);
-            switchNext();
-            return;
-        }
-        if (state.hasIntro)
-            normalAttacks(1.1);
-        else {
-            waitDown();
-            normalAttacks(.4, .1);
-        }
-        repeatedKey(host_.hotkey(Skill::Resonance), 1.1, .2);
-        switchNext();
-    }
+    void doPerform() override { rustRun(rust::RotationMethod::BasicPerform, {9.}); }
 
   public:
     using Character::Character;

@@ -10,10 +10,13 @@ double displayRefreshRate(const QString &device);
 QRect foregroundClientRect();
 // Resolve saved identities once per connection; never follow a reused HWND.
 class DesktopTarget {
+    friend struct DesktopIdentitySdk;
+    friend struct DesktopIdentityRectSdk;
     QJsonObject identity_;
     HWND window_ = nullptr;
     HMONITOR monitor_ = nullptr;
     DWORD process_ = 0;
+
   public:
     explicit DesktopTarget(QJsonObject identity);
     QRect rect() const;
@@ -23,12 +26,16 @@ class DesktopTarget {
 QPoint desktopAbsolute(QPoint point, QRect virtualDesktop);
 QRect virtualDesktopRect();
 INPUT hidInput(int usage, bool down);
+QJsonObject localInputEnvironment();
 inline constexpr ULONG_PTR localInputTag = 0x4F4B5757;
 // Installed on a dedicated message thread. Script-generated F is not physical F.
 class PhysicalKeys {
+    friend struct PhysicalKeysSdk;
+    void run();
     std::thread thread_;
     std::atomic<DWORD> threadId_{0};
     std::atomic<bool> ready_{false}, failed_{false};
+
   public:
     PhysicalKeys();
     ~PhysicalKeys();

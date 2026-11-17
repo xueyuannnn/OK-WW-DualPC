@@ -5,6 +5,7 @@
 #include "capture.hpp"
 #include "desktop.hpp"
 #include "garden.hpp"
+#include "daily.hpp"
 #include <iostream>
 using namespace okww;
 using namespace okww::runtime;
@@ -24,9 +25,10 @@ int main(int argc, char **argv) {
          {"garden-scan", "Profile saved Garden template scan without issuing input"},
          {"echo", "Run original echo model on saved image"},
          {"combat", "Analyze saved combat HUD without issuing input"},
-         {"garden", "Analyze saved weekly overview without issuing input"}});
+         {"garden", "Analyze saved weekly overview without issuing input"},
+         {"daily", "Analyze saved daily overview without issuing input"}});
     parser.process(app);
-    QJsonObject report{{"runtime", "C++"}, {"hardware_input_sent", false}};
+    QJsonObject report{{"runtime", "Rust"}, {"frontend", "Qt / C++"}, {"hardware_input_sent", false}};
     try {
         const QString root = parser.value("root");
         if (parser.isSet("desktop-targets")) {
@@ -143,6 +145,28 @@ int main(int argc, char **argv) {
                 report["ocr_ms"] = timer.elapsed();
                 report["lines"] = lines;
             }
+            if (parser.isSet("daily")) {
+                if (!ocr) fail("每日图像检查需要 --models");
+                Templates templates(root + "/assets/coco_annotations.json");
+                QTemporaryDir directory;
+                Profile profile(directory.path(), root + "/native/resources/catalog.json");
+                SteadyClock clock;
+                ExecutionGate gate;
+                Execution execution(gate, gate.start(), clock);
+                Input input(Config::defaults(), {image.cols,image.rows}, false,
+                    [](auto command)->QJsonObject {
+                        if (command["op"]!="release") fail("离线图像检查禁止输入");
+                        return {};
+                    },execution);
+                TaskContext context(execution,input,templates,profile,[&] { return image; },
+                    [&](const auto &frame,auto area,double threshold) { return ocr->read(frame,area,threshold); });
+                context.refresh();
+                QJsonObject observation;
+                const auto progress=observeDailyProgress(context,&observation);
+                report["daily"]=QJsonObject{{"progress",progress.points},{"stamina",progress.stamina.value_or(-1)},
+                    {"echo_needed",progress.echoNeeded ? QJsonValue(*progress.echoNeeded) : QJsonValue()},
+                    {"observation",observation}};
+            }
             if (parser.isSet("garden")) {
                 if (!ocr) fail("周常图像检查需要 --models");
                 Templates templates(root + "/assets/coco_annotations.json");
@@ -228,6 +252,7 @@ int main(int argc, char **argv) {
                 combat["health"] = vision.healthBar(false);
                 combat["shifted_health"] = vision.shiftedHealthBar();
                 combat["death_dialog"] = vision.deathDialog();
+                combat["system_run_dialog"] = systemRunDialogConfirmed(context.text(0,.7,.35,1,.65));
                 const auto result = vision.challengeResult();
                 combat["challenge_result"] = result ? (*result ? "success" : "failure") : "none";
                 combat["mouse_forte"] = vision.forte(Forte::Mouse);

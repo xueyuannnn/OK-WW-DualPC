@@ -162,21 +162,54 @@ class BaseCombatTask(CombatCheck):
         if cds is None:
             cds = {}
             self.cds[index] = cds
-        cds['time'] = time.time()
-        cds['resonance'] = 0
-        cds['liberation'] = 0
-        cds['echo'] = 0
+        now = time.time()
+        if now - cds.get('time', -1e9) < .1:
+            self.scene.cd_refreshed = True
+            return
+        observed = cds.setdefault('_observed', {})
+        for key in ('resonance', 'liberation', 'echo'):
+            cds.setdefault(key, 0)
+            observed.setdefault(key, cds.get('time', now))
+        cds['time'] = now
         cd_x = self._cd_ocr_relative_x
+        counter = re.compile(r'^\s*\d{1,2}(?:[.,·]\s*\d)?\s*$')
         texts = self.ocr(cd_x(0.82), 0.86, cd_x(0.97), 0.93,
-                         frame_processor=isolate_white_text_to_black, match=cd_regex)
+                         frame_processor=isolate_white_text_to_black, match=counter)
+        if len(texts) < 3 and now - cds.get('_fallback_at', -1e9) >= .3:
+            cds['_fallback_at'] = now
+            left, top = round(self.width_of_screen(cd_x(.82))), round(self.height_of_screen(.86))
+            right, bottom = round(self.width_of_screen(cd_x(.97))), round(self.height_of_screen(.93))
+            crop = self.frame[top:bottom, left:right]
+            if crop.size:
+                enlarged = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+                extra = self.ocr(frame=enlarged, match=counter)
+                for text in extra:
+                    text.x = left + text.x / 2
+                    text.y = top + text.y / 2
+                    text.width /= 2
+                    text.height /= 2
+                texts = [*texts, *extra]
+        seen = set()
         for text in texts:
-            cd = convert_cd(text)
+            # Skill charges sit above the central cooldown number. A bare
+            # charge count must not be interpreted as a cooldown in seconds.
+            if text.y + text.height / 2 < self.height_of_screen(.885):
+                continue
+            try:
+                cd = float(text.name.replace(',', '.').replace('·', '.').replace(' ', ''))
+            except ValueError:
+                continue
+            if not 0 <= cd <= 60:
+                continue
             if text.x < self.width_of_screen(cd_x(0.86)):
-                cds['resonance'] = cd
+                key = 'resonance'
             elif text.x > self.width_of_screen(cd_x(0.91)):
-                cds['liberation'] = cd
+                key = 'liberation'
             else:
-                cds['echo'] = cd
+                key = 'echo'
+            cds[key] = max(cds[key], cd) if key in seen else cd
+            observed[key] = now
+            seen.add(key)
         self.scene.cd_refreshed = True
         self.log_debug(f'cd refreshed: {cds} {time.time() - cds["time"]}')
 
@@ -195,7 +228,7 @@ class BaseCombatTask(CombatCheck):
         if char_index is None:
             char_index = self.get_current_char().index
         if cds := self.cds.get(char_index):
-            time_elapsed = self.time_elapsed_accounting_for_freeze(cds['time'])
+            time_elapsed = self.time_elapsed_accounting_for_freeze(cds.get('_observed', {}).get(box_name, cds['time']))
             return cds[box_name] - time_elapsed
         else:
             return 0

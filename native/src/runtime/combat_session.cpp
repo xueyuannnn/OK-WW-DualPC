@@ -1,15 +1,11 @@
 #include "combat_session.hpp"
+#include "diagnostics.hpp"
 #include "interaction.hpp"
 #include "workshop.hpp"
 #include <opencv2/imgcodecs.hpp>
 namespace okww::runtime {
 namespace {
-struct FlagGuard {
-    bool &value;
-    bool previous;
-    FlagGuard(bool &v, bool next = true) : value(v), previous(v) { value = next; }
-    ~FlagGuard() { value = previous; }
-};
+
 QString skillName(Skill skill) {
     return QStringList{"resonance", "echo", "liberation", "extra_action"}[int(skill)];
 }
@@ -19,260 +15,501 @@ CombatSession::CombatSession(TaskContext &context, const QString &resources, con
     : context_(context), vision_(context, resources + "/native/resources/characters.json"),
       teams_(std::move(teams)), calibrationPath_(directory + "/_con_full_size.json") {
     std::array<double, 6> areas{};
-    if (QFile::exists(calibrationPath_)) {
-        auto saved = readJson(calibrationPath_);
-        for (int i = 0; i < 6; ++i)
-            areas[i] = saved[QString::number(i)].toDouble();
-    }
-    concerto_ = Concerto(areas);
-    enabledRevision_ = context_.state->combatEnableRevision;
+    QJsonObject saved;
+    rustRun(rust::SessionMethod::Initialize, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::CalibrationExists:
+                    out[0] = QFile::exists(calibrationPath_);
+                    break;
+                case rust::SessionOp::ReadCalibration:
+                    saved = readJson(calibrationPath_);
+                    break;
+                case rust::SessionOp::CalibrationValue:
+                    areas[size_t(a[0])] = saved[QString::number(int(a[0]))].toDouble();
+                    break;
+                case rust::SessionOp::CreateConcerto:
+                    concerto_ = Concerto(areas);
+                    break;
+                case rust::SessionOp::InitialRevision:
+                    enabledRevision_ = context_.state->combatEnableRevision;
+                    break;
+                default:
+                    fail("Rust 战斗初始化宿主操作无效");
+                }
+            });
 }
-void CombatSession::pollControls() {
-    if (context_.task == "AutoCombatTask" &&
-        !context_.profile.value("AutoCombatTask", "_enabled", true).toBool())
-        throw CombatEnded("自动战斗已关闭");
-    const auto revision = context_.state->combatEnableRevision.load();
-    if (revision != enabledRevision_) {
-        enabledRevision_ = revision;
-        if (context_.task == "AutoCombatTask") {
-            macroRearmAt = now();
-            pendingMacroReset_ = true;
-        }
-    }
-    if (pendingMacroReset_) {
-        if (macroBusy)
-            throw CombatEnded("自动战斗已重新启用，重新准备启动连招");
-        pendingMacroReset_ = false;
-        if (macro_)
-            macro_->reset();
-    }
-    const bool down = context_.physicalFDown && context_.physicalFDown();
-    if (down && !physicalFWasDown_ && !macroBusy)
-        macroRearmAt = now();
-    physicalFWasDown_ = down;
+QJsonObject CombatSession::workshopTaskConfig() const {
+    QJsonObject result;
+    rust::sessionRun(rust::SessionMethod::WorkshopTaskConfig, {},
+                     [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                         switch (op) {
+                         case rust::SessionOp::ReadTaskConfig: {
+                             result = context_.profile.group(context_.task);
+                             break;
+                         }
+                         case rust::SessionOp::OverrideCount: {
+                             out[0] = double(context_.taskOverrides.size());
+                             break;
+                         }
+                         case rust::SessionOp::MergeOverride: {
+                             const auto it = std::next(context_.taskOverrides.constBegin(), int(a[0]));
+                             result[it.key()] = it.value();
+                             break;
+                         }
+                         default:
+                             fail("Rust WorkshopTaskConfig 宿主操作无效");
+                         }
+                     });
+    return result;
 }
+QString CombatSession::targetName() const {
+    const std::array args{double(context_.frame.cols)};
+    const auto slot = rust::sessionRun(rust::SessionMethod::TargetName, args,
+                                       [](rust::SessionOp, const double *, double *,
+                                          const std::exception_ptr &) { fail("Rust 目标模板操作无效"); });
+    const QString names[]{"has_target", "has_target_169"};
+    return names[int(slot)];
+}
+void CombatSession::ensureElement(Character &character) {
+    rustRun(rust::SessionMethod::EnsureElement, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::CharacterRing: {
+                    out[0] = character.state.ringIndex;
+                    break;
+                }
+                case rust::SessionOp::CallCharacterConcerto: {
+                    out[0] = concerto(character);
+                    break;
+                }
+                default:
+                    fail("Rust EnsureElement 宿主操作无效");
+                }
+            });
+}
+void CombatSession::log(const QString &message) {
+    rustRun(rust::SessionMethod::LogIfInfo, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::EmitCombatLog: {
+                    context_.info("战斗", message);
+                    break;
+                }
+                default:
+                    fail("Rust LogIfInfo 宿主操作无效");
+                }
+            });
+}
+void CombatSession::pollControls() { rustRun(rust::SessionMethod::PollControls); }
 Character *CombatSession::current() {
-    for (auto &c : party_)
-        if (c->state.current)
-            return c.get();
-    return nullptr;
+    const auto index = rustRun(rust::SessionMethod::Current);
+    return index < 0 ? nullptr : party_.at(size_t(index)).get();
 }
 cv::Mat CombatSession::namedImage(const QString &name) {
     const auto box = vision_.box(name).intersected({0, 0, context_.frame.cols, context_.frame.rows});
-    if (box.isEmpty())
-        return {};
-    return context_.frame(cv::Rect(box.x(), box.y(), box.width(), box.height())).clone();
+    cv::Mat result;
+    rustRun(rust::SessionMethod::NamedImage, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::NamedRegionEmpty: {
+                    out[0] = box.isEmpty();
+                    break;
+                }
+                case rust::SessionOp::CloneNamedImage: {
+                    result = context_.frame(cv::Rect(box.x(), box.y(), box.width(), box.height())).clone();
+                    break;
+                }
+                default:
+                    fail("Rust NamedImage 宿主操作无效");
+                }
+            });
+    return result;
 }
 void CombatSession::snapshot(const QString &name) {
-    const auto path = QFileInfo(calibrationPath_).absolutePath() + "/../logs";
-    if (!QDir().mkpath(path)) {
-        log("未能创建诊断截图目录");
-        return;
-    }
-    QString safe = name;
-    safe.remove(QRegularExpression("[<>:\"/\\\\|?*]"));
+    QString path, safe;
     std::vector<uchar> bytes;
-    if (!cv::imencode(".png", context_.frame, bytes))
-        return;
-    QSaveFile file(path + "/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz_") +
-                   safe.left(80) + ".png");
-    if (!file.open(QIODevice::WriteOnly) ||
-        file.write(reinterpret_cast<const char *>(bytes.data()), bytes.size()) !=
-            static_cast<qint64>(bytes.size()) ||
-        !file.commit())
-        log("诊断截图保存失败");
+    std::optional<QSaveFile> file;
+    rustRun(rust::SessionMethod::Snapshot, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::SnapshotPath: {
+                    path = QFileInfo(calibrationPath_).absolutePath() + "/../logs";
+                    break;
+                }
+                case rust::SessionOp::MakeSnapshotDirectory: {
+                    out[0] = QDir().mkpath(path);
+                    break;
+                }
+                case rust::SessionOp::SanitizeSnapshotName: {
+                    safe = name;
+                    safe.remove(QRegularExpression("[<>:\"/\\\\|?*]"));
+                    break;
+                }
+                case rust::SessionOp::EncodeSnapshot: {
+                    out[0] = cv::imencode(".png", context_.frame, bytes);
+                    break;
+                }
+                case rust::SessionOp::CreateSnapshotFile: {
+                    file.emplace(path + "/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz_") +
+                                 safe.left(80) + ".png");
+                    break;
+                }
+                case rust::SessionOp::OpenSnapshot: {
+                    out[0] = file->open(QIODevice::WriteOnly);
+                    break;
+                }
+                case rust::SessionOp::WriteSnapshot: {
+                    out[0] = file->write(reinterpret_cast<const char *>(bytes.data()), bytes.size()) ==
+                             static_cast<qint64>(bytes.size());
+                    break;
+                }
+                case rust::SessionOp::CommitSnapshot: {
+                    out[0] = file->commit();
+                    break;
+                }
+                default:
+                    fail("Rust Snapshot 宿主操作无效");
+                }
+            });
 }
 QVector<Character *> CombatSession::characters() {
-    QVector<Character *> out;
-    for (auto &c : party_)
-        out.append(c.get());
-    return out;
+    QVector<Character *> result;
+    rustRun(rust::SessionMethod::Characters, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::AppendMemberPointer: {
+                    result.append(party_.at(size_t(a[0])).get());
+                    break;
+                }
+                default:
+                    fail("Rust Characters 宿主操作无效");
+                }
+            });
+    return result;
 }
 void CombatSession::publishParty(const QString &codeState) {
-    if (!context_.combatInfo) return;
     QJsonArray members;
-    const auto hud = vision_.party();
-    for (const auto &c : party_)
-        members.append(QJsonObject{{"class", c->state.className}, {"name", c->state.name},
-            {"index", c->state.index}, {"current", hud.visible && c->state.index == hud.current}});
-    const QJsonObject identity{{"members", members}, {"mode", selectedTeam_.startsWith("python:") ? "python"
-        : selectedTeam_.isEmpty() ? "builtin" : "native-team"}, {"code_state", codeState}, {"verified", hud.visible}};
-    const auto key = QJsonDocument(identity).toJson(QJsonDocument::Compact);
-    auto report = identity;
-    if (selectedTeam_.startsWith("python:")) report["bridge"] = bridgeInfo_;
-    if (report == lastPartyReport_ || (key == lastPartyKey_ && now()-lastPartyReportAt_ < .25)) return;
-    lastPartyKey_ = key;
-    lastPartyReport_ = report;
-    lastPartyReportAt_ = now();
-    context_.combatInfo(std::move(report));
+    QJsonObject identity, report;
+    QByteArray key;
+    rustRun(rust::SessionMethod::PublishParty, {},
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::HasCombatInfo: {
+                    out[0] = bool(context_.combatInfo);
+                    break;
+                }
+                case rust::SessionOp::AppendPartyMember: {
+                    const auto &member = *party_.at(size_t(a[0]));
+                    members.append(QJsonObject{{"class", member.state.className},
+                                               {"name", member.state.name},
+                                               {"index", member.state.index},
+                                               {"current", a[1] != 0}});
+                    break;
+                }
+                case rust::SessionOp::SelectedTeamEmpty: {
+                    out[0] = selectedTeam_.isEmpty();
+                    break;
+                }
+                case rust::SessionOp::BuildPartyIdentity: {
+                    const char *modes[]{"builtin", "python", "native-team"};
+                    identity = {{"members", members},
+                                {"mode", QLatin1String(modes[int(a[0])])},
+                                {"code_state", codeState},
+                                {"verified", a[1] != 0}};
+                    break;
+                }
+                case rust::SessionOp::BuildPartyKey: {
+                    key = QJsonDocument(identity).toJson(QJsonDocument::Compact);
+                    break;
+                }
+                case rust::SessionOp::InitializePartyReport: {
+                    report = identity;
+                    break;
+                }
+                case rust::SessionOp::AppendPartyBridge: {
+                    report["bridge"] = bridgeInfo_;
+                    break;
+                }
+                case rust::SessionOp::PartyReportMatches: {
+                    out[0] = report == lastPartyReport_;
+                    break;
+                }
+                case rust::SessionOp::PartyKeyMatches: {
+                    out[0] = key == lastPartyKey_;
+                    break;
+                }
+                case rust::SessionOp::StorePartyKey: {
+                    lastPartyKey_ = key;
+                    break;
+                }
+                case rust::SessionOp::StorePartyReport: {
+                    lastPartyReport_ = report;
+                    break;
+                }
+                case rust::SessionOp::EmitPartyInfo: {
+                    context_.combatInfo(std::move(report));
+                    break;
+                }
+                default:
+                    fail("Rust PublishParty 宿主操作无效");
+                }
+            });
 }
 bool CombatSession::loadParty() {
-    auto hud = vision_.party();
-    if (!hud.visible)
-        return false;
-    if (partyScanVersion_ == context_.frameVersion && party_.size() == size_t(hud.size)) {
-        for (auto &c : party_) c->state.current = c->state.index == hud.current;
-        publishParty();
-        return party_.size() >= 2;
-    }
-    partyScanVersion_ = context_.frameVersion;
     QVector<std::optional<CharacterIdentity>> identities;
-    for (int i = 0; i < hud.size; ++i) {
-        auto old = i < int(party_.size()) ? &party_[i]->state : nullptr;
-        auto id = vision_.character(i, old);
-        if (id && !nativeCharacterClasses().contains(id->definition.className))
-            fail("当前队伍的 " + id->definition.className + " 尚未迁移；未发送战斗输入。");
-        identities.append(id);
-    }
-    bool changed = party_.size() != size_t(hud.size);
-    for (int i = 0; i < identities.size(); ++i)
-        if (identities[i] && (i >= int(party_.size()) || !party_[i] ||
-                              party_[i]->state.name != identities[i]->definition.canonical))
-            changed = true;
-    if (changed) {
-        macro_.reset();
-        selectedTeam_.clear();
-    }
-    party_.resize(size_t(hud.size));
-    partyDefinitions_.resize(hud.size);
-    for (int i = 0; i < hud.size; ++i) {
-        auto &id = identities[i];
-        if (id) {
-            auto d = id->definition;
-            if (!party_[i] || party_[i]->state.name != d.canonical) {
-                CharacterState s;
-                s.index = i;
-                s.name = d.canonical;
-                s.role = d.role;
-                s.buffTime = d.buffTime;
-                s.ringIndex = d.element;
-                s.confidence = id->confidence;
-                party_[i] = makeCharacter(d.className, *this, s);
-            }
-            partyDefinitions_[i] = d;
-        } else if (!party_[i]) {
-            CharacterState s;
-            s.index = i;
-            s.name = "unknown";
-            party_[i] = makeCharacter("BaseChar", *this, s);
-        }
-        party_[i]->resetState();
-        party_[i]->state.current = i == hud.current;
-    }
-    const auto selected = teams_ ? teams_->selection(*this) : QString{};
-    if (selected != selectedTeam_) {
-        macro_.reset();
-        selectedTeam_ = selected;
-        bridgeInfo_ = {};
-        publishParty(selected.startsWith("python:") ? "loading" : "ready");
-        if (teams_)
-            macro_ = teams_->create(selected, *this);
-    }
-    if (macro_)
-        macro_->reset();
-    combatStart = now();
-    publishParty();
-    return party_.size() >= 2;
+    std::optional<CharacterIdentity> observed;
+    CharacterDefinition definition;
+    QString selected;
+    return rustRun(rust::SessionMethod::LoadParty, {},
+                   [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                       switch (op) {
+                       case rust::SessionOp::PartyScanMatches: {
+                           out[0] = partyScanVersion_ == context_.frameVersion;
+                           break;
+                       }
+                       case rust::SessionOp::StorePartyScan: {
+                           partyScanVersion_ = context_.frameVersion;
+                           break;
+                       }
+                       case rust::SessionOp::ReadIdentity: {
+                           observed = vision_.character(int(a[0]), a[1] != 0 ? &party_.at(size_t(a[0]))->state
+                                                                             : nullptr);
+                           break;
+                       }
+                       case rust::SessionOp::ObservedIdentityExists: {
+                           out[0] = observed.has_value();
+                           break;
+                       }
+                       case rust::SessionOp::ObservedIdentitySupported: {
+                           out[0] = nativeCharacterClasses().contains(observed->definition.className);
+                           break;
+                       }
+                       case rust::SessionOp::UnsupportedCharacter: {
+                           fail("当前队伍的 " + observed->definition.className +
+                                " 尚未迁移；未发送战斗输入。");
+                           break;
+                       }
+                       case rust::SessionOp::AppendIdentity: {
+                           identities.append(observed);
+                           break;
+                       }
+                       case rust::SessionOp::IdentityExists: {
+                           out[0] = identities.at(int(a[0])).has_value();
+                           break;
+                       }
+                       case rust::SessionOp::IdentityCount: {
+                           out[0] = double(identities.size());
+                           break;
+                       }
+                       case rust::SessionOp::MemberExists: {
+                           out[0] = bool(party_.at(size_t(a[0])));
+                           break;
+                       }
+                       case rust::SessionOp::MemberMatchesIdentity: {
+                           out[0] = party_.at(size_t(a[0]))->state.name ==
+                                    identities.at(int(a[0]))->definition.canonical;
+                           break;
+                       }
+                       case rust::SessionOp::DropMacro: {
+                           macro_.reset();
+                           break;
+                       }
+                       case rust::SessionOp::ClearSelectedTeam: {
+                           selectedTeam_.clear();
+                           break;
+                       }
+                       case rust::SessionOp::ResizeParty: {
+                           party_.resize(size_t(a[0]));
+                           break;
+                       }
+                       case rust::SessionOp::ResizeDefinitions: {
+                           partyDefinitions_.resize(int(a[0]));
+                           break;
+                       }
+                       case rust::SessionOp::CopyIdentityDefinition: {
+                           definition = identities.at(int(a[0]))->definition;
+                           break;
+                       }
+                       case rust::SessionOp::CreateIdentifiedMember: {
+                           CharacterState state;
+                           state.index = int(a[0]);
+                           state.name = definition.canonical;
+                           state.role = definition.role;
+                           state.buffTime = definition.buffTime;
+                           state.ringIndex = definition.element;
+                           state.confidence = identities.at(int(a[0]))->confidence;
+                           party_.at(size_t(a[0])) = makeCharacter(definition.className, *this, state);
+                           break;
+                       }
+                       case rust::SessionOp::StoreIdentityDefinition: {
+                           partyDefinitions_[int(a[0])] = definition;
+                           break;
+                       }
+                       case rust::SessionOp::CreateUnknownMember: {
+                           CharacterState state;
+                           state.index = int(a[0]);
+                           state.name = "unknown";
+                           party_.at(size_t(a[0])) = makeCharacter("BaseChar", *this, state);
+                           break;
+                       }
+                       case rust::SessionOp::TeamsExist: {
+                           out[0] = bool(teams_);
+                           break;
+                       }
+                       case rust::SessionOp::ReadTeamSelection: {
+                           selected = teams_->selection(*this);
+                           break;
+                       }
+                       case rust::SessionOp::EmptyTeamSelection: {
+                           selected = {};
+                           break;
+                       }
+                       case rust::SessionOp::TeamSelectionMatches: {
+                           out[0] = selected == selectedTeam_;
+                           break;
+                       }
+                       case rust::SessionOp::StoreTeamSelection: {
+                           selectedTeam_ = selected;
+                           break;
+                       }
+                       case rust::SessionOp::ClearBridgeInfo: {
+                           bridgeInfo_ = {};
+                           break;
+                       }
+                       case rust::SessionOp::SelectionPython: {
+                           out[0] = selected.startsWith("python:");
+                           break;
+                       }
+                       case rust::SessionOp::PublishPartyState: {
+                           publishParty(a[0] != 0 ? "loading" : "ready");
+                           break;
+                       }
+                       case rust::SessionOp::CreateSelectedMacro: {
+                           macro_ = teams_->create(selected, *this);
+                           break;
+                       }
+                       default:
+                           fail("Rust LoadParty 宿主操作无效");
+                       }
+                   }) != 0;
 }
 bool CombatSession::interval(double seconds) {
-    if (seconds <= 0)
-        return true;
-    if (now() - lastInterval_ < seconds) {
-        context_.execution.wait(.001);
-        context_.refresh();
-        return false;
-    }
-    lastInterval_ = now();
-    return true;
+    const std::array args{seconds};
+    return rustRun(rust::SessionMethod::Interval, args) != 0;
 }
 void CombatSession::tap(QString key, double after, double between, double down) {
-    if (!interval(between))
-        return;
-    context_.input.key(key, down);
-    context_.refresh();
-    if (after > 0)
-        sleep(after);
+    const std::array args{after, between, down};
+    rustRun(rust::SessionMethod::Tap, args,
+            [&](rust::SessionOp op, const double *a, double *, const std::exception_ptr &) {
+                if (op == rust::SessionOp::InputKey)
+                    context_.input.key(key, a[0]);
+                else
+                    fail("Rust 战斗按键宿主操作无效");
+            });
 }
 void CombatSession::click(QString button, double between) {
-    if (!interval(between))
-        return;
-    context_.input.click({}, .01, button);
-    context_.refresh();
+    const std::array args{between};
+    rustRun(rust::SessionMethod::Click, args,
+            [&](rust::SessionOp op, const double *a, double *, const std::exception_ptr &) {
+                if (op == rust::SessionOp::InputClick)
+                    context_.input.click({}, a[0], button);
+                else
+                    fail("Rust 战斗鼠标宿主操作无效");
+            });
 }
 QString CombatSession::hotkey(Skill skill) const {
-    switch (skill) {
-    case Skill::Resonance:
-        return context_.hotkey("Resonance Key", "e");
-    case Skill::Echo:
-        return context_.hotkey("Echo Key", "r");
-    case Skill::Liberation:
-        return context_.hotkey("Liberation Key", "q");
-    default:
-        return "4";
-    }
+    QString result;
+    const std::array args{double(int(skill))};
+    rust::sessionRun(rust::SessionMethod::Hotkey, args,
+                     [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                         switch (op) {
+                         case rust::SessionOp::ReadHotkey: {
+                             const char *names[]{"Resonance Key", "Echo Key", "Liberation Key"};
+                             const char *fallbacks[]{"e", "r", "q"};
+                             result = context_.hotkey(QString::fromUtf8(names[int(a[0])]),
+                                                      QString::fromUtf8(fallbacks[int(a[0])]));
+                             break;
+                         }
+                         case rust::SessionOp::ExtraHotkey: {
+                             result = "4";
+                             break;
+                         }
+                         default:
+                             fail("Rust Hotkey 宿主操作无效");
+                         }
+                     });
+    return result;
 }
-void CombatSession::watchdog() {
-    context_.execution.checkpoint();
-    if (combatDeadline_ > 0 && now() > combatDeadline_)
-        throw NavigationFailure("本轮战斗超过等待上限，未记录为完成");
-    if ((!engaged_ && !combatScope_ && !macroBusy) || checkingDialog_ || now() - lastDeathCheck_ < 1)
-        return;
-    lastDeathCheck_ = now();
-    FlagGuard guard(checkingDialog_);
-    if (vision_.deathDialog()) {
-        context_.input.release();
-        throw CharacterDead();
-    }
-    if (macroBusy && !vision_.party().visible)
-        if (const auto result = vision_.challengeResult()) {
-            context_.input.release();
-            if (*result)
-                throw CombatEnded("已确认挑战成功结算，停止本轮工坊连招");
-            throw CombatInterrupted("已确认挑战失败结算，停止本轮工坊连招，等待重新挑战");
-        }
-}
-void CombatSession::nextFrame() {
-    context_.execution.wait(.001);
-    context_.refresh();
-    watchdog();
-}
+void CombatSession::watchdog() { rustRun(rust::SessionMethod::Watchdog); }
+void CombatSession::nextFrame() { rustRun(rust::SessionMethod::NextFrame); }
 void CombatSession::sleep(double seconds) {
-    if (!std::isfinite(seconds) || seconds < 0 || seconds > 86400)
-        fail("战斗等待时间无效");
-    const auto end = now() + seconds;
-    do {
-        context_.execution.wait(std::min(.4, std::max(0., end - now())));
-        context_.refresh();
-        watchdog();
-        if (!skipCombatCheck && !checking_)
-            checkCombat();
-    } while (now() < end);
+    const std::array args{seconds};
+    rustRun(rust::SessionMethod::Sleep, args);
 }
-bool CombatSession::hasCd(Skill skill, int index) { return cooldown(skill, index) > .2; }
+void CombatSession::refreshObservation() { rustRun(rust::SessionMethod::RefreshObservation); }
+void CombatSession::workshopCheckpoint() { rustRun(rust::SessionMethod::WorkshopCheckpoint); }
+bool CombatSession::hasCd(Skill skill, int index) {
+    const std::array args{double(int(skill)), double(index)};
+    return rustRun(rust::SessionMethod::HasCd, args) != 0;
+}
 double CombatSession::cooldown(Skill skill, int index) {
-    auto c = current();
-    if (!c)
-        return 0;
-    vision_.refreshCooldowns(c->state.index);
-    return vision_.cooldown(skill, index < 0 ? c->state.index : index, freezes, now());
+    const std::array args{double(int(skill)), double(index)};
+    return rustRun(rust::SessionMethod::Cooldown, args);
 }
 bool CombatSession::feature(const QString &name, double threshold, const QString &box) {
     MatchOptions options;
     options.threshold = threshold;
-    if (!box.isEmpty())
-        options.search = vision_.box(box);
-    return bool(context_.find(name, options));
+    return rustRun(rust::SessionMethod::Feature, {},
+                   [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                       switch (op) {
+                       case rust::SessionOp::FeatureBoxEmpty: {
+                           out[0] = box.isEmpty();
+                           break;
+                       }
+                       case rust::SessionOp::FeatureSearchBox: {
+                           options.search = vision_.box(box);
+                           break;
+                       }
+                       case rust::SessionOp::FindFeature: {
+                           out[0] = bool(context_.find(name, options));
+                           break;
+                       }
+                       default:
+                           fail("Rust Feature 宿主操作无效");
+                       }
+                   }) != 0;
 }
 QString CombatSession::bestInBox(const QString &box, const QStringList &names, double threshold) {
-    QString name;
-    double score = threshold;
-    for (const auto &candidate : names)
-        if (auto match = context_.find(candidate, {.threshold = threshold, .search = vision_.box(box)}))
-            if (match->confidence >= score) {
-                name = candidate;
-                score = match->confidence;
-            }
-    return name;
+    QString result;
+    std::optional<Match> match;
+    const std::array args{threshold};
+    rustRun(rust::SessionMethod::BestInBox, args,
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::CandidateNameCount: {
+                    out[0] = double(names.size());
+                    break;
+                }
+                case rust::SessionOp::FindCandidate: {
+                    match = context_.find(names.at(int(a[0])),
+                                          {.threshold = threshold, .search = vision_.box(box)});
+                    out[0] = match.has_value();
+                    break;
+                }
+                case rust::SessionOp::CandidateConfidence: {
+                    out[0] = match->confidence;
+                    break;
+                }
+                case rust::SessionOp::StoreBestCandidate: {
+                    result = names.at(int(a[0]));
+                    break;
+                }
+                default:
+                    fail("Rust BestInBox 宿主操作无效");
+                }
+            });
+    return result;
 }
 double CombatSession::whiteRatio(QSize reference, QRect area, cv::Scalar lower, bool hc) {
     return colorPercentage(
@@ -280,14 +517,31 @@ double CombatSession::whiteRatio(QSize reference, QRect area, cv::Scalar lower, 
         lower, {255, 255, 255});
 }
 bool CombatSession::available(Skill skill, int index, bool checkColor, bool checkCd) {
-    return (!checkColor || highlighted(skill) > 0) && (!checkCd || !hasCd(skill, index));
+    const std::array args{double(int(skill)), double(index), double(checkColor), double(checkCd)};
+    return rustRun(rust::SessionMethod::Available, args) != 0;
 }
 double CombatSession::highlighted(Skill skill) { return vision_.white("box_" + skillName(skill)); }
 cv::Mat CombatSession::imageRegion(QSize reference, QRect area, bool hc) {
     const auto r = Templates::anchored(area, reference, {context_.frame.cols, context_.frame.rows}, hc);
-    if (r.x() < 0 || r.y() < 0 || r.right() >= context_.frame.cols || r.bottom() >= context_.frame.rows)
-        return {};
-    return context_.frame(cv::Rect(r.x(), r.y(), r.width(), r.height()));
+    const std::array args{double(r.x()),
+                          double(r.y()),
+                          double(r.right()),
+                          double(r.bottom()),
+                          double(context_.frame.cols),
+                          double(context_.frame.rows)};
+    cv::Mat result;
+    rustRun(rust::SessionMethod::ImageRegion, args,
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::ExtractRegionImage: {
+                    result = context_.frame(cv::Rect(r.x(), r.y(), r.width(), r.height()));
+                    break;
+                }
+                default:
+                    fail("Rust ImageRegion 宿主操作无效");
+                }
+            });
+    return result;
 }
 bool CombatSession::featureInRegion(const QString &name, QSize reference, QRect area, double threshold) {
     return bool(context_.find(
@@ -298,578 +552,310 @@ bool CombatSession::featureInRegion(const QString &name, QSize reference, QRect 
 int CombatSession::segmentedGauge(QSize reference, QRect area, ColorRange color, int segments,
                                   int minFrequency, int maxFrequency, double minAmplitude) {
     const auto r = Templates::anchored(area, reference, {context_.frame.cols, context_.frame.rows}, true);
-    if (r.x() < 0 || r.y() < 0 || r.right() >= context_.frame.cols || r.bottom() >= context_.frame.rows)
-        return 0;
-    return segmentedGaugeValue(context_.frame(cv::Rect(r.x(), r.y(), r.width(), r.height())), color, segments,
-                               minFrequency, maxFrequency, minAmplitude);
+    const std::array args{double(r.x()),
+                          double(r.y()),
+                          double(r.right()),
+                          double(r.bottom()),
+                          double(context_.frame.cols),
+                          double(context_.frame.rows)};
+    return int(rustRun(rust::SessionMethod::SegmentedGauge, args,
+                       [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                           switch (op) {
+                           case rust::SessionOp::MeasureSegmentedGauge: {
+                               out[0] = segmentedGaugeValue(
+                                   context_.frame(cv::Rect(r.x(), r.y(), r.width(), r.height())), color,
+                                   segments, minFrequency, maxFrequency, minAmplitude);
+                               break;
+                           }
+                           default:
+                               fail("Rust SegmentedGauge 宿主操作无效");
+                           }
+                       }));
 }
 double CombatSession::concerto(Character &character) {
-    const auto before = concerto_.fullAreas();
-    const double cached = character.state.currentCon;
-    const double percent = concerto_.detect(context_.frame, character.state);
-    character.state.currentCon = cached;
-    if (before != concerto_.fullAreas()) {
-        QJsonObject saved;
-        for (int i = 0; i < 6; ++i)
-            saved[QString::number(i)] = concerto_.fullAreas()[i];
-        writeJson(calibrationPath_, saved);
-    }
-    return percent;
+    std::array<double, 6> before{};
+    double cached = 0;
+    QJsonObject saved;
+    return rustRun(rust::SessionMethod::Concerto, {},
+                   [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                       switch (op) {
+                       case rust::SessionOp::CaptureConcertoState: {
+                           before = concerto_.fullAreas();
+                           cached = character.state.currentCon;
+                           break;
+                       }
+                       case rust::SessionOp::DetectConcerto: {
+                           out[0] = concerto_.detect(context_.frame, character.state);
+                           break;
+                       }
+                       case rust::SessionOp::RestoreConcertoCache: {
+                           character.state.currentCon = cached;
+                           break;
+                       }
+                       case rust::SessionOp::BeforeCalibrationArea: {
+                           out[0] = before.at(size_t(a[0]));
+                           break;
+                       }
+                       case rust::SessionOp::CurrentCalibrationArea: {
+                           out[0] = concerto_.fullAreas().at(size_t(a[0]));
+                           break;
+                       }
+                       case rust::SessionOp::StoreCalibrationArea: {
+                           saved[QString::number(int(a[0]))] = a[1];
+                           break;
+                       }
+                       case rust::SessionOp::WriteCalibration: {
+                           writeJson(calibrationPath_, saved);
+                           break;
+                       }
+                       default:
+                           fail("Rust Concerto 宿主操作无效");
+                       }
+                   });
 }
-bool CombatSession::healthBar() {
-    if (vision_.healthBar(engaged_))
-        return true;
-    if (!inTeam())
-        return false;
-    if (now() - lastHealthCheck_ >= .2) {
-        healthCache_ = vision_.shiftedHealthBar();
-        lastHealthCheck_ = now();
-    }
-    return healthCache_;
-}
+bool CombatSession::healthBar() { return rustRun(rust::SessionMethod::HealthBar) != 0; }
 double CombatSession::concertoAreaRatio(Character &character) {
-    if (character.state.ringIndex < 0)
-        concerto(character);
-    const int index = character.state.ringIndex;
-    if (index < 0 || index >= 6 || concerto_.fullAreas()[index] <= 0)
-        return 0;
-    const auto box = Concerto::region({context_.frame.cols, context_.frame.rows});
-    if (!QRect(0, 0, context_.frame.cols, context_.frame.rows).contains(box))
-        return 0;
-    const auto ring =
-        countRing(context_.frame(cv::Rect(box.x(), box.y(), box.width(), box.height())),
-                  concertoColors()[index], 1500. / 3840 / 2160 * context_.frame.cols * context_.frame.rows);
-    return ring.area / concerto_.fullAreas()[index];
+    QRect box;
+    return rustRun(rust::SessionMethod::ConcertoAreaRatio, {},
+                   [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                       switch (op) {
+                       case rust::SessionOp::CharacterRing: {
+                           out[0] = character.state.ringIndex;
+                           break;
+                       }
+                       case rust::SessionOp::CallCharacterConcerto: {
+                           out[0] = concerto(character);
+                           break;
+                       }
+                       case rust::SessionOp::CurrentCalibrationArea: {
+                           out[0] = concerto_.fullAreas().at(size_t(a[0]));
+                           break;
+                       }
+                       case rust::SessionOp::BuildConcertoRegion: {
+                           box = Concerto::region({context_.frame.cols, context_.frame.rows});
+                           break;
+                       }
+                       case rust::SessionOp::ConcertoRegionInside: {
+                           out[0] = QRect(0, 0, context_.frame.cols, context_.frame.rows).contains(box);
+                           break;
+                       }
+                       case rust::SessionOp::FrameSize: {
+                           out[0] = context_.frame.cols;
+                           out[1] = context_.frame.rows;
+                           break;
+                       }
+                       case rust::SessionOp::CountConcertoRing: {
+                           out[0] = countRing(
+                                        context_.frame(cv::Rect(box.x(), box.y(), box.width(), box.height())),
+                                        concertoColors().at(size_t(a[0])), a[1])
+                                        .area;
+                           break;
+                       }
+                       default:
+                           fail("Rust ConcertoAreaRatio 宿主操作无效");
+                       }
+                   });
 }
-bool CombatSession::visibleTarget() {
-    const auto has = targetName(),
-               no = has == "has_target_169" ? QString("no_target_169") : QString("no_target");
-    auto first = vision_.box(has);
-    const int dx = int(first.width() * .05), dy = int(first.height() * .05);
-    first.adjust(-dx, -dy, dx, dy);
-    for (const auto &box : {first, vision_.box("box_target_enemy_long"), vision_.box("target_box_long2")}) {
-        QString best;
-        double score = .6;
-        for (const auto &name : {has, no})
-            if (auto found = context_.find(name, {.threshold = .6, .search = box});
-                found && found->confidence >= score) {
-                score = found->confidence;
-                best = name;
-            }
-        if (!best.isEmpty())
-            return best == has;
-    }
-    return false;
-}
-bool CombatSession::targetEnemy() {
-    if (engaged_ && inTeam() && healthBar())
-        return true;
-    if (targetLocked())
-        return true;
-    const auto start = now();
-    while (now() - start < targetEnemyTimeout) {
-        click("middle", .2);
-        if (targetLocked())
-            return true;
-        nextFrame();
-    }
-    return false;
-}
-bool CombatSession::targetLocked() {
-    const auto c = current();
-    const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
-    const bool shortTarget = c && (python ? python->usesShortTarget(*c)
-                                         : partyDefinitions_[c->state.index].shortTarget);
-    auto result = vision_.targetObservation(shortTarget, true);
-    if (!result.extended || targetEscCount_ != 0)
-        return result.locked;
-    // Recheck the displaced lock-on indicator before the original bear-Echo
-    // recovery action. Avoid recursively re-entering combat detection in sleep.
-    FlagGuard checking(checking_);
-    sleep(1);
-    result = vision_.targetObservation(shortTarget, true);
-    if (!result.extended)
-        return result.locked;
-    tap("esc", 2);
-    tap("esc", 1.5);
-    targetEscCount_ = 1;
-    return false;
-}
-bool CombatSession::checkBreak() {
-    if (canBreak_)
-        return true;
-    if (context_.find("f_break_full", {.threshold = .92}))
-        return canBreak_ = true;
-    if (!inLiberation && now() - lastBreakCheck_ > 1) {
-        lastBreakCheck_ = now();
-        if (context_.find("f_break", {.search = gameBox(context_.frame, .2, .2, .75, .8, true, true),
-                                      .targetHeight = 720})) {
-            if (!isDialogInteract(context_))
-                return canBreak_ = true;
-        }
-    }
-    return false;
-}
-bool CombatSession::macroBreakPrompt() {
-    if (visibleBreakPrompt())
-        canBreak_ = true;
-    return canBreak_;
-}
+bool CombatSession::visibleTarget() { return vision_.hasTarget(false, false); }
+bool CombatSession::targetEnemy() { return rustRun(rust::SessionMethod::TargetEnemy) != 0; }
+bool CombatSession::targetLocked() { return rustRun(rust::SessionMethod::TargetLocked) != 0; }
+bool CombatSession::checkBreak() { return rustRun(rust::SessionMethod::CheckBreak) != 0; }
+bool CombatSession::macroBreakPrompt() { return rustRun(rust::SessionMethod::MacroBreakPrompt) != 0; }
 bool CombatSession::visibleBreakPrompt(double threshold) {
-    const auto area = Templates::anchored(QRect(384, 216, 1056, 648), {1920, 1080},
-                                          {context_.frame.cols, context_.frame.rows}, true, true);
-    return bool(context_.find("f_break", {.threshold = threshold, .search = area, .targetHeight = 720})) &&
-           !isDialogInteract(context_);
+    const std::array args{threshold};
+    return rustRun(rust::SessionMethod::VisibleBreakPrompt, args) != 0;
 }
 bool CombatSession::breakF(bool force) {
-    if (force)
-        tap("f", .05);
-    if (!canBreak_ && !checkBreak())
-        return false;
-    const auto start = now();
-    while (now() - start < .5 || (now() - start < 5 && (canBreak_ || checkBreak()))) {
-        tap("f", .1);
-        click();
-        sleep(.1);
-        canBreak_ = false;
-    }
-    return true;
+    const std::array args{double(force)};
+    return rustRun(rust::SessionMethod::BreakF, args) != 0;
 }
-bool CombatSession::combatActive() {
-    if (inLiberation)
-        return true;
-    if (engaged_) {
-        if (checkedVersion_ == context_.frameVersion)
-            return true;
-        checkBreak();
-        auto c = current();
-        const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
-        if (c && (python ? python->skipsCombatCheck(*c) : c->skipCombatCheck()))
-            return true;
-        if (onCombatCheck && !onCombatCheck()) {
-            resetCombat();
-            return false;
-        }
-        if (targetLocked()) {
-            checkedVersion_ = context_.frameVersion;
-            return true;
-        }
-        if (combatEndCondition && combatEndCondition()) {
-            resetCombat();
-            return false;
-        }
-        if (targetEnemy()) {
-            checkedVersion_ = context_.frameVersion;
-            return true;
-        }
-        if (context_.monthlyCard())
-            return true;
-        resetCombat();
-        return false;
-    }
-    if (!loadParty())
-        return false;
-    const bool target = targetLocked();
-    const bool autoTarget =
-        !isAutoCombatTask() || context_.profile.value("AutoCombatTask", "Auto Target", true).toBool();
-    const bool boss = bool(context_.findAny({"boss_break_shield", "boss_break_lock"}));
-    if (!target && !(autoTarget && (healthBar() || boss)))
-        return false;
-    if (!target && !targetEnemy())
-        return false;
-    hasLevitator = bool(context_.find("edge_levitator", {.threshold = .65}));
-    engaged_ = true;
-    context_.state->inCombat = true;
-    return true;
-}
-void CombatSession::checkCombat() {
-    context_.execution.checkpoint();
-    watchdog();
-    if (skipCombatCheck || checking_ || !engaged_)
-        return;
-    FlagGuard guard(checking_);
-    if (!combatActive())
-        throw CombatEnded("目标消失，战斗结束");
-}
-void CombatSession::resetCombat() {
-    context_.state->inCombat = false;
-    targetEscCount_ = 0;
-    engaged_ = inLiberation = hasLevitator = canBreak_ = false;
-    checkedVersion_ = UINT64_MAX;
-    vision_.reset();
-    lastHealthCheck_ = -1;
-    healthCache_ = false;
-}
-void CombatSession::updatePortraits() {
-    const QStringList names{"lib_ready_spectro", "lib_ready_electric", "lib_ready_fire",
-                            "lib_ready_ice",     "lib_ready_wind",     "lib_ready_havoc"};
-    for (auto &c : party_)
-        if (!c->state.current && c->state.ringIndex >= 0 && !c->state.liberationReady) {
-            auto area = vision_.box(QString("lib_mark_char_%1").arg(c->state.index + 1));
-            if (context_.find(names[c->state.ringIndex], {.search = area}))
-                c->state.liberationReady = true;
-        }
-}
+bool CombatSession::combatActive() { return rustRun(rust::SessionMethod::CombatActive) != 0; }
+void CombatSession::checkCombat() { rustRun(rust::SessionMethod::CheckCombat); }
+void CombatSession::resetCombat() { rustRun(rust::SessionMethod::ResetCombat); }
+void CombatSession::updatePortraits() { rustRun(rust::SessionMethod::UpdatePortraits); }
 void CombatSession::switchNext(Character &previous, bool freeIntro, bool targetLowCon,
                                const SwitchAction &post) {
-    updatePortraits();
-    bool intro = freeIntro;
-    if (!intro) {
-        double con = previous.currentCon();
-        if (con > .8 && con != 1) {
-            sleep(.05);
-            nextFrame();
-            con = previous.currentCon();
-        }
-        intro = con == 1;
-    }
-    auto choose = [&]() -> Character * {
-        std::vector<SwitchCandidate> candidates;
-        for (auto &c : party_) {
-            const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
-            const auto overridden = python ? python->priority(*c, intro, targetLowCon)
-                : macro_ ? macro_->priority(*c, intro) : std::optional<int>{};
-            candidates.push_back(
-                {&c->state, overridden ? *overridden : c->switchPriority(&previous, intro, targetLowCon)});
-        }
-        auto decision = chooseSwitch(previous.state, candidates, intro, freezes, now());
-        log(QString("%1 → %2：%3")
-                .arg(previous.state.index + 1)
-                .arg(decision.index + 1)
-                .arg(decision.reason));
-        return decision.index == previous.state.index ? nullptr : party_[size_t(decision.index)].get();
-    };
-    auto target = choose();
-    if (!target) {
-        previous.normalAttacks(.2);
-        return;
-    }
-    applyIntro(previous.state, target->state, intro);
-    const auto start = now();
-    double lastClick = 0;
-    while (now() - start <= 10) {
-        if (!target->skipSwitchCombatCheck(intro))
-            checkCombat();
-        else
-            watchdog();
-        auto hud = vision_.party();
-        if (hud.current == previous.state.index) {
-            updatePortraits();
-            const bool refreshed = intro || previous.isConFull();
-            if (refreshed != intro) {
-                intro = refreshed;
-                target = choose();
-                if (!target) {
-                    previous.normalAttacks(.2);
-                    return;
+    Character *target = nullptr;
+    std::vector<SwitchCandidate> candidates;
+    SwitchDecision decision{};
+    const std::array args{double(freeIntro), double(targetLowCon)};
+    rustRun(rust::SessionMethod::SwitchNext, args,
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+                switch (op) {
+                case rust::SessionOp::PreviousCon: {
+                    out[0] = previous.currentCon();
+                    break;
                 }
-            }
-            applyIntro(previous.state, target->state, intro);
-            if (intro && previous.checkFOnSwitch)
-                breakF();
-        }
-        if (target->waitSwitch()) {
-            click();
-            sleep(.1);
-            continue;
-        }
-        if (now() - lastClick > .1) {
-            lastClick = now();
-            tap(QString::number(target->state.index + 1));
-            sleep(.001);
-            click();
-            sleep(.001);
-        }
-        hud = vision_.party();
-        if (!hud.visible) {
-            watchdog();
-            throw CombatInterrupted("切换角色时队伍界面消失");
-        }
-        if (hud.current == target->state.index) {
-            inLiberation = false;
-            if (!intro && previous.checkFOnSwitch)
-                breakF();
-            previous.switchOut(intro);
-            target->state.current = true;
-            target->state.lastSwitchIn = now();
-            if (intro) {
-                freezes.add(now(), now(), target->introDuration(), -100);
-                previous.state.lastOutro = now();
-            }
-            if (post)
-                post(*target, intro);
-            publishParty();
-            return;
-        }
-        nextFrame();
-    }
-    throw CombatInterrupted("角色切换超时");
+                case rust::SessionOp::ClearCandidates: {
+                    std::vector<SwitchCandidate>{}.swap(candidates);
+                    break;
+                }
+                case rust::SessionOp::PythonPriority: {
+                    const auto value = dynamic_cast<PythonTeamMacro *>(macro_.get())
+                                           ->priority(*party_.at(size_t(a[0])), a[1] != 0, a[2] != 0);
+                    out[0] = value.has_value();
+                    out[1] = value.value_or(0);
+                    break;
+                }
+                case rust::SessionOp::NativeMacroPriority: {
+                    const auto value = macro_->priority(*party_.at(size_t(a[0])), a[1] != 0);
+                    out[0] = value.has_value();
+                    out[1] = value.value_or(0);
+                    break;
+                }
+                case rust::SessionOp::BuiltinPriority: {
+                    out[0] = party_.at(size_t(a[0]))->switchPriority(&previous, a[1] != 0, a[2] != 0);
+                    break;
+                }
+                case rust::SessionOp::AppendCandidate: {
+                    candidates.push_back({&party_.at(size_t(a[0]))->state, int(a[1])});
+                    break;
+                }
+                case rust::SessionOp::ChooseDecision: {
+                    decision = chooseSwitch(previous.state, candidates, a[0] != 0, freezes, now());
+                    out[0] = decision.index;
+                    break;
+                }
+                case rust::SessionOp::LogSwitch: {
+                    log(QString("%1 → %2：%3")
+                            .arg(previous.state.index + 1)
+                            .arg(decision.index + 1)
+                            .arg(decision.reason));
+                    break;
+                }
+                case rust::SessionOp::DecisionMatchesPrevious: {
+                    out[0] = decision.index == previous.state.index;
+                    break;
+                }
+                case rust::SessionOp::DisposeCandidates: {
+                    std::vector<SwitchCandidate>{}.swap(candidates);
+                    break;
+                }
+                case rust::SessionOp::ClearTarget: {
+                    target = nullptr;
+                    break;
+                }
+                case rust::SessionOp::SetTarget: {
+                    target = party_.at(size_t(a[0])).get();
+                    break;
+                }
+                case rust::SessionOp::PreviousNormalAttack: {
+                    previous.normalAttacks(a[0]);
+                    break;
+                }
+                case rust::SessionOp::ApplyIntro: {
+                    applyIntro(previous.state, target->state, a[0] != 0);
+                    break;
+                }
+                case rust::SessionOp::TargetSkipCheck: {
+                    out[0] = target->skipSwitchCombatCheck(a[0] != 0);
+                    break;
+                }
+                case rust::SessionOp::PreviousIndex: {
+                    out[0] = previous.state.index;
+                    break;
+                }
+                case rust::SessionOp::PreviousConFull: {
+                    out[0] = previous.isConFull();
+                    break;
+                }
+                case rust::SessionOp::PreviousCheckF: {
+                    out[0] = previous.checkFOnSwitch;
+                    break;
+                }
+                case rust::SessionOp::TargetWaitSwitch: {
+                    out[0] = target->waitSwitch();
+                    break;
+                }
+                case rust::SessionOp::TapTargetIndex: {
+                    tap(QString::number(target->state.index + 1));
+                    break;
+                }
+                case rust::SessionOp::TargetIndex: {
+                    out[0] = target->state.index;
+                    break;
+                }
+                case rust::SessionOp::PreviousSwitchOut: {
+                    previous.switchOut(a[0] != 0);
+                    break;
+                }
+                case rust::SessionOp::SetTargetCurrent: {
+                    target->state.current = true;
+                    break;
+                }
+                case rust::SessionOp::SetTargetSwitchIn: {
+                    target->state.lastSwitchIn = a[0];
+                    break;
+                }
+                case rust::SessionOp::FreezeSwitchIntro: {
+                    freezes.add(now(), now(), target->introDuration(), -100);
+                    break;
+                }
+                case rust::SessionOp::SetPreviousOutro: {
+                    previous.state.lastOutro = a[0];
+                    break;
+                }
+                case rust::SessionOp::HasSwitchPost: {
+                    out[0] = bool(post);
+                    break;
+                }
+                case rust::SessionOp::RunSwitchPost: {
+                    post(*target, a[0] != 0);
+                    break;
+                }
+                default:
+                    fail("Rust 角色切换宿主操作无效");
+                }
+            });
 }
-void CombatSession::switchHealer() {
-    if (!vision_.party().visible)
-        return;
-    const auto group = context_.task == "FarmEchoTask" || context_.task == "FarmEchoTask2"
-                           ? context_.task
-                           : QString("AutoCombatTask");
-    const auto enabled =
-        group == context_.task
-            ? context_.setting("Switch to Healer before and after Combat", true)
-            : context_.profile.value(group, "Switch to Healer before and after Combat", true);
-    if (!enabled.toBool())
-        return;
-    const auto isHealer = [&](const Character &member) {
-        const auto python = dynamic_cast<PythonTeamMacro *>(macro_.get());
-        return python ? python->isHealer(member) : member.state.role == Role::Healer;
-    };
-    auto c = current();
-    if (!c || isHealer(*c))
-        return;
-    Character *healer = nullptr;
-    for (auto &member : party_)
-        if (isHealer(*member)) {
-            healer = member.get();
+void CombatSession::switchHealer() { rustRun(rust::SessionMethod::SwitchHealer); }
+void CombatSession::performCurrent() { rustRun(rust::SessionMethod::PerformCurrent); }
+bool CombatSession::runAutoCombat() { return rustRun(rust::SessionMethod::RunAutoCombat) != 0; }
+bool CombatSession::active() { return rustRun(rust::SessionMethod::Active) != 0; }
+void CombatSession::rustRecover(rust::SessionMethod method, bool realmEntryAtHealPoint,
+                                const std::function<void()> &custom) {
+    std::optional<Navigation> navigation;
+    const std::array args{double(realmEntryAtHealPoint)};
+    rustRun(method, args, [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &) {
+        switch (op) {
+        case rust::SessionOp::CreateNavigation:
+            navigation.emplace(context_);
             break;
+        case rust::SessionOp::InRealm:
+            out[0] = navigation->inRealm();
+            break;
+        case rust::SessionOp::ExitRealm:
+            navigation->exitRealm(a[0]);
+            break;
+        case rust::SessionOp::HealAtBeacon:
+            navigation->healAtBeacon();
+            break;
+        case rust::SessionOp::HasRecovery:
+            out[0] = bool(custom);
+            break;
+        case rust::SessionOp::CustomRecovery:
+            custom();
+            break;
+        default:
+            fail("Rust 战斗恢复宿主操作无效");
         }
-    if (!healer)
-        return;
-    FlagGuard skip(skipCombatCheck);
-    const auto start = now();
-    while (now() - start < 6) {
-        auto hud = vision_.party();
-        if (hud.visible && hud.current != c->state.index) {
-            for (auto &member : party_)
-                member->state.current = member->state.index == hud.current;
-            return;
-        }
-        tap(QString::number(healer->state.index + 1));
-        sleep(.2);
-    }
-}
-void CombatSession::performCurrent() {
-    // A cancelled switch may leave a different character on field. Trust the
-    // visible full party HUD before beginning another segment.
-    const auto hud = vision_.party();
-    if (hud.visible && hud.size == int(party_.size()) && hud.current >= 0 && hud.current < hud.size)
-        for (auto &member : party_)
-            member->state.current = member->state.index == hud.current;
-    auto actor = current();
-    if (!actor)
-        throw CombatInterrupted("当前角色无法确认");
-    actor->state.lastPerform = now();
-    if (!macro_ || !macro_->perform(*actor))
-        actor->perform();
-    publishParty();
-}
-bool CombatSession::runAutoCombat() {
-    if (!inTeam())
-        return false;
-    const bool earth = bool(context_.find("world_earth_icon", {.threshold = .55, .filter = Filter::White}));
-    const bool exit = bool(context_.find("illusive_realm_exit", {.threshold = .7, .filter = Filter::White}));
-    const bool world = earth && !exit, realm = exit && !earth;
-    openWorld_ = !realm;
-    useLiberation = context_.profile.value("AutoCombatTask", "Use Liberation", true).toBool() || !world;
-    bool ran = false, switched = false;
-    try {
-        while (combatActive()) {
-            ran = true;
-            if (!switched) {
-                switchHealer();
-                switched = true;
-            }
-            performCurrent();
-            nextFrame();
-        }
-    } catch (const CharacterDead &) {
-        context_.input.release();
-        resetCombat();
-        throw;
-    } catch (const CombatInterrupted &e) {
-        // A stale/hidden HUD or interrupted switch is not a combat-end event.
-        // Do not call author cleanup or inject a healer switch into a live fight.
-        context_.input.release();
-        resetCombat();
-        log(errorText(e));
-        return ran;
-    } catch (const CombatEnded &e) {
-        log(errorText(e));
-    } catch (...) {
-        context_.input.release();
-        resetCombat();
-        throw;
-    }
-    context_.input.release();
-    try {
-        if (ran) {
-            // Turning Auto Combat off must not execute any final skill/click.
-            if (context_.profile.value("AutoCombatTask", "_enabled", true).toBool()) {
-                if (macro_)
-                    macro_->combatEnd();
-                if (!macro_ || !selectedTeam_.startsWith("python:"))
-                    if (auto c = current()) c->combatEnd();
-            }
-            for (auto &c : party_)
-                c->resetState();
-            if (context_.profile.value("AutoCombatTask", "_enabled", true).toBool())
-                switchHealer();
-        }
-    } catch (...) {
-        context_.input.release();
-        resetCombat();
-        throw;
-    }
-    resetCombat();
-    return ran;
-}
-bool CombatSession::active() {
-    watchdog();
-    return combatActive();
+    });
 }
 void CombatSession::recoverStartingPopup(bool realmEntryAtHealPoint) {
-    if (!vision_.deathDialog())
-        return;
-    resetCombat();
-    closeRevivalDialog();
-    Navigation navigation(context_);
-    const bool realm = navigation.inRealm();
-    if (realm)
-        navigation.exitRealm(120);
-    if (!realm || !realmEntryAtHealPoint)
-        navigation.healAtBeacon();
-    log("遗留复苏弹窗已关闭并免费回血");
+    rustRecover(rust::SessionMethod::RecoverStartingPopup, realmEntryAtHealPoint);
 }
 bool CombatSession::combatOnce(const CombatOptions &options) {
-    if (!std::isfinite(options.waitSeconds) || options.waitSeconds < 0 ||
-        !std::isfinite(options.maximumSeconds) || options.maximumSeconds <= 0 ||
-        options.maximumSeconds > 7200)
-        fail("战斗等待参数无效");
-    FlagGuard scope(combatScope_);
-    FlagGuard skip(skipCombatCheck, false);
-    openWorld_ = false;
-    useLiberation = options.useLiberation;
-    lastDeathCheck_ = -1;
-    const auto recover = [&]() {
-        context_.input.release();
-        resetCombat();
-        combatDeadline_ = 0;
-        closeRevivalDialog();
-        if (options.recover)
-            options.recover();
-        else {
-            Navigation navigation(context_);
-            const bool realm = navigation.inRealm();
-            if (realm)
-                navigation.exitRealm(120);
-            if (!realm || !options.realmEntryAtHealPoint)
-                navigation.healAtBeacon();
-        }
-        resetCombat();
-        log("角色已恢复，本轮重新进入后再执行");
-        throw CharacterRevived();
-    };
-    bool found = false;
-    try {
-        if (vision_.deathDialog())
-            throw CharacterDead();
-        const auto until = now() + options.waitSeconds;
-        do {
-            watchdog();
-            if (combatActive()) {
-                found = true;
-                break;
-            }
-            if (options.target)
-                click("middle", .5);
-            context_.sleep(.02);
-        } while (now() < until);
-        if (!found) {
-            if (options.required)
-                throw NavigationFailure("等待进入战斗超时，未记录为完成");
-            resetCombat();
-            return false;
-        }
-        combatDeadline_ = now() + options.maximumSeconds;
-        ++combatCount_;
-        if (context_.info)
-            context_.info("战斗次数", QString::number(combatCount_));
-        switchHealer();
-        int interruptions = 0;
-        const int retryLimit =
-            context_.profile.value("Task Recovery", "Resume Interrupted Tasks", true).toBool()
-                ? std::clamp(context_.profile.value("Task Recovery", "Recovery Retry Limit", 3).toInt(), 1,
-                             10)
-                : 0;
-        for (;;) {
-            try {
-                while (combatActive()) {
-                    watchdog();
-                    performCurrent();
-                    nextFrame();
-                }
-                break;
-            } catch (const CharacterDead &) {
-                throw;
-            } catch (const CombatInterrupted &error) {
-                context_.input.release();
-                inLiberation = false;
-                log(errorText(error));
-                if (++interruptions > retryLimit)
-                    throw NavigationFailure("本轮连招中断次数达到上限，未记录为完成：" + errorText(error));
-                if (!context_.wait([&] { return inTeam() || vision_.deathDialog(); }, 5))
-                    throw NavigationFailure("连招中断后未恢复队伍界面，未记录为完成");
-                watchdog();
-                if (vision_.deathDialog())
-                    throw CharacterDead();
-                log(QString("继续当前战斗 %1/%2").arg(interruptions).arg(retryLimit));
-            } catch (const CombatEnded &error) {
-                log(errorText(error));
-                break;
-            }
-        }
-        if (vision_.deathDialog())
-            throw CharacterDead();
-        context_.input.release();
-        if (macro_)
-            macro_->combatEnd();
-        if (!macro_ || !selectedTeam_.startsWith("python:"))
-            if (auto actor = current()) actor->combatEnd();
-        for (auto &actor : party_)
-            actor->resetState();
-        switchHealer();
-        if (vision_.deathDialog())
-            throw CharacterDead();
-        combatDeadline_ = 0;
-        resetCombat();
-        Navigation(context_).waitTeam(10, false);
-        return true;
-    } catch (const Cancelled &) {
-        context_.input.release();
-        combatDeadline_ = 0;
-        resetCombat();
-        throw;
-    } catch (const CharacterDead &) {
-        recover();
-    } catch (...) {
-        context_.input.release();
-        combatDeadline_ = 0;
-        resetCombat();
-        if (vision_.deathDialog())
-            recover();
-        throw;
-    }
-    return false;
+    const std::array args{options.waitSeconds,           double(options.required),
+                          double(options.target),        double(options.realmEntryAtHealPoint),
+                          double(options.useLiberation), options.maximumSeconds};
+    return rustRun(rust::SessionMethod::CombatOnce, args,
+                   [&](rust::SessionOp op, const double *, double *, const std::exception_ptr &) {
+                       if (op == rust::SessionOp::RecoverDead)
+                           rustRecover(rust::SessionMethod::RecoverDead, options.realmEntryAtHealPoint,
+                                       options.recover);
+                       else
+                           fail("Rust 单次战斗宿主操作无效");
+                   }) != 0;
 }
-bool CombatSession::closeRevivalDialog() {
-    if (!vision_.deathDialog())
-        return false;
-    context_.input.release();
-    FlagGuard guard(checkingDialog_);
-    FlagGuard skip(skipCombatCheck);
-    context_.key("esc", .5);
-    if (context_.wait([&] { return !vision_.deathDialog(); }, 2))
-        return true;
-    context_.clickRelative(.803, .196, .5);
-    if (!context_.wait([&] { return !vision_.deathDialog(); }, 2))
-        fail("复苏弹窗未关闭，避免误用道具，停止本次恢复");
-    return true;
-}
+bool CombatSession::closeRevivalDialog() { return rustRun(rust::SessionMethod::CloseRevivalDialog) != 0; }
 } // namespace okww::runtime

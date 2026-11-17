@@ -928,13 +928,19 @@ class BaseWWTask(BaseTask):
         return current_direction, current_adjust, False
 
     def in_team(self):
-        c1 = self.find_one('char_1_text',
-                           threshold=0.8)
-        c2 = self.find_one('char_2_text',
-                           threshold=0.8)
-        c3 = self.find_one('char_3_text',
-                           threshold=0.8)
-        arr = [c1, c2, c3]
+        arr = []
+        for name in ('char_1_text', 'char_2_text', 'char_3_text'):
+            found = self.find_one(name, threshold=0.8, horizontal_variance=.006, vertical_variance=.012)
+            if found is None:
+                feature = self.get_feature_by_name(name)
+                box = self.get_box_by_name(name)
+                if feature is not None and box is not None:
+                    dx, dy = round(self.width_of_screen(.006)), round(self.height_of_screen(.012))
+                    region = Box(box.x-dx, box.y-dy, box.width+2*dx, box.height+2*dy)
+                    template = cv2.GaussianBlur(feature.mat, (0, 0), .9, borderType=cv2.BORDER_CONSTANT)
+                    found = self.find_one(name, threshold=.84, box=region, template=template,
+                                          use_gray_scale=True, frame_processor=soften_remote_hud)
+            arr.append(found)
         # logger.debug(f'in_team check {arr}')
         current = -1
         exist_count = 0
@@ -1279,6 +1285,10 @@ lower_white = np.array([244, 244, 244], dtype=np.uint8)
 lower_white_none_inclusive = np.array([240, 240, 240], dtype=np.uint8)
 upper_white = np.array([255, 255, 255], dtype=np.uint8)
 black = np.array([0, 0, 0], dtype=np.uint8)
+
+
+def soften_remote_hud(image):
+    return cv2.GaussianBlur(image, (0, 0), .9)
 
 
 def isolate_white_text_to_black(cv_image):

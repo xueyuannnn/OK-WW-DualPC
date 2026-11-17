@@ -9,6 +9,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
 from native_io import decode_frame
 
 
+@pytest.mark.parametrize('enabled', [True, False])
+def test_retired_game_region_setting_is_ignored_and_removed_on_save(tmp_path, enabled):
+    import json
+    from dualpc.settings import Settings
+
+    settings = Settings()
+    settings.capture.source = 'desktop'
+    settings.kmbox.protocol = 'sendinput'
+    path = tmp_path / 'dualpc.json'
+    settings.save(path)
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    saved['capture']['auto_game_region'] = enabled
+    path.write_text(json.dumps(saved), encoding='utf-8')
+    loaded = Settings.load(path)
+    assert loaded.capture.source == 'desktop'
+    assert not hasattr(loaded.capture, 'auto_game_region')
+    loaded.save(path)
+    assert 'auto_game_region' not in json.loads(path.read_text(encoding='utf-8'))['capture']
+    assert Settings.load(path) == loaded
+
+
 @pytest.mark.parametrize('protocol,absolute', [('kmbox_net', False), ('sendinput', True)])
 def test_workshop_controller_uses_the_host_input_capabilities(monkeypatch, protocol, absolute):
     import dualpc.capture

@@ -35,6 +35,19 @@ class TeamMacro {
     int untrustedConfirm_ = 3;
     double animationTimeout_ = 8, animationTail_ = .15, noAnimationGrace_ = .35;
     double conTimeout_ = 2, conInterval_ = .05, resendStep_ = .06, skillSettle_ = .4;
+    struct RustRequest {
+        Character *actor = nullptr, *previous = nullptr;
+        QString text;
+        const MacroSwitch *switching = nullptr;
+        const MacroKeySpam *spam = nullptr;
+        const std::function<void()> *sender = nullptr, *body = nullptr;
+        const std::function<bool()> *sample = nullptr, *available = nullptr;
+    };
+    struct RustResult {
+        double number = 0;
+        Character *actor = nullptr;
+    };
+    RustResult rustMacro(int method, std::initializer_list<double> args, RustRequest request);
     void wait(double seconds);
     void click();
     void key(QString key, double hold = .01);
@@ -71,10 +84,7 @@ class TeamMacro {
     virtual bool perform(Character &entry) = 0;
     virtual void configure() {}
     virtual std::optional<int> priority(const Character &, bool) { return {}; }
-    virtual void reset() { armed_ = true; }
-    virtual void combatEnd() {
-        release();
-        poking_ = false;
-    }
+    virtual void reset();
+    virtual void combatEnd();
 };
 } // namespace okww::runtime

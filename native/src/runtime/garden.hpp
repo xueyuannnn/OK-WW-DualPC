@@ -44,6 +44,7 @@ class Garden {
     std::optional<Match> bestFeature();
     bool active();
     void loop();
+    void runLoop();
     void openWeekly();
     [[noreturn]] void weeklyFailure(const QString &reason);
     std::optional<int> money();

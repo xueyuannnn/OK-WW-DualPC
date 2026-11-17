@@ -1,66 +1,124 @@
 #include "task_registry.hpp"
 #include "multi_account.hpp"
+#include "task_registry_abi.hpp"
+#include "workflow_abi.hpp"
 namespace okww::runtime {
 QVector<TaskDefinition> businessTasks(const std::function<bool(const QString &)> &dispatch) {
+    const QStringList names{"AutoCombatTask",  "RemoteMouseResetTask", "DailyTask",         "DailyTask2",
+                            "FarmEchoTask",    "FarmEchoTask2",        "NightmareNestTask", "TacetTask",
+                            "TacetTask2",      "ForgeryTask",          "ForgeryTask2",      "SimulationTask",
+                            "SimulationTask2", "MergeEchoTask",        "EnhanceEchoTask",   "ChangeEchoTask",
+                            "GardenTask",      "MultiAccountDailyTask"};
+    QString current;
     QVector<TaskDefinition> result;
-    for (const auto *name : {"AutoCombatTask", "RemoteMouseResetTask", "DailyTask", "DailyTask2",
-                             "FarmEchoTask", "FarmEchoTask2", "NightmareNestTask", "TacetTask", "TacetTask2",
-                             "ForgeryTask", "ForgeryTask2", "SimulationTask", "SimulationTask2",
-                             "MergeEchoTask", "EnhanceEchoTask", "ChangeEchoTask", "GardenTask", "MultiAccountDailyTask"}) {
-        const QString id(name);
-        result.append({id, id == "AutoCombatTask" || id == "RemoteMouseResetTask", .1,
-                       [dispatch, id](TaskContext &) { return dispatch(id); }});
-    }
+    rust::workflowRun(
+        rust::WorkflowMethod::BusinessTasks, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::BuiltinTaskCount:
+                out[0] = double(names.size());
+                break;
+            case rust::WorkflowOp::LoadBuiltinTask:
+                current = names.at(int(a[0]));
+                out[0] = businessTaskKind(current);
+                break;
+            case rust::WorkflowOp::AppendBuiltinTask: {
+                const auto id = current;
+                result.append({id, bool(a[0]), a[1], [dispatch, id](TaskContext &) { return dispatch(id); }});
+                break;
+            }
+            default:
+                fail("Rust 内置任务目录宿主无效");
+            }
+        });
     return result;
 }
 bool TaskRunner::dispatch(const QString &id) {
-    if (id == "RemoteMouseResetTask")
-        // Deliberately matches dualpc.task_hooks.RemoteMouseResetTask: local
-        // cursor polling is disabled; every remote coordinate click is homed
-        // by Input::move according to the selected box's settings.
-        return false;
-    if (id == "AutoCombatTask") {
-        try {
-            return combat_.runAutoCombat();
-        } catch (const CharacterDead &) {
-            const auto enabled = c_.profile.value("Task Recovery", "Resume Interrupted Tasks", true).toBool();
-            const int limit =
-                std::clamp(c_.profile.value("Task Recovery", "Recovery Retry Limit", 3).toInt(), 1, 10);
-            if (c_.execution.now() - recoveredAt_ > 300)
-                deathRecoveries_ = 0;
-            if (!enabled || ++deathRecoveries_ > limit)
-                throw;
-            combat_.recoverStartingPopup();
-            recoveredAt_ = c_.execution.now();
-            if (c_.info)
+    const std::array args{double(businessTaskKind(id))};
+    const auto result = rust::workflowRun(
+        rust::WorkflowMethod::DispatchBusinessTask, args,
+        [&](rust::WorkflowOp op, const double *a, double *out, const std::exception_ptr &error) {
+            switch (op) {
+            case rust::WorkflowOp::RunAutomaticCombat:
+                out[0] = combat_.runAutoCombat();
+                break;
+            case rust::WorkflowOp::TaskErrorCharacterDead:
+                try {
+                    if (error)
+                        std::rethrow_exception(error);
+                    out[0] = false;
+                } catch (const CharacterDead &) {
+                    out[0] = true;
+                } catch (...) {
+                    out[0] = false;
+                }
+                break;
+            case rust::WorkflowOp::TaskDeathRecoveryEnabled:
+                out[0] = c_.profile.value("Task Recovery", "Resume Interrupted Tasks", true).toBool();
+                break;
+            case rust::WorkflowOp::TaskDeathRecoveryLimit:
+                out[0] = c_.profile.value("Task Recovery", "Recovery Retry Limit", 3).toInt();
+                break;
+            case rust::WorkflowOp::Now:
+                out[0] = c_.execution.now();
+                break;
+            case rust::WorkflowOp::TaskLastDeathRecovery:
+                out[0] = recoveredAt_;
+                break;
+            case rust::WorkflowOp::TaskSetDeathRecoveries:
+                deathRecoveries_ = int(a[0]);
+                break;
+            case rust::WorkflowOp::TaskDeathRecoveryCount:
+                out[0] = deathRecoveries_;
+                break;
+            case rust::WorkflowOp::TaskRecoverStartingPopup:
+                combat_.recoverStartingPopup();
+                break;
+            case rust::WorkflowOp::TaskStoreRecoveryTime:
+                recoveredAt_ = a[0];
+                break;
+            case rust::WorkflowOp::TaskHasInfo:
+                out[0] = bool(c_.info);
+                break;
+            case rust::WorkflowOp::TaskReportCombatRecovery:
                 c_.info("自动战斗恢复", "已免费回血，继续等待进入战斗");
-            return true;
-        }
-    }
-    if (id == "MultiAccountDailyTask")
-        MultiAccountDaily(c_).run([&] { Daily(c_, combat_, detector_, root_, data_).run(); });
-    else if (id == "DailyTask" || id == "DailyTask2")
-        Daily(c_, combat_, detector_, root_, data_).run(id.endsWith('2'));
-    else if (id == "FarmEchoTask" || id == "FarmEchoTask2")
-        EchoFarm(c_, combat_, detector_).run(id.endsWith('2'));
-    else if (id == "NightmareNestTask")
-        NightmareFarm(c_, combat_, detector_).run();
-    else if (id.startsWith("TacetTask"))
-        DomainFarm(c_, combat_).run(DomainKind::Tacet, id.endsWith('2'));
-    else if (id.startsWith("ForgeryTask"))
-        DomainFarm(c_, combat_).run(DomainKind::Forgery, id.endsWith('2'));
-    else if (id.startsWith("SimulationTask"))
-        DomainFarm(c_, combat_).run(DomainKind::Simulation, id.endsWith('2'));
-    else if (id == "GardenTask")
-        Garden(c_, root_).run();
-    else if (id == "MergeEchoTask")
-        EchoOperations(c_, data_ + "/screenshots").merge();
-    else if (id == "EnhanceEchoTask")
-        EchoOperations(c_, data_ + "/screenshots").enhance();
-    else if (id == "ChangeEchoTask")
-        EchoOperations(c_, data_ + "/screenshots").change();
-    else
-        fail("未注册原生业务任务：" + id);
-    return true;
+                break;
+            case rust::WorkflowOp::TaskEnhancedSuffix:
+                out[0] = id.endsWith('2');
+                break;
+            case rust::WorkflowOp::DispatchMultiAccountDaily:
+                MultiAccountDaily(c_).run([&] { Daily(c_, combat_, detector_, root_, data_).run(); });
+                break;
+            case rust::WorkflowOp::DispatchDaily:
+                Daily(c_, combat_, detector_, root_, data_).run(bool(a[0]));
+                break;
+            case rust::WorkflowOp::DispatchEchoFarm:
+                EchoFarm(c_, combat_, detector_).run(bool(a[0]));
+                break;
+            case rust::WorkflowOp::DispatchNightmare:
+                NightmareFarm(c_, combat_, detector_).run();
+                break;
+            case rust::WorkflowOp::DispatchDomain:
+                DomainFarm(c_, combat_).run(DomainKind(int(a[0])), bool(a[1]));
+                break;
+            case rust::WorkflowOp::DispatchGarden:
+                Garden(c_, root_).run();
+                break;
+            case rust::WorkflowOp::DispatchMergeEcho:
+                EchoOperations(c_, data_ + "/screenshots").merge();
+                break;
+            case rust::WorkflowOp::DispatchEnhanceEcho:
+                EchoOperations(c_, data_ + "/screenshots").enhance();
+                break;
+            case rust::WorkflowOp::DispatchChangeEcho:
+                EchoOperations(c_, data_ + "/screenshots").change();
+                break;
+            case rust::WorkflowOp::UnknownBusinessTask:
+                fail("未注册原生业务任务：" + id);
+                break;
+            default:
+                fail("Rust 任务分派宿主无效");
+            }
+        });
+    return result[0] != 0;
 }
 } // namespace okww::runtime

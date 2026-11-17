@@ -1,22 +1,30 @@
 #pragma once
 #include "vision.hpp"
+#include "rust_core.hpp"
 #include <array>
 #include <span>
 
 namespace okww::runtime {
 // These rules are shared by native characters and task combat. Times are from
 // Execution's monotonic clock; never mix persisted wall-clock timestamps here.
-struct Freeze {
-    double start, duration, threshold;
-};
+using Freeze = rust::Freeze;
 class FreezeTimeline {
-    QVector<Freeze> freezes_;
+    rust::Timeline *state_;
+    mutable QVector<Freeze> cache_;
+    mutable bool dirty_ = true;
 
   public:
+    FreezeTimeline();
+    ~FreezeTimeline();
+    FreezeTimeline(const FreezeTimeline &);
+    FreezeTimeline &operator=(const FreezeTimeline &);
+    FreezeTimeline(FreezeTimeline &&) noexcept;
+    FreezeTimeline &operator=(FreezeTimeline &&) noexcept;
     void add(double now, double start, double duration = -1, double threshold = .1);
     double elapsed(double now, double start, bool introMotion = false) const;
-    void clear() { freezes_.clear(); }
-    const QVector<Freeze> &entries() const { return freezes_; }
+    void clear();
+    const QVector<Freeze> &entries() const;
+    const rust::Timeline *nativeHandle() const { return state_; }
 };
 enum class Role { MainDps, SubDps, Healer, Unclassified };
 enum class SwitchPriority : int { No = 0, Low = 100, Normal = 200, High = 300, Must = 400 };

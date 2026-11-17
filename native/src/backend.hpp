@@ -3,6 +3,14 @@
 #include "controller.hpp"
 namespace okww {
 class Backend {
+    friend struct BackendCaptureFixture;
+    friend struct BackendLifecycleSdk;
+    friend struct BackendConfigSdk;
+    friend struct BackendFramesSdk;
+    friend struct BackendControlSdk;
+    friend struct BackendMonitorSdk;
+    friend struct BackendDispatchSdk;
+    friend struct BackendServeSdk;
     mutable std::recursive_mutex mutex_;
     Config cfg_;
     std::unique_ptr<Capture> capture_;
@@ -12,6 +20,8 @@ class Backend {
     QString error_;
     QJsonObject inputFault_;
     i64 heartbeat_ = 0;
+    i64 captureRecoveryBegan_ = 0;
+    static constexpr i64 captureRecoveryTimeoutNs = 120000000000LL;
     FramePtr simulated_;
     std::atomic<bool> exit_{false};
     std::thread monitor_, server_;
@@ -26,6 +36,7 @@ class Backend {
     QJsonObject dispatch(const QJsonObject &q);
     FramePtr frameLocked();
     FramePtr rawFrameLocked();
+    bool recoverCaptureLocked();
     void disarmFaultLocked(const QString &reason, const QString &message);
 
   public:

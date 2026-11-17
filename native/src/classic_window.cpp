@@ -137,7 +137,7 @@ void Window::buildClassicUi() {
     bottomNavigation_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     bottomNavigation_->setFixedHeight(128);
     side->addWidget(bottomNavigation_);
-    auto version = new QLabel("v" + product::version);
+    auto version = new QLabel("v" + product::releaseVersion);
     version->setObjectName("caption");
     version->setAlignment(Qt::AlignCenter);
     side->addWidget(version);

@@ -32,7 +32,7 @@ class EngineTests final : public QObject {
             "    def run(self):\n        with Path(r'"+marker+"').open('a') as f: f.write('x')\n");
         const auto task = createScript("Foreground",
             "from ok import BaseTask\nfrom pathlib import Path\nclass Foreground(BaseTask):\n"
-            "    def run(self):\n        if Path(r'"+hold+"').exists():\n"
+            "    def run(self):\n        self.info_set('运行进度', {'stage':'联调进度','current':2,'total':5})\n        if Path(r'"+hold+"').exists():\n"
             "            self.send_key_down('w')\n            self.mouse_down()\n"
             "            while True: self.sleep(.05)\n");
         Backend backend(false);
@@ -40,6 +40,7 @@ class EngineTests final : public QObject {
         Engine engine(backend, root, data.path());
         int catalogs = 0, done = 0, errors = 0, quits = 0, preparations = 0;
         QJsonObject status;
+        QVector<QJsonObject> progressEvents;
         connect(&engine, &Engine::message, &engine, [&](QJsonObject event) {
             if (event["event"] == "catalog_changed") ++catalogs;
             if (event["event"] == "task_done") ++done;
@@ -47,6 +48,7 @@ class EngineTests final : public QObject {
             if (event["event"] == "quit_requested") ++quits;
             if (event["event"] == "log" && event["text"].toString().startsWith("正在准备任务")) ++preparations;
             if (event["event"] == "status") status = event["data"].toObject();
+            if (event["event"] == "task_progress") progressEvents.append(event["data"].toObject());
         });
         engine.load();
         QTRY_VERIFY_WITH_TIMEOUT(catalogs > 0, 15000);
@@ -54,6 +56,9 @@ class EngineTests final : public QObject {
         const auto ticks = [&] { return QFileInfo(marker).size(); };
         engine.command({{"op", "start"}, {"task", task}});
         QTRY_COMPARE_WITH_TIMEOUT(done, 1, 30000);
+        QVERIFY(std::any_of(progressEvents.begin(),progressEvents.end(),[&](const QJsonObject &data) {
+            return data["task"]==task && data["stage"]=="联调进度" && data["current"].toInt()==2 && data["total"].toInt()==5;
+        }));
         QTRY_VERIFY_WITH_TIMEOUT(ticks() > 0, 10000);
         QVERIFY(!engine.idle());
         QVERIFY(backend.snapshot()["armed"].toBool());
@@ -119,7 +124,8 @@ class EngineTests final : public QObject {
         backend.arm(false);
         QTRY_VERIFY_WITH_TIMEOUT(engine.idle() && !failure.isEmpty(), 5000);
         QVERIFY(QFile::exists(failure["diagnostic_report"].toString()));
-        QVERIFY(failure["error"].toString().contains("中断"));
+        QVERIFY(failure["error"].toString().contains("输入通道已暂停"));
+        QVERIFY(!failure["error"].toString().contains("连接已中断"));
         QVERIFY(backend.snapshot()["capture_connected"].toBool());
         engine.command({{"op", "start"}});
         QTRY_VERIFY_WITH_TIMEOUT(backend.snapshot()["armed"].toBool(), 10000);

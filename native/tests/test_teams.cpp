@@ -20,6 +20,18 @@ class TeamTests final : public QObject {
                   {{"id", m["id"]}, {"original_sources", m["original_sources"]}});
     }
   private slots:
+    void rejectsLegacyBinaryBeforeCallingItsEntryPoints() {
+        QTemporaryDir temporaryRoot, data;
+        QVERIFY(QDir().mkpath(temporaryRoot.path() + "/native-teams"));
+        QVERIFY(QFile::copy(QCoreApplication::applicationDirPath() + "/okww_team_legacy_fixture.dll",
+                            temporaryRoot.path() + "/native-teams/okww_team_lucy.dll"));
+        try {
+            TeamStore store(temporaryRoot.path(), data.path());
+            QFAIL("Legacy module was accepted");
+        } catch (const std::runtime_error &error) {
+            QVERIFY(QString::fromUtf8(error.what()).contains("重新编译"));
+        }
+    }
     void builtinEditorsCoverAllCharactersAndRejectOtherTeamMembers() {
         QTemporaryDir data;
         TeamStore store(root, data.path());

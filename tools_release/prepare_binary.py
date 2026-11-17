@@ -49,7 +49,7 @@ def source_snapshot(review: Path) -> Path:
 
 def verify_runtime(runtime: Path) -> dict:
     manifest = json.loads((runtime / "PACKAGE.json").read_text(encoding="utf-8-sig"))
-    if manifest.get("variant") != "full" or manifest.get("runtime") != "C++ + Python workshop":
+    if manifest.get("variant") != "full" or manifest.get("runtime") not in {"C++ + Python workshop", "Rust + Qt + Python workshop"}:
         raise RuntimeError("Select a verified ordinary hybrid package, not a personal profile.")
     for name in ("native-full-data", "native-teams", "native/personal", "dualpc.json", "native-device-settings.json"):
         if (runtime / name).exists():
@@ -98,7 +98,10 @@ def write_manifest(stage: Path, source_exe_hash: str) -> list[Path]:
                    if p.is_file() and p.name != "PACKAGE.json" and distributable(p))
     manifest = {
         "version": "0.2.0", "channel": "preview", "variant": "full",
-        "runtime": "C++ + Python workshop", "status": "candidate-awaiting-hardware-acceptance",
+        "release_version": (ROOT / "native/RELEASE_VERSION").read_text(encoding="utf-8").strip(),
+        # Keep the installer identifier accepted by existing versions.
+        "runtime": "C++ + Python workshop", "core_language": "Rust", "frontend": "Qt6 Widgets",
+        "status": "candidate-awaiting-hardware-acceptance",
         "exe_sha256": source_exe_hash.lower(), "personal_profiles": 0,
         "files": [{"path": p.relative_to(root).as_posix(), "bytes": p.stat().st_size,
                    "sha256": digest(p)} for p in files],
@@ -140,6 +143,7 @@ def main() -> None:
         copy_tree(source / name, stage / name)
     copy_tree(runtime / "assets/ocr", stage / "assets/ocr")
     copy_tree(source / "native/resources", stage / "native/resources")
+    copy_tree(source / "native/licenses/rust", stage / "licenses/rust")
     copy_tree(source, stage / "source")
 
     engine = stage / "workshop-engine"
@@ -155,8 +159,8 @@ def main() -> None:
     shutil.copy2(source / "docs/release-notes.md", stage / "ReleaseNotes.md")
     (stage / "README.md").write_text(
         "# OK-WW-DualPC · OK-WW双机版 0.2.0 预览版\n\n"
-        "鸣潮双机自动化工具，使用采集卡读取画面、KMBox Net 发送键鼠操作。"
-        "C++ 主程序执行内置任务与角色，独立 Python 引擎运行工坊连招。\n\n"
+        "鸣潮自动化工具，支持采集卡、DXGI、Win32 采集和 KMBox Net、SendInput 输入。"
+        "Rust 内核执行内置任务、角色和设备控制，Qt 提供界面，独立 Python 引擎运行工坊连招。\n\n"
         "解压整个目录，运行 `OKWW-DualPC-Native-Dev.exe`。"
         "配置好采集卡和盒子后点击“开始”，自动连接并运行任务；连接后可用“测试移动”检查鼠标输出。F9 暂停或取消准备。\n\n"
         "- [完整功能介绍](source/README.md)\n"
@@ -165,7 +169,7 @@ def main() -> None:
         "- [角色代码工坊](source/docs/workshop.md)\n"
         "- [源码构建](source/docs/development.md)\n\n"
         "配置保存在 `native-full-data/`，首次运行自动生成。"
-        "更新前建议备份此目录。\n\n"
+        "“关于”页可检查 GitHub 新版本，确认后自动下载安装并保留配置。手动更新前建议备份此目录。\n\n"
         "反馈邮箱：[lidada0202@gmail.com](mailto:lidada0202@gmail.com)。"
         "请附软件版本、设备型号、复现步骤和相关日志。\n", encoding="utf-8")
 

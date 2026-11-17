@@ -7,6 +7,16 @@ class Profile {
     QJsonObject schema_;
     mutable std::recursive_mutex mutex_;
     QMap<QString, QJsonObject> values_;
+    struct RustRequest {
+        QString catalog, id, key;
+        QJsonValue input, fallback;
+    };
+    struct RustResult {
+        QString path;
+        QJsonObject object;
+        QJsonValue value;
+    };
+    RustResult rustProfile(int method, RustRequest request);
     QJsonObject defaults(const QString &group) const;
     QString filename(const QString &group) const;
 

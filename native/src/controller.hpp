@@ -2,7 +2,18 @@
 #include "common.hpp"
 #include "desktop.hpp"
 namespace okww {
+class LocalInputBlocked : public std::runtime_error {
+  public:
+    enum class Recovery { Wait, DismissRunDialog };
+    const Recovery recovery;
+    explicit LocalInputBlocked(const QString &message, Recovery action = Recovery::Wait)
+        : std::runtime_error(message.toUtf8().constData()), recovery(action) {}
+};
 class Controller {
+    friend struct ControllerProtocolSdk;
+    friend struct ControllerLifecycleSdk;
+    friend struct ControllerInputSdk;
+    friend struct ControllerLocalSdk;
     Config cfg_;
     SOCKET socket_ = INVALID_SOCKET;
     std::recursive_mutex mutex_;
@@ -16,6 +27,8 @@ class Controller {
     double latencyP50_ = 0, latencyP95_ = 0;
     std::unique_ptr<DesktopTarget> captureTarget_;
     std::unique_ptr<DesktopTarget> target_;
+    std::function<QJsonObject()> localEnvironment_;
+    QJsonObject lastLocalEnvironment_;
     bool local() const { return cfg_.s("kmbox.protocol") == "sendinput"; }
     void localSend(std::vector<INPUT> inputs, bool releasing = false);
     void noteLatency(i64 began);
@@ -25,7 +38,8 @@ class Controller {
     void keyboardReport();
 
   public:
-    explicit Controller(Config c) : cfg_(std::move(c)) {}
+    explicit Controller(Config c, std::function<QJsonObject()> localEnvironment = {})
+        : cfg_(std::move(c)), localEnvironment_(std::move(localEnvironment)) {}
     ~Controller() { close(); }
     void connect();
     void close() noexcept;

@@ -1,0 +1,11 @@
+[package]
+name = "okww-core"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.100"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "okww_core"
+crate-type = ["staticlib", "rlib"]

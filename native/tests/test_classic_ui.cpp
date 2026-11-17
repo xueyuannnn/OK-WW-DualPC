@@ -45,12 +45,132 @@ class ClassicUiTests final : public QObject {
         return runtime::Profile(data.path() + "/configs-dualpc", root + "/native/resources/catalog.json");
     }
   private slots:
+    void fullWorkflowShowsCountsEstimatesFailuresAndKeepsTheFinishedPlan() {
+        QTemporaryDir data;
+        auto window = create(data);
+        QTRY_VERIFY(card(*window, "DailyTask2"));
+        navigate(*window, "tasks");
+        const auto post = [&](QJsonObject event) { QVERIFY(QMetaObject::invokeMethod(window.get(), "handleEngineMessage", Q_ARG(QJsonObject,event))); };
+        post({{"event","status"},{"data",QJsonObject{{"paused",false},{"current","DailyTask2"}}}});
+        QJsonArray flow{
+            QJsonObject{{"id","daily"},{"name","每日目标"},{"state","completed"},{"estimate_seconds",100},{"elapsed_seconds",80}},
+            QJsonObject{{"id","nest"},{"name","残像聚落"},{"state","skipped"}},
+            QJsonObject{{"id","weekly"},{"name","周常乐园"},{"state","failed"},{"estimate_seconds",1200},{"elapsed_seconds",160}},
+            QJsonObject{{"id","mail"},{"name","邮件"},{"state","pending"},{"estimate_seconds",15}}};
+        post({{"event","task_progress"},{"data",QJsonObject{{"task","DailyTask2"},{"flow",flow},
+            {"stage","周常乐园"},{"flow_observed_at",double(QDateTime::currentMSecsSinceEpoch())}}}});
+        const auto panels = window->findChildren<QWidget *>("executionProgressPanel");
+        for (auto panel : panels) {
+            auto list = panel->findChild<QTreeWidget *>("executionFlow");
+            QCOMPARE(list->topLevelItemCount(),4);
+            QCOMPARE(list->topLevelItem(2)->text(1),QString("未完成"));
+            QVERIFY(list->topLevelItem(2)->text(2).contains("20 分钟"));
+            QVERIFY(panel->findChild<QLabel *>("executionCount")->text().contains("已完成 1 · 剩余 2 / 共 4 项 · 50%"));
+            QCOMPARE(panel->findChild<QProgressBar *>("executionProgress")->value(),500);
+        }
+        for (int i : {2,3}) { auto step=flow[i].toObject(); step["state"]="completed"; flow[i]=step; }
+        post({{"event","task_progress"},{"data",QJsonObject{{"task","DailyTask2"},{"flow",flow}}}});
+        post({{"event","task_done"},{"task","DailyTask2"}});
+        for (auto panel : panels) {
+            QCOMPARE(panel->findChild<QTreeWidget *>("executionFlow")->topLevelItemCount(),4);
+            QCOMPARE(panel->findChild<QProgressBar *>("executionProgress")->value(),1000);
+        }
+        QTest::qWait(120);
+        const auto artifacts=qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!artifacts.isEmpty()) window->grab().save(artifacts+"/full-workflow.png");
+    }
+    void rejectedConfigurationCommandKeepsTheInputSessionArmed() {
+        QTemporaryDir data;
+        Backend *backend = nullptr;
+        auto window = create(data, [&](Backend &value, const Config &config) {
+            backend = &value;
+            value.start(config, true);
+        });
+        QTRY_VERIFY(card(*window, "AutoCombatTask"));
+        window->findChild<QPushButton *>("previewConnection")->click();
+        QTRY_VERIFY(backend && backend->snapshot()["running"].toBool());
+        backend->arm(true);
+        backend->nativeCommand({{"op", "key"}, {"code", 26}, {"down", true}});
+        const QJsonObject rejection{{"id", 98765}, {"ok", false}, {"error", "请先暂停任务，再修改队伍。"}};
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "handleEngineMessage", Q_ARG(QJsonObject, rejection)));
+        QVERIFY(backend->snapshot()["armed"].toBool());
+        QVERIFY(backend->snapshot()["box"].toObject()["keys"].toArray().contains(26));
+        QVERIFY(!window->findChild<QMessageBox *>("runtimeErrorDialog"));
+        backend->arm(false);
+    }
+    void executionProgressIsSharedByTaskAndScriptPagesWithoutMovingCards() {
+        QTemporaryDir data;
+        auto window=create(data);
+        QTRY_VERIFY(card(*window,"DailyTask2"));
+        navigate(*window,"tasks");
+        QTest::qWait(100);
+        const auto position=card(*window,"DailyTask2")->mapTo(window.get(),QPoint{});
+        const auto post=[&](QJsonObject event) { QVERIFY(QMetaObject::invokeMethod(window.get(),"handleEngineMessage",Q_ARG(QJsonObject,event))); };
+        post({{"event","status"},{"data",QJsonObject{{"paused",false},{"current","DailyTask2"}}}});
+        post({{"event","task_progress"},{"data",QJsonObject{{"task","DailyTask2"},{"stage","领取每日奖励"},
+              {"current",80},{"total",100},{"unit","活跃度"},{"detail","完成每日目标后继续附加任务"}}}});
+        QTest::qWait(100);
+        const auto panels=window->findChildren<QWidget *>("executionProgressPanel");
+        QCOMPARE(panels.size(),3);
+        for (auto panel:panels) {
+            QCOMPARE(panel->findChild<QProgressBar *>("executionProgress")->value(),800);
+            QVERIFY(panel->findChild<QLabel *>("executionStage")->toolTip().contains("领取每日奖励"));
+        }
+        QCOMPARE(card(*window,"DailyTask2")->mapTo(window.get(),QPoint{}),position);
+        const auto artifacts=qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!artifacts.isEmpty()) window->grab().save(artifacts+"/daily-progress.png");
+        post({{"event","task_done"},{"task","DailyTask2"}});
+        post({{"event","status"},{"data",QJsonObject{{"paused",false},{"current",""}}}});
+        post({{"event","task_progress"},{"data",QJsonObject{{"task","DailyTask2"},{"stage","过期步骤"}}}});
+        for (auto panel:panels) {
+            QCOMPARE(panel->findChild<QProgressBar *>("executionProgress")->value(),1000);
+            QVERIFY(panel->findChild<QLabel *>("executionStage")->toolTip().contains("已完成"));
+        }
+        post({{"event","status"},{"data",QJsonObject{{"paused",true},{"current",""}}}});
+        post({{"event","task_progress"},{"data",QJsonObject{{"task","AutoCombatTask"},{"stage","暂停后过期"}}}});
+        QVERIFY(!panels.first()->findChild<QLabel *>("executionStage")->toolTip().contains("暂停后"));
+    }
+    void appUpdatesShowOnlyNewerReleasesAndSaveCheckPreferences() {
+        QTemporaryDir data;
+        auto window=create(data);
+        QTRY_VERIFY(card(*window,"AutoCombatTask"));
+        navigate(*window,"about");
+        auto github=window->findChild<QPushButton *>("projectGithub");
+        QVERIFY(github);
+        QCOMPARE(github->property("linkUrl").toString(),product::github);
+        auto automatic=window->findChild<QCheckBox *>("autoCheckAppUpdates");
+        auto preview=window->findChild<QCheckBox *>("includePreviewUpdates");
+        QVERIFY(automatic && automatic->isChecked() && preview && preview->isChecked());
+        automatic->click(); preview->click();
+        const auto preferences=readJson(data.path()+"/native-ui.json");
+        QVERIFY(!preferences["check_app_updates"].toBool(true));
+        QVERIFY(!preferences["preview_app_updates"].toBool(true));
+        auto client=window->findChild<update::Client *>();
+        QVERIFY(client);
+        update::Release release;
+        release.tag="v0.3.0"; release.page=QUrl(product::github+"/releases/tag/v0.3.0");
+        release.body="- 修复队伍切换\n<script>untrusted markup</script>\n下载完整包";
+        emit client->checked({release});
+        auto check=window->findChild<QPushButton *>("checkAppUpdates");
+        QCOMPARE(check->text(),"查看新版本"); check->click();
+        auto dialog=window->findChild<QDialog *>("appUpdateDialog");
+        QVERIFY(dialog && dialog->isVisible());
+        auto notes=dialog->findChild<QTextBrowser *>("appReleaseNotes");
+        QVERIFY(notes->toPlainText().contains("修复队伍切换"));
+        QVERIFY(notes->toPlainText().contains("<script>untrusted markup</script>"));
+        QVERIFY(!dialog->findChild<QPushButton *>("installAppUpdate")->isEnabled());
+        const auto artifacts=qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+        if (!artifacts.isEmpty()) { window->grab().save(artifacts+"/about-updates.png"); dialog->grab().save(artifacts+"/update-release-notes.png"); }
+        dialog->reject();
+    }
     void runtimeErrorsRestoreHiddenWindowAndKeepTasksPausedAfterAcknowledgement() {
         QTemporaryDir data;
         Backend *backend = nullptr;
-        auto window = create(data, [&](Backend &value, const Config &) {
+        int connections = 0;
+        auto window = create(data, [&](Backend &value, const Config &config) {
             backend = &value;
-            value.start(Config::defaults(), true);
+            ++connections;
+            value.start(config, true);
         });
         QTRY_VERIFY(card(*window, "AutoCombatTask"));
         window->findChild<QPushButton *>("previewConnection")->click();
@@ -64,6 +184,7 @@ class ClassicUiTests final : public QObject {
         auto dialog = window->findChild<QMessageBox *>("runtimeErrorDialog");
         QVERIFY(dialog && dialog->isVisible());
         QVERIFY(dialog->detailedText().contains("offline traceback marker"));
+        QVERIFY(window->findChild<QLabel *>("applicationStatus")->text().contains("异常已暂停"));
         QVERIFY(!backend->snapshot()["armed"].toBool());
         QVERIFY(backend->snapshot()["capture_connected"].toBool());
         QVERIFY(QMetaObject::invokeMethod(window.get(), "handleEngineMessage", Q_ARG(QJsonObject, event)));
@@ -77,6 +198,18 @@ class ClassicUiTests final : public QObject {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QVERIFY(!window->findChild<QMessageBox *>("runtimeErrorDialog"));
         QVERIFY(!backend->snapshot()["armed"].toBool());
+        navigate(*window, "dualpc");
+        auto retry = window->findChild<QPushButton *>("retryExecution");
+        QTRY_VERIFY(retry && retry->isVisible());
+        QTRY_VERIFY(retry->isEnabled());
+        for (auto button : window->findChildren<QPushButton *>())
+            if (button->property("automationControl").toBool()) QCOMPARE(button->text(), QString("终止线程"));
+        QSignalSpy accepted(window.get(), &Window::taskStartAccepted);
+        retry->click();
+        QTRY_COMPARE_WITH_TIMEOUT(accepted.count(), 1, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(backend->snapshot()["armed"].toBool(), 15000);
+        QCOMPARE(connections, 1);
+        QVERIFY(!retry->isVisible());
     }
     void legacyPracticeFlagsCannotSuppressInputAfterTheSwitchIsRemoved() {
         QTemporaryDir data;
@@ -250,7 +383,7 @@ class ClassicUiTests final : public QObject {
         QVERIFY(!window->findChild<QPushButton *>("saveDevices"));
         window->findChild<QCheckBox *>("manualCapture")->setChecked(true);
         const QJsonObject values{{"capture.device_name", "Saved Capture"}, {"capture.device_index", 3},
-            {"capture.width", 2560}, {"capture.height", 1440}, {"capture.fps", 165.}, {"capture.fourcc", "NV12"},
+            {"capture.width", 2560}, {"capture.height", 1440}, {"capture.fps", 165.},
             {"capture.stale_after", .35}, {"kmbox.host", "192.168."}, {"kmbox.port", 12345}, {"kmbox.uuid", "12"},
             {"kmbox.desktop_width", 2560}, {"kmbox.desktop_height", 1440},
             {"kmbox.home_counts", 16000}, {"kmbox.move_chunk", 256}, {"kmbox.home_wait", .08},
@@ -280,6 +413,7 @@ class ClassicUiTests final : public QObject {
         };
         QTRY_VERIFY(draft()["manual_capture"].toBool());
         const Config saved{draft()["config"].toObject()};
+        QCOMPARE(saved.s("capture.fourcc"), QString("NV12"));
         for (auto it = values.begin(); it != values.end(); ++it) QCOMPARE(saved.get(it.key()), it.value());
         QCOMPARE(saved.get("capture.crop").toArray(), QJsonArray({50, 20, 1280, 720}));
         QCOMPARE(saved.n("capture.output_width"), 1280);
@@ -490,7 +624,7 @@ class ClassicUiTests final : public QObject {
         QVERIFY(summary->property("fullTeamText").toString().startsWith("上次识别"));
         info["mode"] = "builtin";
         send({{"event", "combat_info"}, {"data", info}});
-        QVERIFY(summary->property("fullTeamText").toString().contains("内置 C++"));
+        QVERIFY(summary->property("fullTeamText").toString().contains("内置 Rust"));
     }
     void oneDetectionLoadsAllParametersAndSwitchesCardsWithoutRescanning() {
         QTemporaryDir data;
@@ -507,12 +641,15 @@ class ClassicUiTests final : public QObject {
         std::atomic<int> scans{0};
         const QJsonArray detected{
             QJsonObject{{"name", "Capture A"}, {"path", "card-a"}, {"index", 0},
-                {"modes", QJsonArray{Mode{1280, 720, 60, "YUY2"}.json(), Mode{1920, 1080, 30, "MJPG"}.json()}}},
+                {"modes", QJsonArray{Mode{1280, 720, 60, "YUY2"}.json(), Mode{1920, 1080, 30, "MJPG"}.json(),
+                    Mode{1280, 720, 60, "NV12"}.json(), Mode{1920, 1080, 60, "NV12"}.json()}}},
             QJsonObject{{"name", "Capture B"}, {"path", "card-b"}, {"index", 1},
                 {"modes", QJsonArray{Mode{1920, 1080, 120, "NV12"}.json(), Mode{1920, 1080, 240, "NV12"}.json(),
                                      Mode{3840, 2160, 60, "NV12"}.json()}}},
             QJsonObject{{"name", "Offline"}, {"path", "card-c"}, {"index", 2},
-                {"modes", QJsonArray{}}, {"error", "设备占用"}}};
+                {"modes", QJsonArray{}}, {"error", "设备占用"}},
+            QJsonObject{{"name", "Other formats only"}, {"path", "card-d"}, {"index", 3},
+                {"modes", QJsonArray{Mode{1920, 1080, 30, "MJPG"}.json()}}}};
         Window window(root, data.path(), {}, {}, [&](const Config &) { ++scans; return detected; });
         window.show();
         auto refresh = window.findChild<QPushButton *>("refreshDevices");
@@ -522,17 +659,27 @@ class ClassicUiTests final : public QObject {
         auto resolution = window.findChild<QComboBox *>("captureResolution");
         auto format = window.findChild<QComboBox *>("captureFormat");
         auto fps = window.findChild<QComboBox *>("captureFps");
-        QTRY_COMPARE(device->count(), 3);
+        QTRY_COMPARE(device->count(), 4);
         QCOMPARE(scans.load(), 1);
         QCOMPARE(device->currentText(), QString("Capture B"));
         QCOMPARE(fps->currentData().toDouble(), 240.);
         QCOMPARE(resolution->currentData().toList(), (QVariantList{1920, 1080}));
+        QCOMPARE(format->count(), 1);
+        QCOMPARE(format->currentText(), QString("NV12"));
+        QVERIFY(!format->isEnabled());
+        QVERIFY(!window.findChild<QLineEdit *>("capture.fourcc"));
         device->setCurrentIndex(0);
-        QCOMPARE(format->currentText(), QString("MJPG"));
-        QCOMPARE(fps->currentData().toDouble(), 30.);
-        resolution->setCurrentIndex(resolution->findData(QVariantList{1280, 720}));
-        QCOMPARE(format->currentText(), QString("YUY2"));
+        QCOMPARE(format->currentText(), QString("NV12"));
         QCOMPARE(fps->currentData().toDouble(), 60.);
+        QCOMPARE(fps->findData(30.), -1);
+        resolution->setCurrentIndex(resolution->findData(QVariantList{1280, 720}));
+        QCOMPARE(format->currentText(), QString("NV12"));
+        QCOMPARE(fps->currentData().toDouble(), 60.);
+        device->setCurrentIndex(3);
+        QCOMPARE(resolution->count(), 0);
+        QCOMPARE(fps->count(), 0);
+        QCOMPARE(format->count(), 1);
+        QVERIFY(window.findChild<QLabel *>("captureScanStatus")->text().contains("NV12"));
         device->setCurrentIndex(1);
         QVERIFY(fps->findData(240.) >= 0);
         fps->setCurrentIndex(fps->findData(240.));
@@ -548,10 +695,11 @@ class ClassicUiTests final : public QObject {
         if (!artifacts.isEmpty()) window.grab().save(artifacts + "/capture-detection.png");
         device->setCurrentIndex(2);
         QCOMPARE(resolution->count(), 0);
-        QCOMPARE(format->count(), 0);
+        QCOMPARE(format->count(), 1);
         QCOMPARE(fps->count(), 0);
         QVERIFY(window.findChild<QLabel *>("captureScanStatus")->text().contains("设备占用"));
         window.findChild<QCheckBox *>("manualCapture")->setChecked(true);
+        QVERIFY(!format->isEnabled());
         QTRY_VERIFY(QFile::exists(data.path()+"/native-device-settings.json") &&
                     readJson(data.path()+"/native-device-settings.json")["manual_capture"].toBool());
         const Config saved{readJson(data.path()+"/native-device-settings.json")["config"].toObject()};
@@ -1438,7 +1586,8 @@ class ClassicUiTests final : public QObject {
         for (auto panel : window->findChildren<QFrame *>("taskRunPanel"))
             if (panel->isVisible()) statusPanel = panel;
         QVERIFY(statusPanel);
-        QCOMPARE(statusPanel->height(), 108);
+        const auto idleHeight=statusPanel->height();
+        QVERIFY(statusPanel->findChild<QProgressBar *>("executionProgress"));
         QVERIFY(statusPanel->findChild<QLabel *>("taskInfoTitle")->text().contains("待机"));
         daily->setExpanded(true);
         auto slider = daily->findChild<QSlider *>("field-Daily Stamina Cube Limit-slider");
@@ -1476,7 +1625,7 @@ class ClassicUiTests final : public QObject {
         QCOMPARE(connections.load(), 1);
         QTRY_VERIFY(statusPanel->findChild<QLabel *>("taskInfoTitle")->text().contains("正在运行"));
         QCOMPARE(daily->mapTo(window.get(), QPoint{}), taskPosition);
-        QCOMPARE(statusPanel->height(), 108);
+        QCOMPARE(statusPanel->height(), idleHeight);
         daily->setExpanded(false);
         QTest::qWait(40);
         if (!artifacts.isEmpty()) window->grab().save(artifacts + "/tasks-running.png");
@@ -1484,7 +1633,7 @@ class ClassicUiTests final : public QObject {
         QTRY_VERIFY(statusPanel->findChild<QLabel *>("taskInfoTitle")->text().contains("已停止"));
         QVERIFY(statusPanel->isVisible());
         QCOMPARE(daily->mapTo(window.get(), QPoint{}), taskPosition);
-        QCOMPARE(statusPanel->height(), 108);
+        QCOMPARE(statusPanel->height(), idleHeight);
     }
     void deviceSourceSelectionsShowOnlyTheRelevantForms() {
         QTemporaryDir data;
@@ -1529,6 +1678,7 @@ class ClassicUiTests final : public QObject {
         QVERIFY(display->isVisible());
         QVERIFY(window->findChild<QPushButton *>("refreshDxgiDisplays")->isVisible());
         QVERIFY(!window->findChild<QComboBox *>("localCaptureTarget")->isVisible());
+        QVERIFY(!window->findChild<QCheckBox *>("capture.auto_game_region"));
         dxgiAdvanced->click();
         QVERIFY(!display->isVisible());
         QVERIFY(window->findChild<QLabel *>("dxgiRefreshRate")->text().contains("显示器"));

@@ -1,123 +1,271 @@
 #include "garden.hpp"
+#include "workflow_abi.hpp"
 namespace okww::runtime {
 std::optional<int> Garden::money() {
-    QVector<int> values;
-    for (const auto &line : c_.text(.68, .035, .79, .09))
-        if (QRegularExpression("^\\d+$").match(line.text.trimmed()).hasMatch()) {
-            bool ok = false;
-            const int value = line.text.trimmed().toInt(&ok);
-            if (ok)
-                values.append(value);
-        }
-    return values.size() == 1 ? std::optional(values.front()) : std::nullopt;
+    QVector<TextLine> lines;
+    const auto result = rust::workflowRun(
+        rust::WorkflowMethod::GardenMoney, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ReadGardenMoneyText: {
+                lines = c_.text(.68, .035, .79, .09);
+                out[0] = double(lines.size());
+                break;
+            }
+            case rust::WorkflowOp::GardenMoneyMatches: {
+                out[0] = QRegularExpression("^\\d+$").match(lines.at(int(a[0])).text.trimmed()).hasMatch();
+                break;
+            }
+            case rust::WorkflowOp::GardenMoneyValue: {
+                bool ok = false;
+                out[0] = lines.at(int(a[0])).text.trimmed().toInt(&ok);
+                out[1] = ok;
+                break;
+            }
+            default:
+                fail("Rust GardenMoney 周常商店宿主无效");
+            }
+        });
+    if (result[0] == 0)
+        return {};
+    return int(result[1]);
 }
 QVector<GardenItem> Garden::inventory() {
     QVector<GardenItem> items;
-    const int w = c_.frame.cols, h = c_.frame.rows;
-    for (int row = 0; row < 2; ++row)
-        for (int column = 0; column < (row == 0 ? 6 : 2); ++column) {
-            const double x = .198 + .080 * column, y = .302 + .191 * row;
-            const auto labels = c_.textScaled(
-                gameBox(c_.frame, x + .006, .372 + .191 * row, x + .032, .400 + .191 * row), .75);
-            QVector<int> prices;
-            for (const auto &line : labels) {
-                const auto match = QRegularExpression("^[-−]?\\s*(\\d+)\\s*$").match(line.text.trimmed());
-                if (match.hasMatch() && match.captured(1).toInt() > 0)
-                    prices.append(match.captured(1).toInt());
+    QVector<TextLine> labels;
+    QRegularExpressionMatch match;
+    rust::workflowRun(
+        rust::WorkflowMethod::GardenInventory, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ImageSize: {
+                out[0] = c_.frame.cols;
+                out[1] = c_.frame.rows;
+                break;
             }
-            const QRect bounds(pixelRound((x + .012) * w), pixelRound((y - .077) * h),
-                               pixelRound((x + .045) * w) - pixelRound((x + .012) * w),
-                               pixelRound((y - .005) * h) - pixelRound((y - .077) * h));
-            const bool recommended = recommendationScore(c_.frame, badge_, bounds, w / 1920. * .72) >= .88;
-            const auto price = prices.size() == 1 ? std::optional(prices[0]) : std::nullopt;
-            if (!price && !recommended)
-                continue;
-            items.append({row * 6 + column,
-                          price,
-                          recommended,
-                          {QString("garden_shop_item_%1").arg(row * 6 + column + 1),
-                           {pixelRound((x - .018) * w), pixelRound((y - .03) * h), pixelRound(.036 * w),
-                            pixelRound(.06 * h)},
-                           1}});
-        }
+            case rust::WorkflowOp::ReadGardenItemPrices: {
+                labels = c_.textScaled(gameBox(c_.frame, a[0], a[1], a[2], a[3]), a[4]);
+                out[0] = double(labels.size());
+                break;
+            }
+            case rust::WorkflowOp::GardenItemPriceMatches: {
+                match =
+                    QRegularExpression("^[-−]?\\s*(\\d+)\\s*$").match(labels.at(int(a[0])).text.trimmed());
+                out[0] = match.hasMatch();
+                break;
+            }
+            case rust::WorkflowOp::GardenItemPrice: {
+                out[0] = match.captured(1).toInt();
+                break;
+            }
+            case rust::WorkflowOp::PixelRound: {
+                out[0] = pixelRound(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::GardenItemRecommendation: {
+                out[0] = recommendationScore(c_.frame, badge_,
+                                             QRect(int(a[0]), int(a[1]), int(a[2]), int(a[3])), a[4]);
+                break;
+            }
+            case rust::WorkflowOp::AppendGardenItem: {
+                const int index = int(a[0]);
+                const auto price = a[1] != 0 ? std::optional<int>(int(a[2])) : std::nullopt;
+                items.append({index,
+                              price,
+                              a[3] != 0,
+                              {QString("garden_shop_item_%1").arg(index + 1),
+                               {int(a[4]), int(a[5]), int(a[6]), int(a[7])},
+                               1}});
+                break;
+            }
+            default:
+                fail("Rust GardenInventory 周常商店宿主无效");
+            }
+        });
     return items;
 }
 bool Garden::waitPurchase(int before, int price) {
-    for (int i = 0; i < 12; ++i) {
-        c_.refresh();
-        const auto current = money();
-        if (current && *current < before)
-            return *current == before - price;
-        const auto receipt = rewardChoice();
-        if (receipt && receipt->name == "garden_reward_confirm_ocr")
-            c_.click(*receipt, .3);
-        else
-            c_.sleep(.2);
-    }
-    return false;
+    std::optional<Match> receipt;
+    const std::array args{double(before), double(price)};
+    return rust::workflowRun(rust::WorkflowMethod::GardenWaitPurchase, args,
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::Refresh: {
+                                     c_.refresh();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::ReadGardenBalance: {
+                                     const auto value = money();
+                                     out[0] = value.has_value();
+                                     out[1] = value.value_or(0);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::ReadGardenReceipt: {
+                                     receipt = rewardChoice();
+                                     out[0] = receipt.has_value();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::GardenReceiptConfirm: {
+                                     out[0] = receipt->name == "garden_reward_confirm_ocr";
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::ClickGardenReceipt: {
+                                     c_.click(*receipt, a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Sleep: {
+                                     c_.sleep(a[0]);
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust GardenWaitPurchase 周常商店宿主无效");
+                                 }
+                             })[0] != 0;
 }
 int Garden::shop() {
     QSet<int> skipped;
-    int purchased = 0;
-    const int reserve = std::max(0, config_["Garden Shop Reserve"].toInt(10));
-    c_.sleep(.4);
-    for (int attempt = 0; attempt < 30; ++attempt) {
-        c_.refresh();
-        const auto balance = money();
-        if (!balance || *balance <= reserve)
-            break;
-        auto items = inventory();
-        items.erase(std::remove_if(items.begin(), items.end(),
-                                   [&](const auto &item) { return skipped.contains(item.index); }),
-                    items.end());
-        items = affordableGardenItems(items, *balance - reserve);
-        if (items.empty())
-            break;
-        const auto item = items.front();
-        if (c_.info)
-            c_.info("周常商店", QString("%1 %2；余额 %3，保留 %4")
-                                    .arg(item.recommended ? "推荐商品" : "顺序购买")
-                                    .arg(item.index + 1)
-                                    .arg(*balance)
-                                    .arg(reserve));
-        c_.click(item.box, .5);
-        PurchaseControls detail;
-        for (int read = 0; read < 3; ++read) {
-            c_.refresh();
-            detail = gardenPurchaseControls(c_.text(.66, .66, .86, .73));
-            if (detail.sold || (detail.buy && detail.price && (!item.price || detail.price == item.price)))
+    std::optional<int> balance;
+    QVector<GardenItem> items, available;
+    GardenItem item;
+    PurchaseControls detail;
+    std::optional<Match> close;
+    return int(rust::workflowRun(
+        rust::WorkflowMethod::GardenShop, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::GardenShopReserve: {
+                out[0] = config_["Garden Shop Reserve"].toInt(10);
                 break;
-            detail.buy.reset();
-            detail.price.reset();
-            c_.sleep(.2);
-        }
-        if (detail.sold || (detail.price && *detail.price > *balance - reserve)) {
-            skipped.insert(item.index);
-            continue;
-        }
-        if (!detail.buy || !detail.price) {
-            if (item.recommended)
+            }
+            case rust::WorkflowOp::Sleep: {
+                c_.sleep(a[0]);
                 break;
-            skipped.insert(item.index);
-            continue;
-        }
-        c_.click(*detail.buy, .4);
-        if (!waitPurchase(*balance, *detail.price)) {
-            if (c_.info)
+            }
+            case rust::WorkflowOp::Refresh: {
+                c_.refresh();
+                break;
+            }
+            case rust::WorkflowOp::ReadGardenBalance: {
+                balance = money();
+                out[0] = balance.has_value();
+                out[1] = balance.value_or(0);
+                break;
+            }
+            case rust::WorkflowOp::ReadGardenInventory: {
+                items = inventory();
+                available.clear();
+                out[0] = double(items.size());
+                break;
+            }
+            case rust::WorkflowOp::GardenItemSkipped: {
+                out[0] = skipped.contains(items.at(int(a[0])).index);
+                break;
+            }
+            case rust::WorkflowOp::AppendAvailableGardenItem: {
+                available.append(items.at(int(a[0])));
+                break;
+            }
+            case rust::WorkflowOp::AffordableGardenInventory: {
+                items = affordableGardenItems(available, int(a[0]));
+                out[0] = double(items.size());
+                break;
+            }
+            case rust::WorkflowOp::SelectGardenShopItem: {
+                item = items.front();
+                break;
+            }
+            case rust::WorkflowOp::HasInfo: {
+                out[0] = bool(c_.info);
+                break;
+            }
+            case rust::WorkflowOp::GardenShopItemInfo: {
+                c_.info("周常商店", QString("%1 %2；余额 %3，保留 %4")
+                                        .arg(item.recommended ? "推荐商品" : "顺序购买")
+                                        .arg(item.index + 1)
+                                        .arg(int(a[0]))
+                                        .arg(int(a[1])));
+                break;
+            }
+            case rust::WorkflowOp::ClickGardenShopItem: {
+                c_.click(item.box, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::ReadGardenPurchaseDetail: {
+                detail = gardenPurchaseControls(c_.text(.66, .66, .86, .73));
+                break;
+            }
+            case rust::WorkflowOp::GardenDetailSold: {
+                out[0] = detail.sold;
+                break;
+            }
+            case rust::WorkflowOp::GardenDetailBuy: {
+                out[0] = detail.buy.has_value();
+                break;
+            }
+            case rust::WorkflowOp::GardenDetailPrice: {
+                out[0] = detail.price.has_value();
+                break;
+            }
+            case rust::WorkflowOp::GardenSelectedItemPrice: {
+                out[0] = item.price.has_value();
+                break;
+            }
+            case rust::WorkflowOp::GardenDetailPriceMatches: {
+                out[0] = detail.price == item.price;
+                break;
+            }
+            case rust::WorkflowOp::ClearGardenDetailBuy: {
+                detail.buy.reset();
+                break;
+            }
+            case rust::WorkflowOp::ClearGardenDetailPrice: {
+                detail.price.reset();
+                break;
+            }
+            case rust::WorkflowOp::GardenDetailPriceValue: {
+                out[0] = *detail.price;
+                break;
+            }
+            case rust::WorkflowOp::SkipSelectedGardenItem: {
+                skipped.insert(item.index);
+                break;
+            }
+            case rust::WorkflowOp::GardenSelectedItemRecommended: {
+                out[0] = item.recommended;
+                break;
+            }
+            case rust::WorkflowOp::ClickGardenDetailBuy: {
+                c_.click(*detail.buy, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::WaitGardenPurchase: {
+                out[0] = waitPurchase(int(a[0]), int(a[1]));
+                break;
+            }
+            case rust::WorkflowOp::UnverifiedGardenPurchaseInfo: {
                 c_.info("周常商店", "扣款尚未核实，本轮停止继续购买");
-            break;
-        }
-        ++purchased;
-        skipped.insert(item.index);
-    }
-    const auto balance = money();
-    if (auto close = c_.find("garden_shop_close", {.threshold = .82}))
-        c_.click(*close, .3);
-    if (c_.info)
-        c_.info("周常商店", QString("已购买 %1 件；剩余 %2；保留 %3")
-                                .arg(purchased)
-                                .arg(balance ? QString::number(*balance) : "未识别")
-                                .arg(reserve));
-    return purchased;
+                break;
+            }
+            case rust::WorkflowOp::FinalGardenBalance: {
+                balance = money();
+                break;
+            }
+            case rust::WorkflowOp::FindGardenShopClose: {
+                close = c_.find("garden_shop_close", {.threshold = a[0]});
+                out[0] = close.has_value();
+                break;
+            }
+            case rust::WorkflowOp::ClickGardenShopClose: {
+                c_.click(*close, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::GardenShopSummary: {
+                c_.info("周常商店", QString("已购买 %1 件；剩余 %2；保留 %3")
+                                        .arg(int(a[0]))
+                                        .arg(balance ? QString::number(*balance) : "未识别")
+                                        .arg(int(a[1])));
+                break;
+            }
+            default:
+                fail("Rust GardenShop 周常商店宿主无效");
+            }
+        })[0]);
 }
 } // namespace okww::runtime

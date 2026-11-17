@@ -1,5 +1,6 @@
 #pragma once
 #include "common.hpp"
+#include "rust_core.hpp"
 #include <functional>
 
 namespace okww::runtime {
@@ -22,21 +23,25 @@ class SteadyClock final : public Clock {
 };
 // Every execution owns an epoch. A paused stack cannot resume after a new start.
 class ExecutionGate {
-    std::atomic<uint64_t> epoch_{0};
-    std::atomic<bool> running_{false};
+    rust::Gate *state_;
 
   public:
+    ExecutionGate() : state_(nullptr) {
+        rust::verifyAbi();
+        state_=rust::okww_rs_gate_new();
+        if (!state_) throw std::bad_alloc();
+    }
+    ~ExecutionGate() { rust::okww_rs_gate_free(state_); }
+    ExecutionGate(const ExecutionGate &) = delete;
+    ExecutionGate &operator=(const ExecutionGate &) = delete;
     uint64_t start() {
-        running_ = false;
-        auto e = ++epoch_;
-        running_ = true;
-        return e;
+        return rust::okww_rs_gate_start(state_);
     }
     void stop() {
-        running_ = false;
-        ++epoch_;
+        rust::okww_rs_gate_stop(state_);
     }
-    bool active(uint64_t epoch) const { return running_ && epoch_ == epoch; }
+    bool active(uint64_t epoch) const { return rust::okww_rs_gate_active(state_,epoch) != 0; }
+    const rust::Gate *nativeHandle() const { return state_; }
 };
 class Execution {
     ExecutionGate &gate_;
@@ -48,46 +53,15 @@ class Execution {
     Execution(ExecutionGate &gate, uint64_t epoch, Clock &clock, std::function<void()> health = {})
         : gate_(gate), epoch_(epoch), clock_(clock), health_(std::move(health)) {}
     double now() const { return clock_.now(); }
-    void checkpoint() const {
-        if (!gate_.active(epoch_))
-            throw Cancelled();
-        if (health_)
-            health_();
-        if (!gate_.active(epoch_))
-            throw Cancelled();
-    }
-    void wait(double seconds) {
-        if (!std::isfinite(seconds) || seconds < 0 || seconds > 86400)
-            fail("等待时间无效");
-        const double end = now() + seconds;
-        checkpoint();
-        while (now() < end) {
-            clock_.sleep(std::min(.01, end - now()));
-            checkpoint();
-        }
-    }
-    bool until(const std::function<bool()> &condition, double timeout, double interval = .02) {
-        if (!std::isfinite(timeout) || timeout < 0 || interval <= 0)
-            fail("等待条件参数无效");
-        const double end = now() + timeout;
-        do {
-            checkpoint();
-            if (condition())
-                return true;
-            if (now() >= end)
-                return false;
-            wait(std::min(interval, end - now()));
-        } while (true);
-    }
+    void checkpoint() const;
+    void wait(double seconds);
+    bool until(const std::function<bool()> &condition, double timeout, double interval = .02);
 };
 // Matches Python round(), including its tie-to-even behavior, for HID coordinates.
 inline int pixelRound(double value) {
-    if (!std::isfinite(value) || value < INT_MIN || value > INT_MAX)
+    int32_t result = 0;
+    if (!rust::okww_rs_pixel_round(value,&result))
         fail("坐标或移动距离无效");
-    const double floor = std::floor(value), fraction = value - floor;
-    return int(fraction < .5                        ? floor
-               : fraction > .5                      ? floor + 1
-               : std::fmod(std::abs(floor), 2) == 0 ? floor
-                                                    : floor + 1);
+    return result;
 }
 } // namespace okww::runtime

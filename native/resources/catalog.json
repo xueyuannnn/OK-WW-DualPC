@@ -2490,9 +2490,29 @@
     },
     "tasks": [
         {
-            "description": "登录后先清体力，再刷所选噩梦巢穴、领取每日奖励，最后检查周常乐园。",
+            "description": "优先完成每日目标并领取奖励，再清理剩余体力、聚落和周常。",
             "enabled": false,
             "fields": [
+                {
+                    "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
                 {
                     "allow_duplication": false,
                     "default": "Tacet First",
@@ -2529,7 +2549,7 @@
                 {
                     "allow_duplication": false,
                     "default": 0,
-                    "description": "无音区刷取次数, 每次60体力, 如需用光所有体力可以设置一个大数",
+                    "description": "无音区刷取次数, 每次60体力, 如需用光所有体力可以设置一个大数 每日补目标时刷过的次数计入此额度，领奖后补完剩余次数。",
                     "key": "Tacet Suppression Count",
                     "kind": "integer",
                     "label": "刷取次数",
@@ -2555,7 +2575,7 @@
                 {
                     "allow_duplication": false,
                     "default": 0,
-                    "description": "凝素领域刷取次数（每次消耗40体力），设置较大的数值以使用所有体力",
+                    "description": "凝素领域刷取次数（每次消耗40体力），设置较大的数值以使用所有体力 每日补目标时刷过的次数计入此额度，领奖后补完剩余次数。",
                     "key": "Forgery Challenge Count",
                     "kind": "integer",
                     "label": "刷取次数",
@@ -2590,7 +2610,7 @@
                 {
                     "allow_duplication": false,
                     "default": 0,
-                    "description": "模拟领域刷取次数（每次消耗40体力），设置较大的数值以使用所有体力",
+                    "description": "模拟领域刷取次数（每次消耗40体力），设置较大的数值以使用所有体力 每日补目标时刷过的次数计入此额度，领奖后补完剩余次数。",
                     "key": "Simulation Challenge Count",
                     "kind": "integer",
                     "label": "刷取次数",
@@ -2603,10 +2623,10 @@
                 {
                     "allow_duplication": false,
                     "default": true,
-                    "description": "必要时，前往梦魇巢穴获取声骸完成日常",
+                    "description": "仅在每日目标仍需声骸时刷取；每获取一次便检查目标并优先领奖，整批清理放在每日完成之后。",
                     "key": "Farm Nightmare Nest for Daily Echo",
                     "kind": "boolean",
-                    "label": "使用梦魇巢穴获取日常声骸",
+                    "label": "每日缺声骸时刷残像聚落",
                     "maximum": null,
                     "minimum": null,
                     "options": null,
@@ -2618,7 +2638,7 @@
                     "default": [
                         "Check Weekly Garden"
                     ],
-                    "description": "每日顺序：先清体力，再刷噩梦巢穴，最后执行周常乐园；其他附加任务按各自配置执行。",
+                    "description": "每日目标完成并领奖后执行。聚落范围使用巢穴任务的设置，周常等附加任务按选项运行。",
                     "key": "Additional Tasks to Run After Daily Task",
                     "kind": "multi_selection",
                     "label": "每日任务后运行的附加任务",
@@ -2932,6 +2952,26 @@
             "fields": [
                 {
                     "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
+                {
+                    "allow_duplication": false,
                     "default": 1,
                     "description": "F2列表中第几个无音区",
                     "key": "Which Tacet Suppression to Farm",
@@ -2968,6 +3008,26 @@
             "fields": [
                 {
                     "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
+                {
+                    "allow_duplication": false,
                     "default": 1,
                     "description": "F2列表中第几个凝素领域",
                     "key": "Which Forgery Challenge to Farm",
@@ -3002,6 +3062,26 @@
             "description": "需要「黎那汐塔-角斗士的肖像」可传送",
             "enabled": false,
             "fields": [
+                {
+                    "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
                 {
                     "allow_duplication": false,
                     "default": "Shell Credit",
@@ -3044,9 +3124,29 @@
             "trigger": false
         },
         {
-            "description": "登录后先清体力，再刷所选噩梦巢穴、领取每日奖励，最后检查周常乐园。",
+            "description": "优先完成每日目标并领取奖励，再清理剩余体力、聚落和周常。",
             "enabled": false,
             "fields": [
+                {
+                    "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
                 {
                     "allow_duplication": false,
                     "default": "Tacet Suppression",
@@ -3085,10 +3185,10 @@
                 {
                     "allow_duplication": false,
                     "default": true,
-                    "description": "必要时，前往梦魇巢穴获取声骸完成日常",
+                    "description": "仅在每日目标仍需声骸时刷取；每获取一次便检查目标并优先领奖，整批清理放在每日完成之后。",
                     "key": "Farm Nightmare Nest for Daily Echo",
                     "kind": "boolean",
-                    "label": "使用梦魇巢穴获取日常声骸",
+                    "label": "每日缺声骸时刷残像聚落",
                     "maximum": null,
                     "minimum": null,
                     "options": null,
@@ -3100,7 +3200,7 @@
                     "default": [
                         "Check Weekly Garden"
                     ],
-                    "description": "每日顺序：先清体力，再刷噩梦巢穴，最后执行周常乐园；其他附加任务按各自配置执行。",
+                    "description": "每日目标完成并领奖后执行。聚落范围使用巢穴任务的设置，周常等附加任务按选项运行。",
                     "key": "Additional Tasks to Run After Daily Task",
                     "kind": "multi_selection",
                     "label": "每日任务后运行的附加任务",
@@ -3411,6 +3511,26 @@
             "fields": [
                 {
                     "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
+                {
+                    "allow_duplication": false,
                     "default": 1,
                     "description": "F2列表中第几个无音区",
                     "key": "Which Tacet Suppression to Farm",
@@ -3434,6 +3554,26 @@
             "fields": [
                 {
                     "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
+                {
+                    "allow_duplication": false,
                     "default": 1,
                     "description": "F2列表中第几个凝素领域",
                     "key": "Which Forgery Challenge to Farm",
@@ -3455,6 +3595,26 @@
             "description": "需要「黎那汐塔-角斗士的肖像」可传送",
             "enabled": false,
             "fields": [
+                {
+                    "allow_duplication": false,
+                    "default": "Prefer Double",
+                    "description": "体力和剩余额度足够时优先双倍；只剩一份奖励或体力不足时自动单倍。双倍计入两次领取额度。",
+                    "key": "Reward Claim Mode",
+                    "kind": "select",
+                    "label": "副本奖励领取",
+                    "maximum": null,
+                    "minimum": null,
+                    "option_labels": [
+                        "优先双倍",
+                        "仅单倍"
+                    ],
+                    "options": [
+                        "Prefer Double",
+                        "Single"
+                    ],
+                    "sub_config": false,
+                    "value": "Prefer Double"
+                },
                 {
                     "allow_duplication": false,
                     "default": "Shell Credit",

@@ -1,10 +1,206 @@
 #include "backend.hpp"
+#include "backend_capture_fixture.hpp"
 #include <QTcpSocket>
 #include <QtTest>
 using namespace okww;
 class NativeTests : public QObject {
     Q_OBJECT
   private slots:
+    void captureJitterWaitsWithoutDisarming_data() {
+        QTest::addColumn<QString>("source");
+        QTest::addColumn<QString>("backendName");
+        QTest::newRow("DSHOW") << QString("card") << QString("DSHOW");
+        QTest::newRow("MSMF") << QString("card") << QString("MSMF");
+        QTest::newRow("DXGI") << QString("desktop") << QString("DXGI");
+        QTest::newRow("WIN32") << QString("desktop") << QString("WIN32");
+    }
+    void captureJitterWaitsWithoutDisarming() {
+        QFETCH(QString, source);
+        QFETCH(QString, backendName);
+        auto config = Config::defaults();
+        config.set("capture.source", source);
+        config.set(source == "card" ? "capture.backend" : "capture.local_backend", backendName);
+        BackendCaptureFixture fixture(config);
+        auto &backend = fixture.backend;
+        backend.arm(true);
+        backend.nativeCommand({{"op", "key"}, {"code", 4}, {"down", true}});
+        backend.nativeCommand({{"op", "button"}, {"name", "left"}, {"down", true}});
+        fixture.publish(174.1941); // The reported failure: just beyond the 150 ms input limit.
+        QVERIFY(!backend.latestFrame());
+        QTRY_VERIFY_WITH_TIMEOUT(backend.snapshot()["box"].toObject()["keys"].toArray().isEmpty(), 1000);
+        auto state = backend.snapshot();
+        QVERIFY(state["armed"].toBool());
+        QVERIFY(state["actual"].toObject()["recovering"].toBool());
+        QVERIFY(state["input_fault"].toObject().isEmpty());
+        QVERIFY(state["error"].toString().isEmpty());
+        QCOMPARE(state["box"].toObject()["buttons"].toInt(), 0);
+        QVERIFY(backend.heartbeat());
+        const auto sent = fixture.history().size();
+        QVERIFY_THROWS_EXCEPTION(LocalInputBlocked,
+            backend.nativeCommand({{"op", "key"}, {"code", 8}, {"down", true}}));
+        QCOMPARE(fixture.history().size(), sent); // No new key-down or repeated release while stalled.
+        fixture.publish();
+        state = backend.snapshot();
+        QVERIFY(state["capture_connected"].toBool());
+        QVERIFY(state["armed"].toBool());
+        QVERIFY(!state["actual"].toObject()["recovering"].toBool());
+        backend.nativeCommand({{"op", "key"}, {"code", 8}, {"down", true}});
+        QVERIFY(backend.snapshot()["box"].toObject()["keys"].toArray().contains(8));
+        backend.arm(false);
+    }
+    void captureInputGuardWaitsBeforeTheWatchdogPolls_data() {
+        captureJitterWaitsWithoutDisarming_data();
+    }
+    void captureInputGuardWaitsBeforeTheWatchdogPolls() {
+        QFETCH(QString, source);
+        QFETCH(QString, backendName);
+        auto config = Config::defaults();
+        config.set("capture.source", source);
+        config.set(source == "card" ? "capture.backend" : "capture.local_backend", backendName);
+        BackendCaptureFixture fixture(config);
+        auto &backend = fixture.backend;
+        backend.arm(true);
+        fixture.publish(174.1941);
+        // No monitor wait: dispatch must use the same recovery policy itself.
+        QVERIFY_THROWS_EXCEPTION(LocalInputBlocked,
+            backend.nativeCommand({{"op", "button"}, {"name", "left"}, {"down", true}}));
+        QVERIFY(backend.heartbeat());
+        const auto blocked = backend.snapshot();
+        QVERIFY(blocked["armed"].toBool());
+        QVERIFY(blocked["input_fault"].toObject().isEmpty());
+        QCOMPARE(blocked["box"].toObject()["buttons"].toInt(), 0);
+        // A manual stop during recovery must never be undone by a later frame.
+        backend.arm(false);
+        fixture.publish();
+        QVERIFY(!backend.snapshot()["armed"].toBool());
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+            backend.nativeCommand({{"op", "button"}, {"name", "left"}, {"down", true}}));
+    }
+    void persistentCaptureOutageHasADistinctFaultAndRequiresExplicitRestart() {
+        BackendCaptureFixture fixture;
+        auto &backend = fixture.backend;
+        backend.arm(true);
+        fixture.publish(174.1941);
+        QVERIFY_THROWS_EXCEPTION(LocalInputBlocked,
+            backend.nativeCommand({{"op", "key"}, {"code", 8}, {"down", true}}));
+        fixture.expireRecovery();
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+            backend.nativeCommand({{"op", "key"}, {"code", 8}, {"down", true}}));
+        auto state = backend.snapshot();
+        QVERIFY(!state["armed"].toBool());
+        QVERIFY(!state["actual"].toObject()["recovering"].toBool());
+        const auto fault = state["input_fault"].toObject();
+        QCOMPARE(fault["reason"].toString(), QString("capture_recovery_timeout"));
+        QVERIFY(fault["recovery_elapsed_ms"].toDouble() >= 120000);
+        fixture.publish();
+        state = backend.snapshot();
+        QVERIFY(state["capture_connected"].toBool());
+        QVERIFY(!state["armed"].toBool());
+        QCOMPARE(state["input_fault"].toObject(), fault);
+        backend.arm(true);
+        QVERIFY(backend.snapshot()["input_fault"].toObject().isEmpty());
+    }
+    void terminatedCaptureThreadIsNotReportedAsTemporaryJitter() {
+        BackendCaptureFixture fixture;
+        auto &backend = fixture.backend;
+        backend.arm(true);
+        fixture.stopCapture();
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.snapshot()["armed"].toBool(), 1000);
+        const auto state = backend.snapshot();
+        QVERIFY(!state["actual"].toObject()["recovering"].toBool());
+        QCOMPARE(state["input_fault"].toObject()["reason"].toString(), QString("capture_failed"));
+        QVERIFY(!backend.heartbeat());
+    }
+    void desktopRecoveryStateIsClearedAfterReconnection() {
+        Capture capture(Config::defaults());
+        capture.desktopRecovery("DXGI interface invalidated");
+        QVERIFY(capture.recovering());
+        QVERIFY(capture.actual()["recovering"].toBool());
+        capture.desktopRecovery({});
+        QVERIFY(!capture.recovering());
+        QVERIFY(!capture.actual()["recovering"].toBool());
+        QVERIFY(capture.error().isEmpty());
+    }
+    void localInputBlocksForeignWindowsKeysAndSystemDialogsButAlwaysReleases() {
+        auto config=Config::defaults();
+        config.set("kmbox.protocol","sendinput"); config.set("kmbox.dry_run",true);
+        QJsonObject environment{{"executable","game.exe"},{"class","GameWindow"},{"title","游戏"},{"modifiers",8}};
+        Controller controller(config,[&] { return environment; });
+        controller.connect();
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,controller.key(21,true)); // R must not turn into Win+R.
+        QVERIFY(controller.history().isEmpty());
+        controller.release();
+        INPUT released{}; memcpy(&released,controller.history().last().constData(),sizeof(INPUT));
+        QVERIFY(released.ki.dwFlags & KEYEVENTF_KEYUP);
+        environment["modifiers"]=0;
+        environment["executable"]="explorer.exe"; environment["class"]="#32770"; environment["title"]="运行";
+        auto count=controller.history().size();
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,controller.key(21,true));
+        QCOMPARE(controller.history().size(),count);
+        try { controller.key(21,true); QFAIL("Run dialog must block game keys"); }
+        catch(const LocalInputBlocked &blocked) { QVERIFY(blocked.recovery==LocalInputBlocked::Recovery::DismissRunDialog); }
+        QCOMPARE(controller.state()["local_environment"].toObject()["title"].toString(),QString("运行"));
+        controller.key(41,true); controller.key(41,false); // Only Esc can cancel this confirmed dialog.
+        environment["title"]="删除文件";
+        try { controller.key(41,true); QFAIL("Unrelated shell dialog must not be dismissed"); }
+        catch(const LocalInputBlocked &blocked) { QVERIFY(blocked.recovery==LocalInputBlocked::Recovery::Wait); }
+        environment["title"]="运行";
+        QCOMPARE(controller.state()["local_environment"].toObject()["title"].toString(),QString("删除文件"));
+        controller.release();
+        environment["executable"]="game.exe"; environment["class"]="GameWindow";
+        controller.key(21,true); controller.key(21,false);
+        controller.key(226,true); controller.key(21,true); controller.release(); // Authored Alt chords keep their semantics.
+        QVERIFY(controller.state()["keys"].toArray().isEmpty());
+        QCOMPARE(controller.state()["modifiers"].toInt(),0);
+    }
+    void unchangedDesktopPollsKeepLivenessWithoutInventingFrames() {
+        auto config = Config::defaults();
+        config.set("capture.source", "desktop");
+        Capture capture(config);
+        QByteArray pixels(16 * 8 * 4, char(33));
+        const auto stamp = nowNs();
+        capture.publish(reinterpret_cast<const uint8_t *>(pixels.constData()), pixels.size(),
+                        16, 8, 64, PixelFormat::BGRA32, false, stamp, true);
+        const auto original = capture.latest();
+        capture.verifyUnchangedDesktop(stamp + 100);
+        auto verified = capture.latest();
+        QCOMPARE(verified->sequence, original->sequence);
+        QCOMPARE(verified->captured, stamp + 100);
+        QCOMPARE(original->captured, stamp);
+        QCOMPARE(verified->bytes.constData(), original->bytes.constData());
+        capture.publish(reinterpret_cast<const uint8_t *>(pixels.constData()), pixels.size(),
+                        16, 8, 64, PixelFormat::BGRA32, false, stamp + 200, true);
+        QCOMPARE(capture.latest()->sequence, original->sequence);
+        QVERIFY(!capture.next(original->sequence));
+        pixels[0] = char(99);
+        capture.publish(reinterpret_cast<const uint8_t *>(pixels.constData()), pixels.size(),
+                        16, 8, 64, PixelFormat::BGRA32, false, stamp + 300, true);
+        QCOMPARE(capture.latest()->sequence, original->sequence + 1);
+        QCOMPARE(verified->bytes[0], char(33));
+        QCOMPARE(capture.latest()->bytes[0], char(99));
+        QCOMPARE(capture.actual()["unchanged_polls"].toInt(), 2);
+    }
+    void retiredAutomaticRegionSettingDoesNotSurviveLoading() {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("dualpc.json");
+        for (const bool enabled : {true, false}) {
+            auto config = Config::defaults();
+            config.set("capture.source", "desktop");
+            config.set("capture.local_backend", "WIN32");
+            const QJsonObject target{{"kind", "monitor"}, {"id", "test"}};
+            config.set("capture.local_target", target);
+            config.set("capture.crop", QJsonArray{10, 20, 1280, 720});
+            config.set("kmbox.protocol", "sendinput");
+            config.set("capture.auto_game_region", enabled);
+            writeJson(path, config.json);
+            const auto loaded = Config::load(path);
+            QVERIFY(!loaded.json["capture"].toObject().contains("auto_game_region"));
+            QCOMPARE(loaded.get("capture.local_target").toObject(), target);
+            QCOMPARE(loaded.get("capture.crop"), config.get("capture.crop"));
+            loaded.save(path);
+            QVERIFY(!readJson(path)["capture"].toObject().contains("auto_game_region"));
+        }
+    }
     void localModesKeepLegacyDeviceSettingsAndValidateTheirOwnFields() {
         auto config = Config::defaults();
         QCOMPARE(config.s("capture.source"), QString("card"));
@@ -238,7 +434,8 @@ class NativeTests : public QObject {
                 if (selected.s("capture.device_path") == "card-b")
                     fail("fixture: device unavailable");
                 return selected.n("capture.device_index") == 0
-                    ? std::vector<Mode>{{1920, 1080, 120, "NV12"}, {1920, 1080, 240, "NV12"}}
+                    ? std::vector<Mode>{{1920, 1080, 120, "NV12"}, {1920, 1080, 240, "NV12"},
+                                        {1920, 1080, 60, "MJPG"}, {1280, 720, 60, "YUY2"}}
                     : std::vector<Mode>{{1280, 720, 60, "YUY2"}};
             });
         QCOMPARE(backend, QString("DSHOW"));
@@ -247,10 +444,26 @@ class NativeTests : public QObject {
         QCOMPARE(result[0].toObject()["modes"].toArray().size(), 2);
         QVERIFY(result[1].toObject()["modes"].toArray().isEmpty());
         QVERIFY(result[1].toObject()["error"].toString().contains("unavailable"));
-        QCOMPARE(result[2].toObject()["modes"].toArray()[0].toObject()["fourcc"].toString(), QString("YUY2"));
+        QVERIFY(result[2].toObject()["modes"].toArray().isEmpty());
         QCOMPARE(Config{requests[2].toObject()}.s("capture.device_name"), QString("HDMI C"));
         QCOMPARE(Config{requests[2].toObject()}.s("capture.device_path"), QString("card-c"));
         QCOMPARE(config.json, original);
+    }
+    void legacyCardFormatsLoadAsNv12AndOtherFormatsCannotStart() {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("dualpc.json");
+        auto config = Config::defaults();
+        for (const auto &format : {"", "YUY2", "UYVY", "MJPG", "RGB3", "RGB4", "I420", "IYUV", "P010"}) {
+            config.set("capture.fourcc", format);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, config.validateCapture());
+            writeJson(path, config.json); // An old profile predating the NV12-only setting.
+            const auto loaded = Config::load(path);
+            QCOMPARE(loaded.s("capture.fourcc"), QString("NV12"));
+            QCOMPARE(loaded.n("capture.width"), config.n("capture.width"));
+            QCOMPARE(loaded.n("capture.height"), config.n("capture.height"));
+            QCOMPARE(loaded.d("capture.fps"), config.d("capture.fps"));
+            loaded.validateCapture();
+        }
     }
     void previewKeepsPublishedFramesImmutableAndHonorsPaddedRows() {
         Frame frame;

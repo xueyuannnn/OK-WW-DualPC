@@ -13,9 +13,7 @@ bool isNestExitText(QString text);
 bool isNestCompleteText(QString text);
 enum class RestartAction { Observe, Wait, Menu, Click, Complete, Fail };
 class RestartTracker {
-    std::array<int, 4> actions_{};
-    bool requested_ = false, loading_ = false;
-    int pending_ = 0;
+    rust::Restart state_;
 
   public:
     RestartAction step(RestartKind kind, bool hud, bool realm);

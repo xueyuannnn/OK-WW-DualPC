@@ -2,6 +2,7 @@
 #include "backend.hpp"
 #include "app_info.hpp"
 #include "classic_ui.hpp"
+#include "update.hpp"
 #include <QtConcurrent>
 #include <QtWidgets>
 #include <optional>
@@ -54,6 +55,8 @@ class Window final : public QMainWindow {
     bool restartEngine_ = false, previewOnTop_ = false;
     bool teamOperation_ = false;
     bool devicesRunning_ = false, stopRequested_ = false, stoppingDevices_ = false, taskStopped_ = false;
+    QString executionError_, retryTaskId_;
+    QPushButton *retryExecution_ = nullptr;
     QWidget *deviceSettings_ = nullptr;
     QLabel *deviceSaveStatus_ = nullptr;
     QTimer deviceSaveTimer_;
@@ -77,6 +80,19 @@ class Window final : public QMainWindow {
     QLabel *captureScanStatus_ = nullptr;
     QLabel *boxTestStatus_ = nullptr;
     bool minimizeToTray_ = false;
+    update::Client *updateClient_ = nullptr;
+    QPointer<QDialog> updateDialog_;
+    QPointer<QProcess> updatePrepare_;
+    QLabel *updateStatus_ = nullptr;
+    QPushButton *checkUpdates_ = nullptr;
+    QList<update::Release> appReleases_;
+    QString pendingUpdatePlan_;
+    bool manualUpdateCheck_ = false;
+    QWidget *buildAppUpdates();
+    void checkAppUpdates(bool manual);
+    void showAppUpdates();
+    void prepareAppUpdate(const update::Release &release, QDialog *dialog);
+    bool launchUpdateInstaller();
     QString hotkey_ = "F9";
     QSystemTrayIcon *tray_ = nullptr;
     QJsonArray editingTeam_;
@@ -105,6 +121,9 @@ class Window final : public QMainWindow {
     std::array<std::array<QLabel *, 3>, 2> taskInfoValues_{};
     qint64 taskInfoElapsedSeconds_ = 0;
     QJsonObject combatInfo_;
+    QJsonObject taskProgress_;
+    QList<QPointer<QWidget>> taskProgressPanels_;
+    QWidget *buildExecutionProgress();
     QPointer<QMessageBox> runtimeErrorDialog_;
     void showExecutionError(const QString &error, QJsonObject event = {});
     QElapsedTimer taskRunClock_;

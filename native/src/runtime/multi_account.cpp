@@ -1,120 +1,352 @@
 #include "multi_account.hpp"
+#include "workflow_abi.hpp"
 namespace okww::runtime {
 QString normalizeAccount(QString value) {
-    value = value.toLower().trimmed().remove(QRegularExpression("\\s+"));
-    return value.replace('0', 'o').replace(".con", ".com");
+    rust::workflowRun(rust::WorkflowMethod::NormalizeAccount, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::LowerTrimAccount: {
+                              value = value.toLower().trimmed();
+                              break;
+                          }
+                          case rust::WorkflowOp::RemoveAccountWhitespace: {
+                              value.remove(QRegularExpression("\\s+"));
+                              break;
+                          }
+                          case rust::WorkflowOp::ReplaceAccountZeros: {
+                              value.replace('0', 'o');
+                              break;
+                          }
+                          case rust::WorkflowOp::ReplaceAccountDomain: {
+                              value.replace(".con", ".com");
+                              break;
+                          }
+                          default:
+                              fail("Rust 账号宿主无效");
+                          }
+                      });
+    return value;
 }
 void AccountCycle::complete(const QString &account) {
-    const auto name = normalizeAccount(account);
-    if (name.isEmpty())
-        fail("未识别到账号，停止切换以免重复执行日常");
-    completed_.insert(name);
+    QString name;
+    rust::workflowRun(rust::WorkflowMethod::CompleteAccount, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::NormalizeCycleAccount: {
+                              name = normalizeAccount(account);
+                              break;
+                          }
+                          case rust::WorkflowOp::NormalizedAccountEmpty: {
+                              out[0] = name.isEmpty();
+                              break;
+                          }
+                          case rust::WorkflowOp::InsertCompletedAccount: {
+                              completed_.insert(name);
+                              break;
+                          }
+                          case rust::WorkflowOp::AccountFailure: {
+                              fail("未识别到账号，停止切换以免重复执行日常");
+                              break;
+                          }
+                          default:
+                              fail("Rust 账号宿主无效");
+                          }
+                      });
 }
 bool AccountCycle::completed(const QString &account) const {
-    return completed_.contains(normalizeAccount(account));
+    QString name;
+    return rust::workflowRun(rust::WorkflowMethod::AccountCompleted, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::NormalizeCycleAccount: {
+                                     name = normalizeAccount(account);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::CycleContainsAccount: {
+                                     out[0] = completed_.contains(name);
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 账号宿主无效");
+                                 }
+                             })[0] != 0;
 }
 std::optional<TextLine> AccountCycle::next(const QVector<TextLine> &accounts) const {
-    for (const auto &account : accounts)
-        if (!normalizeAccount(account.text).isEmpty() && !completed(account.text))
-            return account;
-    return {};
+    const std::array args{double(accounts.size())};
+    const auto result = rust::workflowRun(
+        rust::WorkflowMethod::NextAccount, args, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::NextAccountNameEmpty: {
+                out[0] = normalizeAccount(accounts.at(int(a[0])).text).isEmpty();
+                break;
+            }
+            case rust::WorkflowOp::NextAccountCompleted: {
+                out[0] = completed(accounts.at(int(a[0])).text);
+                break;
+            }
+            default:
+                fail("Rust 账号宿主无效");
+            }
+        });
+    return result[0] < 0 ? std::optional<TextLine>{} : std::optional<TextLine>{accounts.at(int(result[0]))};
 }
-QVector<TextLine> MultiAccountDaily::accounts() {
-    // The login dialog belongs to the game PC. Never inspect local Windows controls.
-    QVector<TextLine> result;
+int AccountCycle::count() const {
+    return int(rust::workflowRun(rust::WorkflowMethod::AccountCount, {},
+                                 [&](rust::WorkflowOp op, const double *a, double *out) {
+                                     switch (op) {
+                                     case rust::WorkflowOp::AccountCycleCount: {
+                                         out[0] = completed_.size();
+                                         break;
+                                     }
+                                     default:
+                                         fail("Rust 账号宿主无效");
+                                     }
+                                 })[0]);
+}
+std::optional<TextLine> MultiAccountDaily::rustRun(int method, AccountCycle *cycle,
+                                                   const std::function<void()> &daily,
+                                                   QVector<TextLine> *result) {
+    QVector<TextLine> text, lines;
+    std::optional<TextLine> selected, login;
+    TextLine displayed;
+    QStringList names;
+    QString previous, fingerprint, expected;
+    std::optional<AccountCycle> owned;
     const QRegularExpression pattern("(?:\\*{3,}|[•·]{3,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})");
-    for (const auto &line : c_.text(.15, .12, .85, .85, .65))
-        if (pattern.match(line.text).hasMatch())
-            result.append(line);
-    std::sort(result.begin(), result.end(),
-              [](const auto &a, const auto &b) { return a.box.y() < b.box.y(); });
-    return result;
-}
-TextLine MultiAccountDaily::currentAccount() {
-    QVector<TextLine> lines;
-    if (!c_.wait(
-            [&] {
+    rust::workflowRun(
+        rust::WorkflowMethod(method), {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::ReadAccountText: {
+                text = c_.text(.15, .12, .85, .85, .65);
+                break;
+            }
+            case rust::WorkflowOp::AccountTextCount: {
+                out[0] = double(text.size());
+                break;
+            }
+            case rust::WorkflowOp::AccountTextMatches: {
+                out[0] = pattern.match(text.at(int(a[0])).text).hasMatch();
+                break;
+            }
+            case rust::WorkflowOp::AppendAccountText: {
+                lines.append(text.at(int(a[0])));
+                break;
+            }
+            case rust::WorkflowOp::SortAccountText: {
+                std::sort(lines.begin(), lines.end(),
+                          [](const auto &a, const auto &b) { return a.box.y() < b.box.y(); });
+                *result = lines;
+                break;
+            }
+            case rust::WorkflowOp::ReadAccounts: {
                 lines = accounts();
-                return lines.size() == 1;
-            },
-            60, .4))
-        fail("无法唯一识别登录框当前账号，请收起账号列表并确认已保存账号；不会尝试输入密码");
-    return lines.first();
-}
-void MultiAccountDaily::logout() {
-    navigation_.ensureMain(100);
-    c_.key("esc", 1.5);
-    if (!c_.wait([&] { return bool(c_.find("esc_setting")); }, 10))
-        fail("未确认进入设置菜单，停止切换账号");
-    c_.clickRelative(.04, .96, 1);
-    navigation_.confirmDialog();
-    c_.state->loggedIn = false;
-    currentAccount();
-}
-std::optional<TextLine> MultiAccountDaily::choose(AccountCycle &cycle) {
-    auto displayed = currentAccount();
-    c_.click(displayed, .8);
-    QString previous;
-    std::optional<TextLine> selected;
-    const int pages = std::clamp(c_.setting("Account List Pages", 12).toInt(), 1, 40);
-    for (int page = 0; page < pages; ++page) {
-        const auto lines = accounts();
-        if (lines.empty())
-            fail("账号列表不可读，停止切换账号");
-        selected = cycle.next(lines);
-        if (selected)
-            break;
-        QStringList names;
-        for (const auto &line : lines)
-            names << normalizeAccount(line.text);
-        const auto fingerprint = names.join('|');
-        if (fingerprint == previous) {
-            c_.key("esc", .3);
-            return {};
-        }
-        previous = fingerprint;
-        c_.input.scroll(-3, lines.last().center());
-        c_.sleep(.5);
-    }
-    if (!selected)
-        fail("账号列表达到翻页上限，未确认全部完成，已停止");
-    c_.click(*selected, .8);
-    const auto expected = normalizeAccount(selected->text);
-    if (!c_.wait(
-            [&] {
-                const auto a = accounts();
-                return a.size() == 1 && normalizeAccount(a[0].text) == expected;
-            },
-            8, .3))
-        fail("选择后显示的账号不一致，已停止以免重复执行");
+                break;
+            }
+            case rust::WorkflowOp::AccountLineCount: {
+                out[0] = double(lines.size());
+                break;
+            }
+            case rust::WorkflowOp::SelectFirstAccountLine: {
+                selected = lines.first();
+                break;
+            }
+            case rust::WorkflowOp::Now: {
+                out[0] = c_.execution.now();
+                break;
+            }
+            case rust::WorkflowOp::Checkpoint: {
+                c_.execution.checkpoint();
+                break;
+            }
+            case rust::WorkflowOp::ExecutionWait: {
+                c_.execution.wait(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::Refresh: {
+                c_.refresh();
+                break;
+            }
+            case rust::WorkflowOp::InvalidCondition: {
+                fail("等待条件参数无效");
+                break;
+            }
+            case rust::WorkflowOp::NavEnsureMain: {
+                navigation_.ensureMain(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::AccountEscape: {
+                c_.key("esc", a[0]);
+                break;
+            }
+            case rust::WorkflowOp::AccountSettingsFound: {
+                out[0] = bool(c_.find("esc_setting"));
+                break;
+            }
+            case rust::WorkflowOp::ClickRelative: {
+                c_.clickRelative(a[0], a[1], a[2]);
+                break;
+            }
+            case rust::WorkflowOp::ConfirmAccountLogout: {
+                navigation_.confirmDialog();
+                break;
+            }
+            case rust::WorkflowOp::ResetAccountLoggedIn: {
+                c_.state->loggedIn = false;
+                break;
+            }
+            case rust::WorkflowOp::ReadCurrentAccount: {
+                displayed = currentAccount();
+                break;
+            }
+            case rust::WorkflowOp::ClickAccountLine: {
+                c_.click(displayed, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::AccountPageLimit: {
+                out[0] = c_.setting("Account List Pages", 12).toInt();
+                break;
+            }
+            case rust::WorkflowOp::ReadNextAccount: {
+                selected = cycle->next(lines);
+                break;
+            }
+            case rust::WorkflowOp::HasSelectedAccount: {
+                out[0] = selected.has_value();
+                break;
+            }
+            case rust::WorkflowOp::ClearAccountNames: {
+                names.clear();
+                break;
+            }
+            case rust::WorkflowOp::AppendNormalizedAccountName: {
+                names.append(normalizeAccount(lines.at(int(a[0])).text));
+                break;
+            }
+            case rust::WorkflowOp::JoinAccountNames: {
+                fingerprint = names.join('|');
+                break;
+            }
+            case rust::WorkflowOp::AccountFingerprintUnchanged: {
+                out[0] = fingerprint == previous;
+                break;
+            }
+            case rust::WorkflowOp::StoreAccountFingerprint: {
+                previous = fingerprint;
+                break;
+            }
+            case rust::WorkflowOp::ClearSelectedAccount: {
+                selected.reset();
+                break;
+            }
+            case rust::WorkflowOp::ScrollAccountList: {
+                c_.input.scroll(-3, lines.last().center());
+                break;
+            }
+            case rust::WorkflowOp::Sleep: {
+                c_.sleep(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::ClickSelectedAccount: {
+                c_.click(*selected, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::ReadExpectedAccount: {
+                expected = normalizeAccount(selected->text);
+                break;
+            }
+            case rust::WorkflowOp::AccountSelectionMatches: {
+                out[0] = normalizeAccount(lines.first().text) == expected;
+                break;
+            }
+            case rust::WorkflowOp::CreateAccountCycle: {
+                owned.emplace();
+                cycle = &*owned;
+                break;
+            }
+            case rust::WorkflowOp::MaximumAccountCount: {
+                out[0] = c_.setting("Maximum Accounts", 20).toInt();
+                break;
+            }
+            case rust::WorkflowOp::RunAccountDaily: {
+                daily();
+                break;
+            }
+            case rust::WorkflowOp::LogoutAccount: {
+                logout();
+                break;
+            }
+            case rust::WorkflowOp::CompleteCurrentAccount: {
+                cycle->complete(currentAccount().text);
+                break;
+            }
+            case rust::WorkflowOp::HasInfo: {
+                out[0] = bool(c_.info);
+                break;
+            }
+            case rust::WorkflowOp::AccountCountInfo: {
+                c_.info("多账号日常", QString("已完成 %1 个账号").arg(cycle->count()));
+                break;
+            }
+            case rust::WorkflowOp::ChooseAccount: {
+                selected = choose(*cycle);
+                break;
+            }
+            case rust::WorkflowOp::AccountCycleCount: {
+                out[0] = cycle->count();
+                break;
+            }
+            case rust::WorkflowOp::ReadAccountLogin: {
+                login = matchingText(c_.text(.25, .25, .75, .85, .65),
+                                     "登录|登入|登錄|Log\\s*[Ii]n|Sign\\s*[Ii]n");
+                break;
+            }
+            case rust::WorkflowOp::HasAccountLogin: {
+                out[0] = login.has_value();
+                break;
+            }
+            case rust::WorkflowOp::ClickAccountLogin: {
+                c_.click(*login, 2);
+                break;
+            }
+            case rust::WorkflowOp::CompleteSelectedAccount: {
+                cycle->complete(selected->text);
+                break;
+            }
+            case rust::WorkflowOp::LoggedOutAccountMatches: {
+                out[0] = normalizeAccount(displayed.text) == normalizeAccount(selected->text);
+                break;
+            }
+            case rust::WorkflowOp::AccountFailure: {
+                const QStringList errors{
+                    "未识别到账号，停止切换以免重复执行日常",
+                    "无法唯一识别登录框当前账号，请收起账号列表并确认已保存账号；不会尝试输入密码",
+                    "未确认进入设置菜单，停止切换账号",
+                    "账号列表不可读，停止切换账号",
+                    "账号列表达到翻页上限，未确认全部完成，已停止",
+                    "选择后显示的账号不一致，已停止以免重复执行",
+                    "达到账号数量上限，剩余账号未运行",
+                    "未识别到登录按钮，停止切换账号",
+                    "日常完成后登录框显示的账号发生变化，已停止"};
+                fail(errors.at(int(a[0])));
+                break;
+            }
+            default:
+                fail("Rust 多账号宿主无效");
+            }
+        });
     return selected;
 }
+QVector<TextLine> MultiAccountDaily::accounts() {
+    QVector<TextLine> result;
+    rustRun(int(rust::WorkflowMethod::ReadAccounts), nullptr, {}, &result);
+    return result;
+}
+TextLine MultiAccountDaily::currentAccount() { return *rustRun(int(rust::WorkflowMethod::CurrentAccount)); }
+void MultiAccountDaily::logout() { rustRun(int(rust::WorkflowMethod::LogoutAccount)); }
+std::optional<TextLine> MultiAccountDaily::choose(AccountCycle &cycle) {
+    return rustRun(int(rust::WorkflowMethod::ChooseAccount), &cycle);
+}
 void MultiAccountDaily::run(const std::function<void()> &daily) {
-    AccountCycle cycle;
-    const int maximum = std::clamp(c_.setting("Maximum Accounts", 20).toInt(), 1, 100);
-    daily();
-    logout();
-    cycle.complete(currentAccount().text);
-    for (;;) {
-        if (c_.info)
-            c_.info("多账号日常", QString("已完成 %1 个账号").arg(cycle.count()));
-        const auto selected = choose(cycle);
-        if (!selected)
-            return;
-        if (cycle.count() >= maximum)
-            fail("达到账号数量上限，剩余账号未运行");
-        const auto login =
-            matchingText(c_.text(.25, .25, .75, .85, .65), "登录|登入|登錄|Log\\s*[Ii]n|Sign\\s*[Ii]n");
-        if (!login)
-            fail("未识别到登录按钮，停止切换账号");
-        c_.click(*login, 2);
-        c_.state->loggedIn = false;
-        navigation_.ensureMain(180);
-        daily();
-        cycle.complete(selected->text);
-        logout();
-        if (normalizeAccount(currentAccount().text) != normalizeAccount(selected->text))
-            fail("日常完成后登录框显示的账号发生变化，已停止");
-    }
+    rustRun(int(rust::WorkflowMethod::RunAccounts), nullptr, daily);
 }
 } // namespace okww::runtime

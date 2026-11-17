@@ -11,6 +11,7 @@ QVector<EchoTarget> echoRotationTargets(const QJsonObject &config, int bosses = 
 bool weeklyMaterialRewardConfirmed(const QVector<TextLine> &lines);
 void awaitWeeklyMaterialReward(TaskContext &context);
 class EchoFarm {
+    friend struct EchoFarmContractAccess;
     TaskContext &c_;
     CombatSession &combat_;
     Navigation navigation_;
@@ -26,6 +27,7 @@ class EchoFarm {
     void checkRealm(double seconds);
     void bossLevel();
     void enterFromF();
+    double rustTravel(int method);
     void teleport();
     void nearestBoss();
     void recognizeBoss();

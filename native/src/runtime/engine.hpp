@@ -58,7 +58,7 @@ class Engine final : public QObject {
   public:
     Engine(Backend &backend, QString root, QString data, QObject *parent = nullptr);
     ~Engine() override;
-    bool idle() const { return paused_ && workerFinished_ && !teamSwitchBusy_; }
+    bool idle() const;
     void load();
     void command(const QJsonObject &request);
   signals:

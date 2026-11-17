@@ -23,6 +23,8 @@ class NightmareFarm {
     bool capturedNotice();
     bool walkEcho();
     bool waitCombat(double timeout);
+    std::array<double, 3> rustRun(int method, std::initializer_list<double> args,
+                                  const QJsonObject &supplied = {}, const NestTarget *target = nullptr);
 
   public:
     NightmareFarm(TaskContext &context, CombatSession &combat, EchoDetector &detector)

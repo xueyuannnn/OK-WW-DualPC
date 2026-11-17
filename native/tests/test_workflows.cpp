@@ -6,8 +6,10 @@
 #include "runtime/daily.hpp"
 #include "runtime/multi_account.hpp"
 #include "runtime/combat_session.hpp"
+#include "runtime/diagnostics.hpp"
 #include "runtime/resource_failure.hpp"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <QtTest>
 using namespace okww;
 using namespace okww::runtime;
@@ -115,6 +117,306 @@ struct Scenes {
 class WorkflowTests : public QObject {
     Q_OBJECT
   private slots:
+    void remoteCompressionKeepsPartyAndTargetRecognition_data() {
+        QTest::addColumn<int>("quality");
+        QTest::addColumn<int>("height");
+        QTest::addColumn<bool>("locked");
+        QTest::newRow("clear")<<95<<1080<<true;
+        QTest::newRow("remote-720p")<<45<<720<<true;
+        QTest::newRow("remote-540p")<<35<<540<<true;
+        QTest::newRow("empty-720p")<<45<<720<<false;
+        QTest::newRow("empty-540p")<<35<<540<<false;
+    }
+    void remoteCompressionKeepsPartyAndTargetRecognition() {
+        QFETCH(int,quality); QFETCH(int,height);
+        QFETCH(bool,locked);
+        Scenes s;
+        s.frame("fight",{locked?"has_target":"no_target","char_2_text","char_3_text"});
+        auto image=s.frames["fight"];
+        cv::Mat small,compressed;
+        cv::resize(image,small,{height*16/9,height},0,0,cv::INTER_AREA);
+        std::vector<uchar> encoded;
+        cv::imencode(".jpg",small,encoded,{cv::IMWRITE_JPEG_QUALITY,quality});
+        compressed=cv::imdecode(encoded,cv::IMREAD_COLOR);
+        cv::resize(compressed,compressed,image.size(),0,0,cv::INTER_LINEAR);
+        compressed.convertTo(compressed,-1,.82,8);
+        s.frames["remote"]=compressed;
+        s.show("remote");
+        const auto hud=s.c.party();
+        QVERIFY(hud.visible); QCOMPARE(hud.current,0); QCOMPARE(hud.size,3);
+        CombatVision vision(s.c,s.root+"/native/resources/characters.json");
+        QCOMPARE(vision.hasTarget(),locked);
+        s.show("blank");
+        QVERIFY(!s.c.party().visible);
+        QVERIFY(!vision.hasTarget());
+        QVERIFY(s.events.isEmpty());
+    }
+    void cooldownCountersSurviveDimmingAndTemporaryOcrLoss() {
+        Scenes s;
+        s.words["world"]={s.word("12,3",.83,.89,.02),s.word("8",.93,.89,.02),
+                           s.word("2",.83,.86,.01,.01)};
+        s.show("world");
+        CombatVision vision(s.c,s.root+"/native/resources/characters.json");
+        FreezeTimeline timeline;
+        vision.refreshCooldowns(0);
+        QCOMPARE(vision.cooldown(Skill::Resonance,0,timeline,0),12.3);
+        QCOMPARE(vision.cooldown(Skill::Liberation,0,timeline,0),8.);
+        s.words["world"]={}; s.clock.time=1; s.c.refresh();
+        vision.refreshCooldowns(0);
+        QVERIFY(std::abs(vision.cooldown(Skill::Liberation,0,timeline,1)-7.)<.001);
+        s.scaledText=[&](const cv::Mat &,QRect) {return QVector<TextLine>{{"6.4",{100,80,30,20},.9}};};
+        s.clock.time=2; s.c.refresh(); vision.refreshCooldowns(0);
+        QCOMPARE(vision.cooldown(Skill::Resonance,0,timeline,2),6.4);
+        vision.reset();
+        QCOMPARE(vision.cooldown(Skill::Liberation,0,timeline,2),0.);
+    }
+    void rewardModeChoosesTheCorrectButtonAndDoesNotExceedQuota_data() {
+        QTest::addColumn<QString>("mode"); QTest::addColumn<int>("available");
+        QTest::addColumn<int>("remaining"); QTest::addColumn<int>("expected");
+        QTest::newRow("double")<<QString("Prefer Double")<<240<<120<<120;
+        QTest::newRow("single-selected")<<QString("Single")<<240<<120<<60;
+        QTest::newRow("last-one")<<QString("Prefer Double")<<240<<60<<60;
+        QTest::newRow("not-enough-for-double")<<QString("Prefer Double")<<60<<120<<60;
+    }
+    void rewardModeChoosesTheCorrectButtonAndDoesNotExceedQuota() {
+        QFETCH(QString,mode); QFETCH(int,available); QFETCH(int,remaining); QFETCH(int,expected);
+        Scenes s;
+        s.c.task="TacetTask2"; s.c.taskOverrides={{"Reward Claim Mode",mode}};
+        s.frame("claim",{"claim_stamina_sign","cancel_button_hcenter_vcenter","confirm_btn_hcenter_vcenter"});
+        s.words["claim"]={s.word(QString("%1/240").arg(available),.7,.03)};
+        const auto wanted=s.templates.box(expected==120?"confirm_btn_hcenter_vcenter":"cancel_button_hcenter_vcenter",s.size).center();
+        int claims=0;
+        s.action=[&](auto event) {
+            if (s.leftUp(event)) {
+                QVERIFY((s.pointer-wanted).manhattanLength()<5);
+                ++claims; s.scene="world";
+            }
+        };
+        s.show("claim");
+        auto result=claimStamina(s.c,60,remaining,true);
+        QCOMPARE(result.used,expected); QCOMPARE(claims,1);
+        QVERIFY(result.used<=remaining);
+    }
+    void combatCanStartFromEnemyHealthWhenTheLockMarkerIsMissing() {
+        Scenes s;
+        s.frame("bar-only", {"char_2_text", "char_3_text"});
+        cv::rectangle(s.frames["bar-only"],cv::Rect(500,220,160,6),cv::Scalar(65,70,200),cv::FILLED);
+        s.c.task="AutoCombatTask";
+        s.show("bar-only");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        combat.targetEnemyTimeout=.4;
+        QVERIFY(combat.active());
+        QVERIFY(s.c.state->inCombat);
+        QVERIFY(s.input.idle());
+    }
+    void remoteSystemDialogIsDismissedAndCombatResumesWithoutRetryingTheTask() {
+        Scenes s;
+        s.frame("fight", {"has_target", "char_2_text", "char_3_text"});
+        s.words["fight"]={s.word("Windows将根据所输入的名称打开相应程序",.03,.8,.28),
+                          s.word("打开(O)：",.02,.86),s.word("浏览(B)",.16,.93)};
+        s.c.task="AutoCombatTask"; s.show("fight");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        QVERIFY(combat.active());
+        s.clock.time=2;
+        int escapes=0;
+        s.action=[&](auto event) {
+            if(s.keyUp(event,Input::keyCode("esc"))) { ++escapes; s.words["fight"]={}; }
+        };
+        combat.refreshObservation();
+        QCOMPARE(escapes,1);
+        QVERIFY(combat.active());
+        QVERIFY(s.c.state->inCombat);
+        QVERIFY(s.input.idle());
+        for(auto event:s.events) {
+            if(event["op"]=="key") QCOMPARE(event["code"].toInt(),Input::keyCode("esc"));
+            else QCOMPARE(event["op"].toString(),QString("release"));
+        }
+        QVERIFY(!systemRunDialogConfirmed(s.words["fight"]));
+    }
+    void combatWaitsForTransientHiddenHudWithoutInputsOrEndCallbacks() {
+        Scenes s;
+        s.frame("fight", {"has_target", "char_2_text", "char_3_text"});
+        s.c.task="AutoCombatTask";
+        s.show("fight");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        QVERIFY(combat.active());
+        s.show("blank");
+        s.clock.tick=[&] { if(s.clock.time>=.5) s.scene="fight"; };
+        QVERIFY(combat.active());
+        QVERIFY(s.c.state->inCombat);
+        QVERIFY(s.clock.time>=.5 && s.clock.time<2);
+        for(auto event:s.events) QCOMPARE(event["op"].toString(),QString("release"));
+    }
+    void shiftedHudNumbersAndHighlightedEnemyBarRemainRecognizable() {
+        Scenes s;
+        auto image=s.frames["blank"].clone();
+        for(const auto &name:{"char_1_text","char_2_text"}) {
+            auto box=s.templates.box(name,s.size);
+            auto pattern=s.templates.pattern(name,s.size);
+            if(pattern.channels()==1) cv::cvtColor(pattern,pattern,cv::COLOR_GRAY2BGR);
+            pattern.copyTo(image(cv::Rect(box.x(),box.y()+9,pattern.cols,pattern.rows)));
+        }
+        const cv::Rect bar(870,239,306,16);
+        cv::rectangle(image,bar,cv::Scalar(100,140,245),cv::FILLED);
+        for(int x=900;x<1160;x+=45) cv::rectangle(image,cv::Rect(x,241,5,10),cv::Scalar(250,250,250),cv::FILLED);
+        s.frames["shifted-hud"]=image;
+        s.words["shifted-hud"]={s.word("Lv.",.53,.19,.03),s.word("88",.562,.19,.025)};
+        s.show("shifted-hud");
+        auto hud=s.c.party();
+        QVERIFY(hud.visible); QCOMPARE(hud.current,2); QCOMPARE(hud.size,3);
+        CombatVision vision(s.c,s.root+"/native/resources/characters.json");
+        QVERIFY(vision.shiftedHealthBar());
+        s.words["shifted-hud"]={};
+        QVERIFY(!vision.shiftedHealthBar()); // Red UI alone is never combat evidence.
+    }
+    void displacedEmptyTargetDoesNotPressEscapeDuringCombat() {
+        Scenes s;
+        const auto box=s.templates.box("has_target",s.size);
+        auto pattern=s.templates.pattern("no_target",s.size);
+        if (pattern.channels()==1) cv::cvtColor(pattern,pattern,cv::COLOR_GRAY2BGR);
+        const cv::Rect at(box.x(), box.y()-box.height()/3, pattern.cols, pattern.rows);
+        pattern.copyTo(s.frames["world"](at));
+        s.show("world");
+        CombatVision vision(s.c,s.root+"/native/resources/characters.json");
+        const auto observation=vision.targetObservation(false,true);
+        QVERIFY(observation.matched);
+        QVERIFY(!observation.locked);
+        QVERIFY(observation.extended);
+        CombatSession combat(s.c,s.root,s.directory.path());
+        QVERIFY(!combat.targetLocked());
+        QVERIFY(s.events.isEmpty());
+        QCOMPARE(s.clock.time,0.);
+    }
+    void combatReacquisitionAcceptsHealthReturningWithoutALockMarker() {
+        Scenes s;
+        s.frame("locked", {"has_target", "char_2_text", "char_3_text"});
+        s.frame("bar", {"char_2_text", "char_3_text"});
+        cv::rectangle(s.frames["bar"], cv::Rect(500,220,160,6), cv::Scalar(65,70,200), cv::FILLED);
+        s.c.task = "AutoCombatTask";
+        s.show("locked");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        combat.targetEnemyTimeout = .4;
+        QVERIFY(combat.active());
+        s.show("world");
+        s.action = [&](auto e) {
+            if (e["op"] == "button" && e["name"] == "middle" && !e["down"].toBool()) s.scene = "bar";
+        };
+        QVERIFY(combat.active());
+        QCOMPARE(s.scene,QString("bar"));
+        QVERIFY(s.c.state->inCombat);
+        QVERIFY(s.input.idle());
+    }
+    void dailyRecoversStaminaFromScrolledPanelAndClosesEveryRewardPopover_data() {
+        QTest::addColumn<bool>("fullscreenReward");
+        QTest::newRow("inline-item-popover") << false;
+        QTest::newRow("fullscreen-reward") << true;
+    }
+    void dailyRecoversStaminaFromScrolledPanelAndClosesEveryRewardPopover() {
+        QFETCH(bool, fullscreenReward);
+        Scenes s;
+        s.frame("top", {"gray_book_quest"}); s.frame("bottom", {"gray_book_quest"}); s.frame("reward", {});
+        const QVector<TextLine> header{s.word("活跃度", .15, .12), s.word("活跃度", .195, .91),
+            s.word("40", .195, .843, .035)};
+        s.words["top"] = header; s.words["top"].append(s.word("0/180", .24, .4));
+        s.words["bottom"] = header; s.words["bottom"].append(s.word("获得任意1个声骸 0/1", .24, .6, .4));
+        s.words["reward"] = {s.word("获得", .46, .23), s.word("点击空白处继续", .42, .87, .2)};
+        s.profile.set("DailyTask2", "Farm Nightmare Nest for Daily Echo", false);
+        bool popover = false;
+        int topScrolls = 0, downScrolls = 0, dismissals = 0;
+        QVector<int> claimed;
+        QStringList stamina;
+        s.c.info = [&](QString key, QString value) {
+            if (key == "每日体力进度") stamina.append(value);
+            if (key == "当前任务" && value == "补做体力目标") throw Cancelled();
+        };
+        s.action = [&](auto event) {
+            if (s.keyUp(event, Input::keyCode("f2"))) s.scene = "bottom";
+            if (s.keyUp(event, Input::keyCode("esc"))) s.scene = "world";
+            if (event["op"] == "wheel") {
+                if (event["steps"].toInt() > 0) { ++topScrolls; s.scene = "top"; }
+                else { ++downScrolls; s.scene = "bottom"; }
+            }
+            if (!s.leftUp(event)) return;
+            if (popover) { popover = false; ++dismissals; return; }
+            if (s.scene == "reward") { s.scene = "top"; ++dismissals; return; }
+            if (s.scene != "top" && s.scene != "bottom") return;
+            for (int tier = 1; tier <= 2; ++tier) {
+                if ((s.pointer - gamePoint(s.size, .392 + (tier - 1) * .1335, .889)).manhattanLength() >= 8) continue;
+                claimed.append(tier * 20);
+                if (fullscreenReward) s.scene = "reward";
+                else popover = true;
+            }
+        };
+        s.show("world");
+        CombatSession combat(s.c, s.root, s.directory.path());
+        EchoDetector detector(s.root + "/assets/echo_model/echo.onnx");
+        QVERIFY_THROWS_EXCEPTION(Cancelled, Daily(s.c, combat, detector, s.root, s.directory.path()).run(true));
+        QCOMPARE(claimed, QVector<int>({20, 40}));
+        QCOMPARE(dismissals, 2);
+        QCOMPARE(topScrolls, 1);
+        QCOMPARE(downScrolls, 0);
+        QVERIFY(!stamina.isEmpty());
+        QVERIFY(std::all_of(stamina.begin(), stamina.end(), [](const QString &value) { return value == "0/180"; }));
+        QVERIFY(!popover);
+        QVERIFY(!QFile::exists(s.directory.path() + "/configs-dualpc/DailyStaminaUsage.json"));
+    }
+    void guidebookRejectsWorldHudEvenIfASidebarIconMatches() {
+        Scenes s;
+        s.frame("world", {"world_earth_icon", "char_2_text", "char_3_text", "gray_book_quest"});
+        s.profile.set("Task Recovery", "Resume Interrupted Tasks", false);
+        int sidebarClicks = 0;
+        s.action = [&](auto event) {
+            if (s.leftUp(event) && s.pointer.x() < s.size.width() * .1) ++sidebarClicks;
+        };
+        s.show("world");
+        QVERIFY_THROWS_EXCEPTION(NavigationFailure, Navigation(s.c).openBook("gray_book_quest"));
+        QCOMPARE(sidebarClicks, 0);
+        QCOMPARE(s.scene, QString("world"));
+        QVERIFY(s.clock.time < 15);
+    }
+    void dailyReusesItsPageAndRecoversDelayedOrClosedMenus_data() {
+        QTest::addColumn<int>("missingFrames");
+        QTest::addColumn<bool>("closeMenu");
+        QTest::newRow("already-readable") << 0 << false;
+        QTest::newRow("remote-frame-lag") << 2 << false;
+        QTest::newRow("menu-closed-before-daily-tab") << 0 << true;
+    }
+    void dailyReusesItsPageAndRecoversDelayedOrClosedMenus() {
+        QFETCH(int, missingFrames); QFETCH(bool, closeMenu);
+        const int expectedOpens = closeMenu ? 2 : 1;
+        Scenes s;
+        s.frame("book", {"gray_book_quest"});
+        s.words["book"] = {s.word("活跃度", .15, .12), s.word("活跃度", .195, .91),
+            s.word("100", .195, .843, .035), s.word("180/180", .2, .4),
+            s.word("吸收声骸 1/1", .2, .55, .3)};
+        int opens = 0, stripReads = 0, claims = 0;
+        s.textOverride = [&](QRect area, QVector<TextLine> words) {
+            if (s.scene == "book" && area.top() >= s.size.height() * .78 && ++stripReads <= missingFrames)
+                return QVector<TextLine>{};
+            return words;
+        };
+        s.c.info = [&](QString key, QString value) {
+            if (key == "当前任务" && value == "邮件") throw Cancelled();
+        };
+        s.action = [&](auto event) {
+            if (s.keyUp(event, Input::keyCode("f2"))) { ++opens; s.scene = "book"; }
+            if (s.keyUp(event, Input::keyCode("esc"))) s.scene = "world";
+            if (!s.leftUp(event) || s.scene != "book") return;
+            if (closeMenu && (s.pointer - gamePoint(s.size, .17, .12)).manhattanLength() < 8) {
+                closeMenu = false; s.scene = "world";
+            }
+            for (int tier = 0; tier < 5; ++tier)
+                if ((s.pointer - gamePoint(s.size, .392 + tier * .1335, .889)).manhattanLength() < 8) ++claims;
+        };
+        s.profile.set("DailyTask2", "Additional Tasks to Run After Daily Task", QJsonArray{});
+        s.show("world");
+        CombatSession combat(s.c, s.root, s.directory.path());
+        EchoDetector detector(s.root + "/assets/echo_model/echo.onnx");
+        QVERIFY_THROWS_EXCEPTION(Cancelled, Daily(s.c, combat, detector, s.root, s.directory.path()).run(true));
+        QCOMPARE(opens, expectedOpens);
+        QCOMPARE(claims, 5);
+        QVERIFY(!QFile::exists(s.directory.path() + "/configs-dualpc/DailyStaminaUsage.json"));
+    }
     void challengeResultsRequireTitleAndActionAndInterruptOnlyConfirmedOutcomes_data() {
         QTest::addColumn<QSize>("dimensions");
         QTest::addColumn<QString>("title");
@@ -796,7 +1098,8 @@ class WorkflowTests : public QObject {
         s.frame("menu", {});
         s.frame("mail", {});
         s.words["pass"] = {s.word("50", .23, .16, .03)};
-        const auto dailyWords = QVector<TextLine>{s.word("180/180", .2, .4), s.word("100", .2, .85, .035)};
+        const auto dailyWords = QVector<TextLine>{s.word("活跃度", .15, .12), s.word("活跃度", .195, .91),
+            s.word("180/180", .2, .4), s.word("100", .2, .85, .035)};
         s.words["book"] = dailyWords;
         for (auto key : {"Tacet Suppression Count", "Forgery Challenge Count", "Simulation Challenge Count"})
             s.profile.set("DailyTask2", key, 0);
@@ -804,6 +1107,12 @@ class WorkflowTests : public QObject {
         s.profile.set("DailyTask2", "Additional Tasks to Run After Daily Task",
                       QJsonArray{"Check Weekly Garden"});
         QStringList stages;
+        QJsonArray firstPlan, finalPlan;
+        s.c.progress = [&](QJsonObject patch) {
+            if (!patch.contains("flow")) return;
+            if (firstPlan.isEmpty()) firstPlan = patch["flow"].toArray();
+            finalPlan = patch["flow"].toArray();
+        };
         int mailClaims = 0, passClaims = 0, weeklyClaims = 0;
         bool weekly = false;
         s.c.info = [&](QString key, QString value) {
@@ -847,12 +1156,178 @@ class WorkflowTests : public QObject {
         EchoDetector detector(s.root + "/assets/echo_model/echo.onnx");
         Daily(s.c, combat, detector, s.root, s.directory.path()).run(true);
         QCOMPARE(stages,
-                 QStringList({"补做体力目标", "每日奖励", "邮件", "先约电台", "周常乐园", "每日任务已完成"}));
+                 QStringList({"检查每日目标与奖励", "领取每日奖励", "检查每日目标", "每日奖励", "邮件", "先约电台", "周常乐园", "每日任务已完成"}));
         QCOMPARE(mailClaims, 1);
         QCOMPARE(passClaims, 2);
         QCOMPARE(weeklyClaims, 2);
+        QCOMPARE(firstPlan.size(),7);
+        QCOMPARE(finalPlan.size(),7);
+        QCOMPARE(firstPlan.last().toObject()["name"].toString(),QString("周常乐园"));
+        for (auto value : firstPlan) QCOMPARE(value.toObject()["state"].toString(),QString("pending"));
+        for (auto value : finalPlan) {
+            const auto step=value.toObject();
+            QCOMPARE(step["state"].toString(),step["id"]=="完成每日目标" ? QString("skipped") : QString("completed"));
+        }
         QVERIFY(s.input.idle());
         QVERIFY(!QFile::exists(s.directory.path() + "/configs-dualpc/DailyStaminaUsage.json"));
+    }
+    void unrecognizedDailyProgressDoesNotSpendOrStartExtras() {
+        Scenes s;
+        s.frame("book",{"gray_book_quest"});
+        s.words["book"]={s.word("活跃度",.15,.12),s.word("活跃度",.195,.91),
+            s.word("0/180",.2,.4),s.word("吸收1个声骸 0/1",.2,.55,.32)};
+        s.profile.set("DailyTask2","Use Stamina Cubes for Daily",false);
+        s.profile.set("DailyTask2","Additional Tasks to Run After Daily Task",QJsonArray{"Auto Farm all Nightmare Nest","Check Weekly Garden"});
+        QStringList stages;
+        QJsonObject diagnostic;
+        QString diagnosticScene;
+        s.c.info=[&](QString key,QString value) { if (key=="当前任务") stages.append(value); };
+        s.c.diagnostic=[&](QString,QJsonObject event) { diagnostic=event; diagnosticScene=s.scene; };
+        s.action=[&](auto event) {
+            if (s.keyUp(event,Input::keyCode("f2"))) s.scene="book";
+            if (s.keyUp(event,Input::keyCode("esc"))) s.scene="world";
+            if (s.leftUp(event) && s.scene=="book" &&
+                (s.pointer-gamePoint(s.size,.930,.882)).manhattanLength()<10) fail("未确认每日页面就点击领奖");
+        };
+        s.show("world");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        EchoDetector detector(s.root+"/assets/echo_model/echo.onnx");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,Daily(s.c,combat,detector,s.root,s.directory.path()).run(true));
+        QCOMPARE(diagnostic["daily_points"].toInt(),-1);
+        QCOMPARE(diagnosticScene,QString("book"));
+        QVERIFY(!diagnostic["daily_observation"].toObject()["reward_strip_lines"].toArray().isEmpty());
+        QCOMPARE(stages,QStringList{"检查每日目标与奖励"});
+        QVERIFY(s.clock.time<30);
+        QVERIFY(!stages.contains("获取每日声骸 · 残像聚落"));
+        QVERIFY(!stages.contains("清理聚落")); QVERIFY(!stages.contains("周常乐园"));
+        QVERIFY(!QFile::exists(s.directory.path()+"/configs-dualpc/DailyStaminaUsage.json"));
+    }
+    void dailyCounterUsesWideStripAndRejectsMilestonesOrWeekly_data() {
+        QTest::addColumn<QSize>("dimensions");
+        QTest::addColumn<QString>("label");
+        QTest::addColumn<int>("points");
+        for (const auto size : {QSize(1280,720),QSize(1920,1080),QSize(2560,1440)}) {
+            for (const int value : {0,80,100,-1})
+                QTest::newRow(qPrintable(QString::number(size.height())+"-"+QString::number(value)))
+                    << size << QString("活跃度") << value;
+            QTest::newRow(qPrintable(QString::number(size.height())+"-weekly"))
+                << size << QString("游历值") << -2;
+        }
+    }
+    void dailyCounterUsesWideStripAndRejectsMilestonesOrWeekly() {
+        QFETCH(QSize,dimensions); QFETCH(QString,label); QFETCH(int,points);
+        Scenes s(dimensions);
+        s.words["blank"]={s.word("活跃度",.15,.12),s.word("周度游历",.3,.12),
+            s.word(label,.195,.91),s.word("100",.86,.91,.035),s.word("20",.35,.91,.035)};
+        if (points!=-1) s.words["blank"].append(s.word(QString::number(std::max(0,points)),.195,.843,.025));
+        // Actual PP-OCR misses the yellow isolated 0 in the old narrow crop.
+        s.textOverride=[&](QRect area,QVector<TextLine> words) {
+            if (area.top()>=.78*s.size.height() && area.width()<.8*s.size.width()) return QVector<TextLine>{};
+            return words;
+        };
+        s.show("blank");
+        QJsonObject observation;
+        const auto progress=observeDailyProgress(s.c,&observation);
+        QCOMPARE(progress.points,points==-2?-1:points);
+        QCOMPARE(observation["page_confirmed"].toBool(),points!=-2);
+        QVERIFY(!observation["reward_strip_lines"].toArray().isEmpty());
+        QVERIFY(s.events.isEmpty());
+    }
+    void dailyZeroClaimsCompletedObjectiveBeforeSpendingAndDoesNotClickStaleRow_data() {
+        QTest::addColumn<bool>("acknowledged");
+        QTest::newRow("acknowledged") << true;
+        QTest::newRow("stale-remote-video") << false;
+    }
+    void dailyZeroClaimsCompletedObjectiveBeforeSpendingAndDoesNotClickStaleRow() {
+        QFETCH(bool,acknowledged);
+        Scenes s;
+        s.frame("book",{"gray_book_quest"}); s.frame("reward",{});
+        auto dailyWords=[&](int points) { return QVector<TextLine>{s.word("活跃度",.15,.12),
+            s.word("活跃度",.195,.91),s.word(QString::number(points),.195,.843,.035),
+            s.word("0/180",.2,.4),s.word("吸收声骸 1/1",.2,.55,.3)}; };
+        s.words["book"]=dailyWords(0);
+        s.words["book"].append(s.word("领取",.86,.23,.04));
+        s.words["reward"]={s.word("获得",.46,.23),s.word("点击空白处继续",.42,.87,.2)};
+        int objectiveClaims=0,earlyClaims=0;
+        QString diagnosticScene;
+        s.c.diagnostic=[&](QString,QJsonObject) { diagnosticScene=s.scene; };
+        s.c.info=[&](QString key,QString value) {
+            if (key=="当前任务" && value=="补做体力目标") throw Cancelled();
+        };
+        s.action=[&](auto event) {
+            if (s.keyUp(event,Input::keyCode("f2"))) s.scene="book";
+            if (s.keyUp(event,Input::keyCode("esc"))) s.scene="world";
+            if (!s.leftUp(event)) return;
+            const auto at=[&](double x,double y) { return (s.pointer-gamePoint(s.size,x,y)).manhattanLength()<12; };
+            if (s.scene=="book" && at(.88,.245)) {
+                ++objectiveClaims;
+                if (acknowledged) s.words["book"]=dailyWords(20);
+            } else if (s.scene=="book" && at(.392,.889)) {
+                if (!objectiveClaims) fail("目标尚未领取就点击活跃度奖励");
+                ++earlyClaims; s.scene="reward";
+            } else if (s.scene=="reward" && at(.5,.89)) s.scene="book";
+            else if (s.scene=="book" && at(.926,.889)) fail("只有20活跃度却点击100分宝箱");
+        };
+        s.show("world");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        EchoDetector detector(s.root+"/assets/echo_model/echo.onnx");
+        if (acknowledged) {
+            QVERIFY_THROWS_EXCEPTION(Cancelled,Daily(s.c,combat,detector,s.root,s.directory.path()).run(true));
+            QCOMPARE(earlyClaims,1);
+        } else {
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error,Daily(s.c,combat,detector,s.root,s.directory.path()).run(true));
+            QCOMPARE(earlyClaims,0); QCOMPARE(diagnosticScene,QString("book"));
+        }
+        QCOMPARE(objectiveClaims,1);
+        QVERIFY(s.clock.time<40);
+        QVERIFY(!QFile::exists(s.directory.path()+"/configs-dualpc/DailyStaminaUsage.json"));
+    }
+    void dailyRewardsPrecedeConfiguredFarmingAndOnlyMissingEchoRunsEarly_data() {
+        QTest::addColumn<bool>("enhanced");
+        QTest::addColumn<int>("points");
+        QTest::addColumn<QString>("next");
+        QTest::newRow("complete-basic") << false << 100 << QString("清理聚落");
+        QTest::newRow("complete-enhanced") << true << 100 << QString("清理体力 · 无音区");
+        QTest::newRow("one-echo-basic") << false << 80 << QString("获取每日声骸 · 残像聚落");
+        QTest::newRow("one-echo-enhanced") << true << 80 << QString("获取每日声骸 · 残像聚落");
+    }
+    void dailyRewardsPrecedeConfiguredFarmingAndOnlyMissingEchoRunsEarly() {
+        QFETCH(bool,enhanced); QFETCH(int,points); QFETCH(QString,next);
+        Scenes s;
+        s.frame("book",{"gray_book_quest"});
+        s.words["book"]={s.word("活跃度",.15,.12),s.word("活跃度",.195,.91),
+            s.word("0/180",.2,.4),s.word("吸收1个声骸 0/1",.2,.55,.32),s.word(QString::number(points),.2,.85,.035)};
+        const QString id=enhanced?"DailyTask2":"DailyTask";
+        s.profile.set(id,"Use Stamina Cubes for Daily",false);
+        s.profile.set(id,"Additional Tasks to Run After Daily Task",QJsonArray{"Auto Farm all Nightmare Nest","Check Weekly Garden"});
+        s.profile.set("NightmareNestTask","Which to Farm",QJsonArray{"Tacet Discord Nest"});
+        if (enhanced) s.profile.set(id,"Tacet Suppression Count",9999);
+        int claims=0;
+        QStringList stages;
+        s.c.info=[&](QString key,QString value) {
+            if (key!="当前任务") return;
+            stages.append(value);
+            if (value==next) {
+                if (!claims) fail("执行刷取任务前没有先领取可用每日奖励");
+                throw Cancelled();
+            }
+        };
+        s.action=[&](auto e) {
+            if (s.keyUp(e,Input::keyCode("f2"))) s.scene="book";
+            if (s.keyUp(e,Input::keyCode("esc"))) s.scene="world";
+            if (s.leftUp(e) && s.scene=="book" &&
+                (s.pointer-gamePoint(s.size,.392,.889)).manhattanLength()<10) ++claims;
+        };
+        s.show("world");
+        CombatSession combat(s.c,s.root,s.directory.path());
+        EchoDetector detector(s.root+"/assets/echo_model/echo.onnx");
+        QVERIFY_THROWS_EXCEPTION(Cancelled,Daily(s.c,combat,detector,s.root,s.directory.path()).run(enhanced));
+        QCOMPARE(claims,1);
+        QCOMPARE(stages.last(),next);
+        QVERIFY(!stages.contains("补做体力目标"));
+        QVERIFY(!stages.contains("周常乐园"));
+        if (points==100) QVERIFY(!stages.contains("获取每日声骸 · 残像聚落"));
+        QVERIFY(!QFile::exists(s.directory.path()+"/configs-dualpc/DailyStaminaUsage.json"));
     }
     void combatRoundDistinguishesVictoryInterruptionDeathAndCancellation_data() {
         QTest::addColumn<QString>("scenario");

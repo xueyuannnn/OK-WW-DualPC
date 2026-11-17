@@ -1,6 +1,7 @@
 #pragma once
 #include "team_macro.hpp"
 #include <QProcess>
+#include <span>
 namespace okww::runtime {
 QString workshopRoot(const QString &root);
 QString workshopPython(const QString &root);
@@ -9,6 +10,7 @@ QJsonObject workshopManage(const QString &root, const QString &data, QJsonObject
 class WorkshopFileSession {
     struct State;
     std::unique_ptr<State> state_;
+
   public:
     WorkshopFileSession(QString root, QString data);
     ~WorkshopFileSession();
@@ -43,6 +45,13 @@ class PythonTeamMacro final : public TeamMacro {
     QVector<NativePolicy> originalPolicies_;
     QHash<int, bool> healerOverrides_;
     QHash<int, bool> shortTargetOverrides_;
+    struct WorkshopResult {
+        QJsonObject object;
+        std::array<double, 3> values;
+    };
+    friend struct WorkshopContractAccess;
+    WorkshopResult runWorkshop(int method, std::span<const double> args = {}, QJsonObject request = {},
+                               const Character *selected = nullptr);
     void stop() noexcept;
     void startWorker();
     void write(QJsonObject value);
@@ -62,7 +71,9 @@ class PythonTeamMacro final : public TeamMacro {
     std::optional<int> priority(const Character &c, bool intro) override;
     std::optional<int> priority(const Character &c, bool intro, bool targetLowCon);
     bool skipsCombatCheck(const Character &c);
-    bool usesShortTarget(const Character &c) const { return shortTargetOverrides_.value(c.state.index, false); }
+    bool usesShortTarget(const Character &c) const {
+        return shortTargetOverrides_.value(c.state.index, false);
+    }
     bool isHealer(const Character &c) const {
         return healerOverrides_.value(c.state.index, c.state.role == Role::Healer);
     }

@@ -1,4 +1,5 @@
 #include "interaction.hpp"
+#include "workflow_abi.hpp"
 #include <numbers>
 namespace okww::runtime {
 namespace {
@@ -12,363 +13,1214 @@ class Movement {
   public:
     explicit Movement(TaskContext &context) : c_(context) {}
     ~Movement() {
-        if (!key_.isEmpty() || running_)
-            c_.input.release();
+        rust::workflowRun(rust::WorkflowMethod::WorldMoveDrop, {},
+                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                              switch (op) {
+                              case rust::WorkflowOp::WorldOldDirectionEmpty: {
+                                  out[0] = key_.isEmpty();
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldMovementRunning: {
+                                  out[0] = running_;
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldReleaseInput: {
+                                  c_.input.release();
+                                  break;
+                              }
+                              default:
+                                  fail("Rust 世界交互宿主无效");
+                              }
+                          });
     }
     void direction(const QString &key) {
-        if (key == key_)
-            return;
-        if (!key_.isEmpty()) {
-            c_.input.keyUp(key_);
-            key_.clear();
-            c_.sleep(.01);
-        }
-        if (!key.isEmpty()) {
-            c_.input.keyDown(key);
-            key_ = key;
-        }
+        rust::workflowRun(rust::WorkflowMethod::WorldMoveDirection, {},
+                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                              switch (op) {
+                              case rust::WorkflowOp::WorldSameDirection: {
+                                  out[0] = key == key_;
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldOldDirectionEmpty: {
+                                  out[0] = key_.isEmpty();
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldOldDirectionUp: {
+                                  c_.input.keyUp(key_);
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldClearOldDirection: {
+                                  key_.clear();
+                                  break;
+                              }
+                              case rust::WorkflowOp::Sleep: {
+                                  c_.sleep(a[0]);
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldNewDirectionEmpty: {
+                                  out[0] = key.isEmpty();
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldNewDirectionDown: {
+                                  c_.input.keyDown(key);
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldStoreDirection: {
+                                  key_ = key;
+                                  break;
+                              }
+                              default:
+                                  fail("Rust 世界交互宿主无效");
+                              }
+                          });
     }
     void run() {
-        c_.sleep(.1);
-        c_.input.buttonDown("right");
-        running_ = true;
+        rust::workflowRun(rust::WorkflowMethod::WorldMoveRun, {},
+                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                              switch (op) {
+                              case rust::WorkflowOp::Sleep: {
+                                  c_.sleep(a[0]);
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldRightDown: {
+                                  c_.input.buttonDown("right");
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldStoreRunning: {
+                                  running_ = a[0] != 0;
+                                  break;
+                              }
+                              default:
+                                  fail("Rust 世界交互宿主无效");
+                              }
+                          });
     }
     void stopRunning() {
-        if (running_) {
-            c_.input.buttonUp("right");
-            running_ = false;
-        }
+        rust::workflowRun(rust::WorkflowMethod::WorldMoveStopRunning, {},
+                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                              switch (op) {
+                              case rust::WorkflowOp::WorldMovementRunning: {
+                                  out[0] = running_;
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldRightUp: {
+                                  c_.input.buttonUp("right");
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldStoreRunning: {
+                                  running_ = a[0] != 0;
+                                  break;
+                              }
+                              default:
+                                  fail("Rust 世界交互宿主无效");
+                              }
+                          });
     }
     void stop() {
-        direction({});
-        if (running_) {
-            c_.sleep(.1);
-            c_.input.buttonUp("right");
-            running_ = false;
-        }
+        rust::workflowRun(rust::WorkflowMethod::WorldMoveStop, {},
+                          [&](rust::WorkflowOp op, const double *a, double *out) {
+                              switch (op) {
+                              case rust::WorkflowOp::WorldMovementClearDirection: {
+                                  direction({});
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldMovementRunning: {
+                                  out[0] = running_;
+                                  break;
+                              }
+                              case rust::WorkflowOp::Sleep: {
+                                  c_.sleep(a[0]);
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldRightUp: {
+                                  c_.input.buttonUp("right");
+                                  break;
+                              }
+                              case rust::WorkflowOp::WorldStoreRunning: {
+                                  running_ = a[0] != 0;
+                                  break;
+                              }
+                              default:
+                                  fail("Rust 世界交互宿主无效");
+                              }
+                          });
     }
 };
 } // namespace
 QRect fSearchBox(TaskContext &c) {
-    const auto r = c.templates.box("pick_up_f_hcenter_vcenter", {c.frame.cols, c.frame.rows});
-    return {pixelRound(r.x() - .3 * r.width()), r.y() - 5 * r.height(), pixelRound(r.width() * 1.65),
-            pixelRound(r.height() * 7.5)};
+    QRect result;
+    QRect box;
+    rust::workflowRun(
+        rust::WorkflowMethod::WorldFSearchBox, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::WorldInteractBox: {
+                box = c.templates.box("pick_up_f_hcenter_vcenter", {c.frame.cols, c.frame.rows});
+                out[0] = box.x();
+                out[1] = box.y();
+                out[2] = box.width();
+                break;
+            }
+            case rust::WorkflowOp::WorldInteractBoxHeight: {
+                out[0] = box.height();
+                break;
+            }
+            case rust::WorkflowOp::WorldStoreSearchBox: {
+                result = QRect(int(a[0]), int(a[1]), int(a[2]), int(a[3]));
+                break;
+            }
+            default:
+                fail("Rust 世界交互宿主无效");
+            }
+        });
+    return result;
 }
 std::optional<Match> findInteract(TaskContext &c, const QString &pattern) {
-    const auto f = c.find("pick_up_f_hcenter_vcenter", {.search = fSearchBox(c)});
-    if (!f || pattern.isEmpty())
-        return f;
+    std::optional<Match> found;
+    std::optional<TextLine> line;
+    QRect region;
     double white = 0;
-    c.wait(
-        [&] {
-            white = colorPercentage(c.frame, f->box, {235, 235, 235}, {255, 255, 255});
-            return white > .5;
-        },
-        1, .01);
-    if (white < .5)
-        return {};
-    const auto r = f->box;
-    const QRect text(pixelRound(r.x() + r.width() * 5.2), pixelRound(r.y() - .8 * r.height()), r.width() * 7,
-                     pixelRound(r.height() * 5.5));
-    if (auto line = matchingText(c.text(text), pattern)) {
-        if (line->box.y() > text.y() + r.height())
-            c.input.scroll(1, QPointF(c.frame.cols * .5, c.frame.rows * .5));
-        return f;
-    }
-    return {};
+    rust::workflowRun(
+        rust::WorkflowMethod::WorldFindInteract, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::Now: {
+                out[0] = c.execution.now();
+                break;
+            }
+            case rust::WorkflowOp::Checkpoint: {
+                c.execution.checkpoint();
+                break;
+            }
+            case rust::WorkflowOp::ExecutionWait: {
+                c.execution.wait(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::Refresh: {
+                c.refresh();
+                break;
+            }
+            case rust::WorkflowOp::InvalidCondition: {
+                fail("等待条件参数无效");
+                break;
+            }
+            case rust::WorkflowOp::Sleep: {
+                c.sleep(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::WorldFindInteract: {
+                found = c.find("pick_up_f_hcenter_vcenter", {.search = fSearchBox(c)});
+                break;
+            }
+            case rust::WorkflowOp::WorldHasMatch: {
+                out[0] = found.has_value();
+                break;
+            }
+            case rust::WorkflowOp::WorldPatternEmpty: {
+                out[0] = pattern.isEmpty();
+                break;
+            }
+            case rust::WorkflowOp::WorldReadInteractWhite: {
+                white = colorPercentage(c.frame, found->box, {235, 235, 235}, {255, 255, 255});
+                break;
+            }
+            case rust::WorkflowOp::WorldInteractWhite: {
+                out[0] = white;
+                break;
+            }
+            case rust::WorkflowOp::WorldClearMatch: {
+                found.reset();
+                break;
+            }
+            case rust::WorkflowOp::WorldReadInteractText: {
+                const auto r = found->box;
+                region = QRect(pixelRound(r.x() + r.width() * 5.2), pixelRound(r.y() - .8 * r.height()),
+                               r.width() * 7, pixelRound(r.height() * 5.5));
+                line = matchingText(c.text(region), pattern);
+                break;
+            }
+            case rust::WorkflowOp::WorldHasInteractText: {
+                out[0] = line.has_value();
+                break;
+            }
+            case rust::WorkflowOp::WorldInteractTextBelow: {
+                out[0] = line->box.y() > region.y() + found->box.height();
+                break;
+            }
+            case rust::WorkflowOp::WorldScrollInteract: {
+                c.input.scroll(1, QPointF(c.frame.cols * .5, c.frame.rows * .5));
+                break;
+            }
+            default:
+                fail("Rust 世界交互宿主无效");
+            }
+        });
+    return found;
 }
 bool isDialogInteract(TaskContext &c) {
-    const auto f = findInteract(c);
-    if (!f)
-        return false;
-    const auto r = f->box;
-    const QRect search(r.x() + r.width() * 3, r.y() - r.height(), pixelRound(r.width() * 2.8),
-                       r.height() * 3);
-    return bool(c.find("dialog_3_dots", {.threshold = .6, .search = search}));
+    std::optional<Match> found, dots;
+    return rust::workflowRun(rust::WorkflowMethod::WorldDialogInteract, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::WorldReadUnfilteredInteract: {
+                                     found = findInteract(c);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldHasMatch: {
+                                     out[0] = found.has_value();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldFindDialogDots: {
+                                     const auto r = found->box;
+                                     const QRect search(r.x() + r.width() * 3, r.y() - r.height(),
+                                                        pixelRound(r.width() * 2.8), r.height() * 3);
+                                     dots = c.find("dialog_3_dots", {.threshold = .6, .search = search});
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldHasDialogDots: {
+                                     out[0] = dots.has_value();
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 bool WorldInteraction::claimDialog() {
-    return !c_.inTeam() &&
-           bool(c_.find("claim_cancel_button_hcenter_vcenter", {.horizontal = .05, .vertical = .1}));
+    return rust::workflowRun(rust::WorkflowMethod::WorldClaimDialog, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::InTeam: {
+                                     out[0] = c_.inTeam();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldClaimCancelFound: {
+                                     out[0] = bool(c_.find("claim_cancel_button_hcenter_vcenter",
+                                                           {.horizontal = .05, .vertical = .1}));
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 bool WorldInteraction::dismissClaim() {
-    if (!c_.wait([&] { return claimDialog(); }, 1.5))
-        return false;
-    c_.sleep(.5);
-    c_.key("esc", .5);
-    return true;
+    return rust::workflowRun(rust::WorkflowMethod::WorldDismissClaim, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::Now: {
+                                     out[0] = c_.execution.now();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Checkpoint: {
+                                     c_.execution.checkpoint();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::ExecutionWait: {
+                                     c_.execution.wait(a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Refresh: {
+                                     c_.refresh();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::InvalidCondition: {
+                                     fail("等待条件参数无效");
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Sleep: {
+                                     c_.sleep(a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldClaimDialog: {
+                                     out[0] = claimDialog();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldEscape: {
+                                     c_.key("esc", a[0]);
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 bool WorldInteraction::pick(bool handleClaim, bool echoOnly) {
-    if (!findInteract(c_, echoOnly ? "吸收|Absorb" : ""))
-        return false;
-    c_.key("f", echoOnly ? 0 : 1);
-    return !handleClaim || !dismissClaim();
+    const std::array args{double(handleClaim), double(echoOnly)};
+    return rust::workflowRun(rust::WorkflowMethod::WorldPick, args,
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::WorldFindPick: {
+                                     out[0] = bool(findInteract(c_, a[0] != 0 ? "吸收|Absorb" : ""));
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldKeyF: {
+                                     c_.key("f", a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldDismissClaim: {
+                                     out[0] = dismissClaim();
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 bool WorldInteraction::walkUntil(const std::function<bool()> &condition, const QString &direction,
                                  double timeout, bool running, bool required, double postWalk) {
-    if (!std::isfinite(timeout) || timeout < 0 || postWalk < 0)
-        fail("移动等待参数无效");
-    if (timeout == 0)
-        return false;
-    Movement movement(c_);
-    movement.direction(direction);
-    if (running)
-        movement.run();
-    const bool found = c_.wait(condition, timeout, .02);
-    if (found && postWalk > 0)
-        c_.sleep(postWalk);
-    movement.stop();
-    if (!found && required)
-        throw NavigationFailure("移动后未找到目标交互提示");
-    return found;
+    std::optional<Movement> movement;
+    const std::array args{timeout, double(running), double(required), postWalk};
+    return rust::workflowRun(rust::WorkflowMethod::WorldWalkUntil, args,
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::Now: {
+                                     out[0] = c_.execution.now();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Checkpoint: {
+                                     c_.execution.checkpoint();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::ExecutionWait: {
+                                     c_.execution.wait(a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Refresh: {
+                                     c_.refresh();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::InvalidCondition: {
+                                     fail("等待条件参数无效");
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::Sleep: {
+                                     c_.sleep(a[0]);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::CreateWorldMovement: {
+                                     movement.emplace(c_);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldMovementRequestedDirection: {
+                                     movement->direction(direction);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldMovementRun: {
+                                     movement->run();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldMovementStop: {
+                                     movement->stop();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldCondition: {
+                                     out[0] = condition();
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldFailure: {
+                                     switch (int(a[0])) {
+                                     case 0:
+                                         fail("移动等待参数无效");
+                                     case 1:
+                                         throw NavigationFailure("移动后未找到目标交互提示");
+                                     default:
+                                         fail("移动失败编号无效");
+                                     }
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 bool WorldInteraction::walkToInteract(const QString &direction, double timeout, bool required,
                                       double backward, const QString &pattern, bool checkCombat,
                                       bool running) {
-    const auto condition = [&] {
-        return bool(findInteract(c_, pattern)) || (checkCombat && inCombat_ && inCombat_());
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
+            break;
+        }
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
+        }
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
+            centerCamera();
+            break;
+        }
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldFindRequestedInteract: {
+            out[0] = bool(findInteract(c_, pattern));
+            break;
+        }
+        case rust::WorkflowOp::WorldMiddleClick: {
+            c_.input.click({}, a[0], "middle");
+            break;
+        }
+        case rust::WorkflowOp::WorldWalkInteractUntil: {
+            out[0] = walkUntil(
+                [&] {
+                    const std::array conditionArgs{a[4]};
+                    return rust::workflowRun(rust::WorkflowMethod::WorldInteractCondition, conditionArgs,
+                                             action)[0] != 0;
+                },
+                a[0] != 0 ? QString("s") : direction, a[1], a[2] != 0, a[3] != 0);
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
     };
-    if (findInteract(c_, pattern))
-        return true;
-    c_.input.click({}, .01, "middle");
-    c_.sleep(.2);
-    if (backward > 0 && walkUntil(condition, "s", backward, running, required))
-        return true;
-    return walkUntil(condition, direction, timeout, running, required);
+    const std::array args{timeout, double(required), backward, double(checkCombat), double(running)};
+    return rust::workflowRun(rust::WorkflowMethod::WorldWalkInteract, args, action)[0] != 0;
 }
 QVector<Match> WorldInteraction::echoes(double threshold) {
-    if (!detect_)
-        fail("声骸识别模型尚未初始化");
-    c_.execution.checkpoint();
-    auto result = detect_(c_.frame, threshold);
-    c_.execution.checkpoint();
-    for (auto &box : result) {
-        box.box.setY(box.box.y() + box.box.height() / 3);
-        box.box.setHeight(1);
-    }
+    QVector<Match> result;
+    const std::array args{threshold};
+    rust::workflowRun(rust::WorkflowMethod::WorldEchoes, args,
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::WorldHasDetector: {
+                              out[0] = bool(detect_);
+                              break;
+                          }
+                          case rust::WorkflowOp::WorldFailure: {
+                              fail("声骸识别模型尚未初始化");
+                              break;
+                          }
+                          case rust::WorkflowOp::Checkpoint: {
+                              c_.execution.checkpoint();
+                              break;
+                          }
+                          case rust::WorkflowOp::WorldDetectEchoes: {
+                              result = detect_(c_.frame, a[0]);
+                              break;
+                          }
+                          case rust::WorkflowOp::WorldEchoCount: {
+                              out[0] = double(result.size());
+                              break;
+                          }
+                          case rust::WorkflowOp::WorldFlattenEcho: {
+                              auto &box = result[int(a[0])];
+                              box.box.setY(box.box.y() + box.box.height() / 3);
+                              box.box.setHeight(1);
+                              break;
+                          }
+                          default:
+                              fail("Rust 世界交互宿主无效");
+                          }
+                      });
     return result;
 }
 bool WorldInteraction::walkToEcho(double timeout, double threshold, const std::function<void()> &update) {
-    Movement movement(c_);
-    const auto end = c_.execution.now() + timeout;
-    double noEcho = -1;
-    bool moving = false;
-    while (c_.execution.now() < end) {
-        c_.sleep(.001);
-        if (pick()) {
-            movement.stop();
-            return true;
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    QVector<Match> found;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
+            break;
         }
-        if (inCombat_ && inCombat_()) {
-            movement.stop();
-            return false;
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
         }
-        const auto found = echoes(threshold);
-        if (found.empty()) {
-            if (noEcho < 0)
-                noEcho = c_.execution.now();
-            else if (c_.execution.now() - noEcho > 3)
-                break;
-        } else
-            noEcho = -1;
-        movement.direction(echoWalkDirection(found, {c_.frame.cols, c_.frame.rows}, moving));
-        moving = true;
-        if (update)
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
+            centerCamera();
+            break;
+        }
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldPickDefault: {
+            out[0] = pick();
+            break;
+        }
+        case rust::WorkflowOp::WorldReadEchoes: {
+            found = echoes(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::WorldEchoCount: {
+            out[0] = double(found.size());
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveEchoDirection: {
+            movement->direction(echoWalkDirection(found, {c_.frame.cols, c_.frame.rows}, a[0] != 0));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasUpdate: {
+            out[0] = bool(update);
+            break;
+        }
+        case rust::WorkflowOp::WorldUpdate: {
             update();
-    }
-    movement.stop();
-    return false;
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
+    };
+    const std::array args{timeout, threshold};
+    return rust::workflowRun(rust::WorkflowMethod::WorldWalkEcho, args, action)[0] != 0;
 }
 void WorldInteraction::centerCamera() {
-    c_.input.click(QPointF(c_.frame.cols * .5, c_.frame.rows * .5), .2, "middle");
-    c_.sleep(1);
+    rust::workflowRun(rust::WorkflowMethod::WorldCenterCamera, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::WorldCenterMiddleClick: {
+                              c_.input.click(QPointF(c_.frame.cols * .5, c_.frame.rows * .5), .2, "middle");
+                              break;
+                          }
+                          case rust::WorkflowOp::Sleep: {
+                              c_.sleep(a[0]);
+                              break;
+                          }
+                          default:
+                              fail("Rust 世界交互宿主无效");
+                          }
+                      });
 }
 std::pair<bool, bool> WorldInteraction::findEcho(bool useColor, bool turn, double timeout, double threshold,
                                                  const std::function<void()> &update) {
-    if (pick(true, true)) {
-        c_.sleep(.5);
-        return {true, true};
-    }
-    int maxCount = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (turn)
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    QVector<Match> found;
+    QRect front;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
+            break;
+        }
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
+        }
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
             centerCamera();
-        const auto found = echoes(threshold);
-        maxCount = std::max(maxCount, int(found.size()));
-        if (!found.empty())
-            return {walkToEcho(timeout, .5, update), maxCount > 1};
-        const auto front =
-            Templates::anchored({672, 378, 576, 194}, {1920, 1080}, {c_.frame.cols, c_.frame.rows}, true);
-        if (useColor && colorPercentage(c_.frame, front, {130, 150, 200}, {170, 220, 255}) > .02)
-            return {walkToEcho(8, .5, update), maxCount > 1};
-        if (!turn && i == 0)
-            return {false, maxCount > 1};
-        c_.key("a", .5, .05);
-    }
-    centerCamera();
-    return {false, maxCount > 1};
+            break;
+        }
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldPickEchoOnly: {
+            out[0] = pick(true, true);
+            break;
+        }
+        case rust::WorkflowOp::WorldReadEchoes: {
+            found = echoes(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::WorldEchoCount: {
+            out[0] = double(found.size());
+            break;
+        }
+        case rust::WorkflowOp::WorldWalkEcho: {
+            out[0] = walkToEcho(a[0], a[1], update);
+            break;
+        }
+        case rust::WorkflowOp::WorldReadFrontBox: {
+            front =
+                Templates::anchored({672, 378, 576, 194}, {1920, 1080}, {c_.frame.cols, c_.frame.rows}, true);
+            break;
+        }
+        case rust::WorkflowOp::WorldFrontColor: {
+            out[0] = colorPercentage(c_.frame, front, {130, 150, 200}, {170, 220, 255});
+            break;
+        }
+        case rust::WorkflowOp::WorldTapDirection: {
+            c_.key(directions.at(int(a[0])), a[1], a[2]);
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
+    };
+    const std::array args{double(useColor), double(turn), timeout, threshold};
+    const auto result = rust::workflowRun(rust::WorkflowMethod::WorldFindEcho, args, action);
+    return {result[0] != 0, result[1] != 0};
 }
 bool WorldInteraction::circleEcho(int circles) {
-    if (circles < 0 || circles > 20)
-        fail("声骸搜索圈数无效");
-    int index = 0;
-    double duration = .8;
-    for (int count = 0; count < circles; ++count)
-        for (const auto &key : {"w", "a", "s", "d"}) {
-            if (index > 2 && (index + 1) % 2 == 0 && !(count == circles - 1 && QString(key) == "d"))
-                duration += .8;
-            if (walkUntil([&] { return bool(findInteract(c_, "吸收|Absorb")); }, key, duration, true) &&
-                pick())
-                return true;
-            ++index;
-        }
-    return false;
+    const std::array args{double(circles)};
+    return rust::workflowRun(rust::WorkflowMethod::WorldCircleEcho, args,
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::WorldFailure: {
+                                     fail("声骸搜索圈数无效");
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldCircleWalk: {
+                                     const QStringList keys{"w", "a", "s", "d"};
+                                     out[0] = walkUntil([&] { return bool(findInteract(c_, "吸收|Absorb")); },
+                                                        keys.at(int(a[0])), a[1], true);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::WorldPickDefault: {
+                                     out[0] = pick();
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust 世界交互宿主无效");
+                                 }
+                             })[0] != 0;
 }
 std::optional<Match> WorldInteraction::treasure() {
-    const auto region =
-        Templates::anchored({58, 108, 1804, 767}, {1920, 1080}, {c_.frame.cols, c_.frame.rows}, true, true);
-    return c_.find("treasure_icon", {.search = region, .targetHeight = 720});
+    std::optional<Match> found;
+    rust::workflowRun(
+        rust::WorkflowMethod::WorldTreasure, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::WorldFindTreasure: {
+                const auto region = Templates::anchored({58, 108, 1804, 767}, {1920, 1080},
+                                                        {c_.frame.cols, c_.frame.rows}, true, true);
+                found = c_.find("treasure_icon", {.search = region, .targetHeight = 720});
+                break;
+            }
+            default:
+                fail("Rust 世界交互宿主无效");
+            }
+        });
+    return found;
 }
 bool WorldInteraction::walkToBox(const std::function<std::optional<Match>()> &find,
                                  const std::function<bool()> &end, double timeout, double yOffset,
                                  double xThreshold, bool hook) {
-    if (!find || !std::isfinite(timeout) || timeout <= 0 || timeout > 180)
-        fail("目标移动参数无效");
-    const double deadline = c_.execution.now() + timeout;
-    if (end && !c_.wait([&] { return end() || bool(find()); }, timeout))
-        return false;
-    Movement movement(c_);
-    QString last;
-    std::optional<Match> target;
-    bool centered = false, ended = false, running = false;
-    while (c_.execution.now() < deadline) {
-        c_.sleep(.001);
-        if (end && end()) {
-            ended = true;
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    std::optional<Match> candidate, target;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
             break;
         }
-        if (auto found = find())
-            target = found;
-        QString next;
-        if (!target)
-            next = last == "w" ? "s" : last == "s" ? "w" : last == "a" ? "d" : last == "d" ? "a" : "w";
-        else {
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
+        }
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
+            centerCamera();
+            break;
+        }
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldHasFind: {
+            out[0] = bool(find);
+            break;
+        }
+        case rust::WorkflowOp::WorldHasEnd: {
+            out[0] = bool(end);
+            break;
+        }
+        case rust::WorkflowOp::WorldEnd: {
+            out[0] = end();
+            break;
+        }
+        case rust::WorkflowOp::WorldProbeFind: {
+            out[0] = bool(find());
+            break;
+        }
+        case rust::WorkflowOp::WorldReadFind: {
+            candidate = find();
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCandidate: {
+            out[0] = candidate.has_value();
+            break;
+        }
+        case rust::WorkflowOp::WorldStoreWalkTarget: {
+            target = candidate;
+            break;
+        }
+        case rust::WorkflowOp::WorldHasWalkTarget: {
+            out[0] = target.has_value();
+            break;
+        }
+        case rust::WorkflowOp::WorldWalkTargetPoint: {
             const auto point = target->center();
-            const double y = std::max(0., point.y() - c_.frame.rows * yOffset);
-            const double dx = point.x() - c_.frame.cols * .5;
-            centered = centered || std::abs(dx) <= c_.frame.cols * (last.isEmpty() ? .04 : xThreshold);
-            if (!centered)
-                next = dx > 0 ? "d" : "a";
-            else {
-                const double center = last == "s" ? .45 : last == "w" ? .6 : .5;
-                next = y > c_.frame.rows * center ? "s" : "w";
-            }
+            out[0] = point.x();
+            out[1] = point.y();
+            out[2] = c_.frame.rows;
+            break;
         }
-        movement.direction(next);
-        last = next;
-        if (running) {
-            if (!c_.find("on_the_wall", {.threshold = .7})) {
-                movement.stopRunning();
-                running = false;
-            }
-        } else if (next == "w" && c_.find("on_the_wall", {.threshold = .7})) {
-            movement.run();
-            running = true;
+        case rust::WorkflowOp::WorldFrameWidth: {
+            out[0] = c_.frame.cols;
+            break;
         }
-        if (hook && next == "w" && c_.find("tool_teleport", {.threshold = .75}))
+        case rust::WorkflowOp::WorldOnWall: {
+            out[0] = bool(c_.find("on_the_wall", {.threshold = .7}));
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStopRunning: {
+            movement->stopRunning();
+            break;
+        }
+        case rust::WorkflowOp::WorldHookFound: {
+            out[0] = bool(c_.find("tool_teleport", {.threshold = .75}));
+            break;
+        }
+        case rust::WorkflowOp::WorldUseHook: {
             c_.key(c_.hotkey("Tool Key", "t"), 3);
-    }
-    movement.stop();
-    return end ? ended : !last.isEmpty();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementFailure: {
+            switch (int(a[0])) {
+            case 0:
+                fail("目标移动参数无效");
+            case 1:
+                throw NavigationFailure("未能接近奖励目标");
+            case 2:
+                fail("小地图寻路缺少战斗状态");
+            default:
+                fail("寻路失败编号无效");
+            }
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
+    };
+    const std::array args{timeout, yOffset, xThreshold, double(hook)};
+    return rust::workflowRun(rust::WorkflowMethod::WorldWalkBox, args, action)[0] != 0;
 }
 void WorldInteraction::walkToTreasure(bool requireF) {
-    const auto find = [&] { return treasure(); };
-    if (!walkToBox(find, [&] { return bool(findInteract(c_, "领取奖励|領取獎勵|Claim Rewards")); }) &&
-        !walkToBox(find, [&] { return bool(findInteract(c_)); }))
-        throw NavigationFailure("未能接近奖励目标");
-    if (requireF)
-        walkToInteract("w", 2, true);
-    c_.sleep(1);
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
+            break;
+        }
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
+        }
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
+            centerCamera();
+            break;
+        }
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldWalkClaimTreasure: {
+            out[0] = walkToBox([&] { return treasure(); },
+                               [&] { return bool(findInteract(c_, "领取奖励|領取獎勵|Claim Rewards")); });
+            break;
+        }
+        case rust::WorkflowOp::WorldWalkAnyTreasure: {
+            out[0] = walkToBox([&] { return treasure(); }, [&] { return bool(findInteract(c_)); });
+            break;
+        }
+        case rust::WorkflowOp::WorldRequireTreasureInteract: {
+            walkToInteract("w", 2, true);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementFailure: {
+            switch (int(a[0])) {
+            case 0:
+                fail("目标移动参数无效");
+            case 1:
+                throw NavigationFailure("未能接近奖励目标");
+            case 2:
+                fail("小地图寻路缺少战斗状态");
+            default:
+                fail("寻路失败编号无效");
+            }
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
+    };
+    const std::array args{double(requireF)};
+    rust::workflowRun(rust::WorkflowMethod::WorldWalkTreasure, args, action);
 }
 double WorldInteraction::arrowAngle() {
-    const auto box = c_.templates.box("arrow", {c_.frame.cols, c_.frame.rows});
-    double best = 0, angle = 0;
-    for (int i = 0; i < 360; ++i) {
-        c_.execution.checkpoint();
-        if (auto target = c_.find("arrow", {.threshold = .01, .search = box, .rotation = double(i)}))
-            if (target->confidence > best) {
-                best = target->confidence;
-                angle = i;
+    QRect box;
+    std::optional<Match> found;
+    return rust::workflowRun(
+        rust::WorkflowMethod::WorldArrowAngle, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::WorldReadArrowBox: {
+                box = c_.templates.box("arrow", {c_.frame.cols, c_.frame.rows});
+                break;
             }
-    }
-    return angle;
+            case rust::WorkflowOp::Checkpoint: {
+                c_.execution.checkpoint();
+                break;
+            }
+            case rust::WorkflowOp::WorldFindRotatedArrow: {
+                found = c_.find("arrow", {.threshold = .01, .search = box, .rotation = a[0]});
+                break;
+            }
+            case rust::WorkflowOp::WorldHasMatch: {
+                out[0] = found.has_value();
+                break;
+            }
+            case rust::WorkflowOp::WorldMatchConfidence: {
+                out[0] = found->confidence;
+                break;
+            }
+            default:
+                fail("Rust 世界交互宿主无效");
+            }
+        })[0];
 }
 std::optional<double> WorldInteraction::miniMapTurn(const QString &feature, double threshold, double xOffset,
                                                     double yOffset) {
-    const auto box = c_.templates.box("box_minimap", {c_.frame.cols, c_.frame.rows});
-    auto target = c_.find(feature, {.threshold = threshold, .search = box});
-    if (!target)
-        return {};
-    const auto point =
-        target->center() + QPointF(target->box.width() * xOffset, target->box.height() * yOffset);
-    const QPointF center(box.x() + box.width() * .5, box.y() + box.height() * .5);
-    double angle = std::atan2(point.y() - center.y(), point.x() - center.x()) * 180 / std::numbers::pi;
-    if (angle < 0)
-        angle += 360;
-    double turn = angle - arrowAngle();
-    if (turn > 180)
-        turn -= 360;
-    else if (turn < -180)
-        turn += 360;
-    return turn;
+    QRect box;
+    std::optional<Match> target;
+    const std::array args{threshold, xOffset, yOffset};
+    const auto result = rust::workflowRun(
+        rust::WorkflowMethod::WorldMiniMapTurn, args, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::WorldReadMinimapBox: {
+                box = c_.templates.box("box_minimap", {c_.frame.cols, c_.frame.rows});
+                break;
+            }
+            case rust::WorkflowOp::WorldFindMinimapTarget: {
+                target = c_.find(feature, {.threshold = a[0], .search = box});
+                break;
+            }
+            case rust::WorkflowOp::WorldHasMatch: {
+                out[0] = target.has_value();
+                break;
+            }
+            case rust::WorkflowOp::WorldMinimapDelta: {
+                const auto point =
+                    target->center() + QPointF(target->box.width() * a[0], target->box.height() * a[1]);
+                const QPointF center(box.x() + box.width() * .5, box.y() + box.height() * .5);
+                out[0] = point.x() - center.x();
+                out[1] = point.y() - center.y();
+                break;
+            }
+            case rust::WorkflowOp::WorldReadArrowAngle: {
+                out[0] = arrowAngle();
+                break;
+            }
+            default:
+                fail("Rust 世界交互宿主无效");
+            }
+        });
+    return result[1] != 0 ? std::optional<double>{result[0]} : std::optional<double>{};
 }
 bool WorldInteraction::followBossMinimap(double timeout, double threshold) {
-    if (!inCombat_)
-        fail("小地图寻路缺少战斗状态");
-    centerCamera();
-    Movement movement(c_);
-    bool forward = false;
-    const double end = c_.execution.now() + timeout;
-    while (c_.execution.now() < end) {
-        c_.sleep(.01);
-        if (inCombat_()) {
-            movement.stop();
-            return true;
+    std::optional<Movement> movement;
+    const QStringList directions{"w", "a", "s", "d"};
+    std::function<void(rust::WorkflowOp, const double *, double *)> action;
+    action = [&](rust::WorkflowOp op, const double *a, double *out) {
+        switch (op) {
+        case rust::WorkflowOp::Now: {
+            out[0] = c_.execution.now();
+            break;
         }
-        const double angle = miniMapTurn("boss_check_mark_minimap", threshold, -1, 1).value_or(0);
-        if (forward && ((angle >= 10 && angle <= 80) || (angle >= -80 && angle <= -10))) {
-            const QString key = angle > 0 ? "d" : "a";
-            c_.input.keyDown(key);
-            try {
-                c_.sleep(.1);
-                c_.input.click({}, .1, "middle");
-                c_.input.keyUp(key);
-                c_.sleep(.01);
-            } catch (...) {
-                c_.input.release();
-                throw;
-            }
-            continue;
+        case rust::WorkflowOp::Checkpoint: {
+            c_.execution.checkpoint();
+            break;
         }
-        const QString direction = angle >= -45 && angle <= 45    ? "w"
-                                  : angle > 45 && angle <= 135   ? "d"
-                                  : angle > -135 && angle <= -45 ? "a"
-                                                                 : "s";
-        if (!forward || direction != "w") {
-            if (forward) {
-                movement.stop();
-                c_.wait(inCombat_, .2);
-            }
-            if (direction != "w")
-                c_.key(direction, .5, .05);
+        case rust::WorkflowOp::ExecutionWait: {
+            c_.execution.wait(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::Refresh: {
+            c_.refresh();
+            break;
+        }
+        case rust::WorkflowOp::InvalidCondition: {
+            fail("等待条件参数无效");
+            break;
+        }
+        case rust::WorkflowOp::Sleep: {
+            c_.sleep(a[0]);
+            break;
+        }
+        case rust::WorkflowOp::CreateWorldMovement: {
+            movement.emplace(c_);
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementStop: {
+            movement->stop();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementRun: {
+            movement->run();
+            break;
+        }
+        case rust::WorkflowOp::WorldMoveDirectionId: {
+            movement->direction(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldHasCombat: {
+            out[0] = bool(inCombat_);
+            break;
+        }
+        case rust::WorkflowOp::WorldCombat: {
+            out[0] = inCombat_();
+            break;
+        }
+        case rust::WorkflowOp::WorldCenterCamera: {
             centerCamera();
-            movement.direction("w");
-            c_.wait(inCombat_, .2);
-            movement.run();
-            forward = true;
-            c_.wait(inCombat_, 1);
+            break;
         }
-    }
-    movement.stop();
-    return inCombat_();
+        case rust::WorkflowOp::WorldReleaseInput: {
+            c_.input.release();
+            break;
+        }
+        case rust::WorkflowOp::WorldMovementFailure: {
+            switch (int(a[0])) {
+            case 0:
+                fail("目标移动参数无效");
+            case 1:
+                throw NavigationFailure("未能接近奖励目标");
+            case 2:
+                fail("小地图寻路缺少战斗状态");
+            default:
+                fail("寻路失败编号无效");
+            }
+            break;
+        }
+        case rust::WorkflowOp::WorldBossMinimapTurn: {
+            out[0] = miniMapTurn("boss_check_mark_minimap", a[0], -1, 1).value_or(0);
+            break;
+        }
+        case rust::WorkflowOp::WorldDirectionDown: {
+            c_.input.keyDown(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldDirectionUp: {
+            c_.input.keyUp(directions.at(int(a[0])));
+            break;
+        }
+        case rust::WorkflowOp::WorldMiddleClick: {
+            c_.input.click({}, a[0], "middle");
+            break;
+        }
+        case rust::WorkflowOp::WorldTapDirection: {
+            c_.key(directions.at(int(a[0])), a[1], a[2]);
+            break;
+        }
+        default:
+            fail("Rust 移动宿主无效");
+        }
+    };
+    const std::array args{timeout, threshold};
+    return rust::workflowRun(rust::WorkflowMethod::WorldFollowBoss, args, action)[0] != 0;
 }
 } // namespace okww::runtime

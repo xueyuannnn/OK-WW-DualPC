@@ -16,6 +16,7 @@ class DomainFarm {
     void enter(DomainKind kind, const QJsonObject &config);
     void nextRound(DomainKind kind);
     void leave(DomainKind kind);
+    FarmResult rustRun(int method, std::initializer_list<double> args, QJsonObject config = {});
 
   public:
     std::function<void(int)> onStaminaSpent;

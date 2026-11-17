@@ -3,10 +3,11 @@
 ## 环境
 
 - Windows x64，Visual Studio 2022 的 C++ 桌面开发组件与 Windows SDK。
+- Rust 1.100.0，使用 `x86_64-pc-windows-msvc` 工具链，版本固定在 `rust-toolchain.toml`。
 - Qt 6.8 或更新版本的 MSVC 2022 x64 SDK，包含 Qt Test。
 - OpenCV 4.12 x64 SDK。
 - OpenVINO Runtime 开发文件。现有完整包使用 2026.4.1。
-- Python 3.12，用于工坊引擎和 Python 测试。C++ 内置任务不依赖 Python 开发头文件。
+- Python 3.12，用于工坊引擎和 Python 测试。原生内置任务不依赖 Python 开发头文件。
 
 仓库直接包含 `vendor/ok-script` 框架源码和识别资源，无需初始化子模块。构建产物、SDK、个人配置和导入队伍不在源码中。
 
@@ -21,7 +22,22 @@ py -3.12 -m venv .venv
 
 开发时工坊使用 `.venv/Scripts/python.exe`。完整包使用 `workshop-engine/runtime/python.exe`。使用项目本地解释器运行 Python 命令。
 
-## C++ 构建
+## 原生构建
+
+界面使用 Qt Widgets，业务执行位于 `native/rust/`。任务调度、角色连招、识别策略、采集与输入控制、设备恢复、配置、定时任务、工坊通信、通知和更新流程由 Rust 执行。Python 工坊与通用脚本保留独立执行引擎。
+
+C++ 层保留 Qt 界面、Windows／COM、OpenCV 和 OpenVINO 对象及 SDK 调用。Rust 通过同步 C ABI 借用这些对象，不持有 Qt 指针；原生异常由宿主捕获并保存，返回 Rust 后决定恢复或收尾，再在原生调用边界抛出。图像像素运算使用有长度与步长校验的缓冲区接口。整数时间戳、帧序号和系统句柄不通过浮点参数传递。
+
+角色代码页沿用原有文件选择器，可查看 C++ 适配层、Rust 连招和公共战斗规则。工坊的 Python 编辑、导入导出和按队伍切换方式保持一致。普通源码不包含本地私有队伍；本地队伍单独链接执行库，不进入普通包。
+
+源码构建前通过 [rustup](https://rust-lang.org/tools/install/) 安装固定工具链：
+
+```powershell
+rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
+cargo test --workspace --locked
+```
+
+CMake 会编译并链接 Rust 静态库，普通用户运行完整包无需安装 Rust。标准 Cargo 路径由 CMake 自动查找，也可通过 `-DOKWW_CARGO=<cargo.exe>` 指定；本机独立工具链可以放在项目的 `.rust-tools/` 中，该目录不进入源码包。
 
 `QtRoot` 指向含 `bin/` 和 `lib/cmake/Qt6/` 的 Qt SDK；`OpenCvRoot` 指向含 `OpenCVConfig.cmake` 的目录；`OpenVinoRoot` 指向含 `cmake/OpenVINOConfig.cmake` 的目录。
 
@@ -56,6 +72,8 @@ CTest 覆盖设备协议、运行时、任务流程、通知、工坊和 Qt 界�
 `workshop_tests` 可通过 `OKWW_WORKSHOP_TEST_ROOT` 指向解压后的普通完整包，使用包内便携 Python 验证桥接握手、任务类型、当前角色单次收尾、暂停释放和同帧复制。未设置时使用当前源码目录。测试始终在临时配置中运行，并使用模拟输入；设置 `OKWW_UI_ARTIFACTS` 可保存软件内部耗时报告。
 
 ## 发布文件
+
+`native/RELEASE_VERSION` 是完整版本号（例如 `0.2.0-beta.8`）。发布新版本前修改此文件并重新配置、编译，Git 标签使用相同版本加 `v` 前缀。界面、更新比较和完整包清单均读取此版本；预览版按语义版本顺序比较，不按发布日期排序。
 
 ```powershell
 .\.venv\Scripts\python.exe tools_release/prepare_source.py --output release-review

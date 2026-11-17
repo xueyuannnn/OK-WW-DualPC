@@ -20,6 +20,13 @@ class TaskContext {
     FrameSource source_;
     TextReader textReader_;
     bool handlingMonthlyWindow_ = false;
+    QJsonArray workflow_;
+    QJsonObject timingHistory_;
+    QString timingPath_, workflowTask_;
+    double workflowBegan_ = 0;
+    void publishWorkflow();
+    std::array<double, 3> rustRun(int method, std::initializer_list<double> args = {},
+                                  const QJsonObject &request = {});
 
   public:
     Execution &execution;
@@ -32,7 +39,13 @@ class TaskContext {
     QString gameLanguage = "zh_CN";
     QJsonObject taskOverrides;
     std::function<void(QString, QString)> info;
+    std::function<void(QJsonObject)> progress;
+    void reportProgress(QString stage, double current = -1, double total = -1, QString unit = {},
+                        QString detail = {});
+    void beginWorkflow(QJsonArray steps, QString timingPath = {});
+    void workflowStep(const QString &id, const QString &state, const QString &detail = {});
     std::function<uint64_t()> sourceSequence;
+    std::function<bool()> sourceRecovering;
     std::function<void(QJsonObject)> combatInfo;
     std::function<void(QString, QString, bool)> notify;
     std::function<void(QString, QJsonObject)> diagnostic;
@@ -50,11 +63,7 @@ class TaskContext {
     QVector<TextLine> text(QRect area, double threshold, Filter filter);
     QVector<TextLine> textScaled(QRect area, double threshold = .8, double scale = 3);
     QVector<TextLine> text(double x, double y, double right, double bottom, double threshold = .8);
-    QJsonValue setting(const QString &key, QJsonValue fallback = {}) const {
-        if (taskOverrides.contains(key))
-            return taskOverrides[key];
-        return profile.value(task, key, fallback);
-    }
+    QJsonValue setting(const QString &key, QJsonValue fallback = {}) const;
     void click(QPointF point, double after = 0);
     void click(const Match &match, double after = 0) { click(match.center(), after); }
     void click(const TextLine &text, double after = 0) { click(text.center(), after); }
@@ -68,6 +77,9 @@ class TaskContext {
     bool login();
     bool skipConfirm();
     bool travelButton();
+    bool fastTravel();
+    bool autoPick();
+    bool autoDialog();
 };
 class TaskScope {
     TaskContext &context_;

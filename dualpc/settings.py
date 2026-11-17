@@ -122,7 +122,9 @@ class Settings:
             box["protocol"] = "kmbox_net"
         for key in ("hid_vid", "hid_pid", "hid_path", "serial_port", "baudrate"):
             box.pop(key, None)
-        return cls(CaptureSettings(**data.get("capture", {})), BoxSettings(**box),
+        capture = dict(data.get("capture", {}))
+        capture.pop("auto_game_region", None)
+        return cls(CaptureSettings(**capture), BoxSettings(**box),
                    data.get("game_language", "zh_CN")).validate()
 
     def save(self, path: str | Path):

@@ -1,9 +1,10 @@
 #include "engine.hpp"
 #include "app_info.hpp"
+#include "diagnostics.hpp"
+#include "engine_abi.hpp"
+#include "resource_failure.hpp"
 #include "scripts.hpp"
 #include "task_registry.hpp"
-#include "resource_failure.hpp"
-#include "diagnostics.hpp"
 #include <QtConcurrent>
 #include <opencv2/imgcodecs.hpp>
 
@@ -28,204 +29,619 @@ Engine::Engine(Backend &backend, QString root, QString data, QObject *parent)
     : QObject(parent), backend_(backend), root_(std::move(root)), data_(std::move(data)),
       profile_(data_ + "/configs-dualpc", root_ + "/native/resources/catalog.json"),
       teams_(std::make_shared<TeamStore>(root_, data_)), tasks_(builtinTasks()) {
-    try {
-        scripts_ = scriptCatalog(data_);
-        if (QFile::exists(data_ + "/native-script-catalog.json"))
-            scriptTemplates_ = readJson(data_ + "/native-script-catalog.json")["templates"].toArray();
-    } catch (...) {
-        // A disposable metadata cache must never prevent opening the profile.
-    }
-    tasks_ += businessTasks([](const QString &) -> bool { fail("仅供目录展示的任务不可执行"); });
-    launchTimer_.setInterval(50);
-    connect(&launchTimer_, &QTimer::timeout, this, &Engine::tryLaunch);
-    QString models = root_ + "/assets/ocr/ppocrv5";
-    if (!QFile::exists(models + "/det/det.onnx"))
-        models = root_ + "/.venv/Lib/site-packages/onnxocr/models/ppocrv5";
-    notifications_ = std::make_unique<Notifications>(models, [this](QString text) { log(text); });
-    exitTimer_.setInterval(100);
-    connect(&exitTimer_, &QTimer::timeout, this, [this] {
-        if (!paused_) {
-            exitTimer_.stop();
-            return;
+    QString models;
+    rust::engineRun(rust::EngineMethod::Initialize, [&](rust::EngineOp op, const double *a, double *out,
+                                                        const std::exception_ptr &error) {
+        switch (op) {
+        case rust::EngineOp::ReadInitialScripts: {
+            scripts_ = scriptCatalog(data_);
+            break;
         }
-        if (notifications_->idle() || exitWait_.elapsed() > 180000) {
-            exitTimer_.stop();
-            emit message({{"event", "quit_requested"}});
+        case rust::EngineOp::ScriptCatalogExists: {
+            out[0] = QFile::exists(data_ + "/native-script-catalog.json");
+            break;
+        }
+        case rust::EngineOp::ReadInitialTemplates: {
+            scriptTemplates_ = readJson(data_ + "/native-script-catalog.json")["templates"].toArray();
+            break;
+        }
+        case rust::EngineOp::AppendBusinessTasks: {
+            tasks_ += businessTasks([](const QString &) -> bool { fail("仅供目录展示的任务不可执行"); });
+            break;
+        }
+        case rust::EngineOp::BindLaunchTimer: {
+            launchTimer_.setInterval(int(a[0]));
+            connect(&launchTimer_, &QTimer::timeout, this, &Engine::tryLaunch);
+            break;
+        }
+        case rust::EngineOp::DefaultModelPath: {
+            models = root_ + "/assets/ocr/ppocrv5";
+            break;
+        }
+        case rust::EngineOp::ModelExists: {
+            out[0] = QFile::exists(models + "/det/det.onnx");
+            break;
+        }
+        case rust::EngineOp::FallbackModelPath: {
+            models = root_ + "/.venv/Lib/site-packages/onnxocr/models/ppocrv5";
+            break;
+        }
+        case rust::EngineOp::CreateNotifications: {
+            notifications_ = std::make_unique<Notifications>(models, [this](QString text) { log(text); });
+            break;
+        }
+        case rust::EngineOp::BindExitTimer: {
+            exitTimer_.setInterval(int(a[0]));
+            connect(&exitTimer_, &QTimer::timeout, this, [this] {
+                rust::engineRun(
+                    rust::EngineMethod::ExitPoll,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                        switch (op) {
+                        case rust::EngineOp::Paused: {
+                            out[0] = paused_;
+                            break;
+                        }
+                        case rust::EngineOp::ExitTimerStop: {
+                            exitTimer_.stop();
+                            break;
+                        }
+                        case rust::EngineOp::NotificationsIdle: {
+                            out[0] = notifications_->idle();
+                            break;
+                        }
+                        case rust::EngineOp::ExitElapsed: {
+                            out[0] = double(exitWait_.elapsed());
+                            break;
+                        }
+                        case rust::EngineOp::EmitQuit: {
+                            emit message({{"event", "quit_requested"}});
+                            break;
+                        }
+                        default:
+                            fail("Rust ExitPoll 宿主操作无效");
+                        }
+                    });
+            });
+            break;
+        }
+        default:
+            fail("Rust Initialize 宿主操作无效");
         }
     });
 }
 Engine::~Engine() {
-    pause();
-    if (worker_.joinable())
-        worker_.join();
-    if (modelWorker_.joinable())
-        modelWorker_.join();
-    notifications_->stop();
+    rust::engineRun(rust::EngineMethod::Destroy,
+                    [&](rust::EngineOp op, const double *, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::Pause:
+                            pause();
+                            break;
+                        case rust::EngineOp::WorkerJoinable:
+                            out[0] = worker_.joinable();
+                            break;
+                        case rust::EngineOp::JoinWorker:
+                            worker_.join();
+                            break;
+                        case rust::EngineOp::ModelJoinable:
+                            out[0] = modelWorker_.joinable();
+                            break;
+                        case rust::EngineOp::JoinModel:
+                            modelWorker_.join();
+                            break;
+                        case rust::EngineOp::NotificationsStop:
+                            notifications_->stop();
+                            break;
+                        default:
+                            fail("Rust 执行器退出宿主操作无效");
+                        }
+                    });
+}
+bool Engine::idle() const {
+    return rust::engineRun(rust::EngineMethod::Idle, [&](rust::EngineOp op, const double *a, double *out,
+                                                         const std::exception_ptr &error) {
+               switch (op) {
+               case rust::EngineOp::Paused: {
+                   out[0] = paused_;
+                   break;
+               }
+               case rust::EngineOp::WorkerFinished: {
+                   out[0] = workerFinished_;
+                   break;
+               }
+               case rust::EngineOp::TeamBusy: {
+                   out[0] = teamSwitchBusy_;
+                   break;
+               }
+               default:
+                   fail("Rust Idle 宿主操作无效");
+               }
+           }) != 0;
 }
 void Engine::log(QString text) { emit message({{"event", "log"}, {"text", text}}); }
 void Engine::notify(Notice notice) {
-    const auto config = profile_.group("Notification");
-    if (config["System Notification"].toBool(true))
-        emit message({{"event", "notification"},
-                      {"title", notice.title},
-                      {"text", notice.text},
-                      {"error", notice.error}});
-    notifications_->submit(config, std::move(notice));
+    QJsonObject config;
+    rust::engineRun(rust::EngineMethod::Notify,
+                    [&](rust::EngineOp op, const double *, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::LoadNotificationConfig:
+                            config = profile_.group("Notification");
+                            break;
+                        case rust::EngineOp::SystemNotification:
+                            out[0] = config["System Notification"].toBool(true);
+                            break;
+                        case rust::EngineOp::EmitNotification:
+                            emit message({{"event", "notification"},
+                                          {"title", notice.title},
+                                          {"text", notice.text},
+                                          {"error", notice.error}});
+                            break;
+                        case rust::EngineOp::SubmitNotification:
+                            notifications_->submit(config, std::move(notice));
+                            break;
+                        default:
+                            fail("Rust 通知宿主操作无效");
+                        }
+                    });
 }
 void Engine::postStatus(uint64_t generation, QString current) {
     QMetaObject::invokeMethod(
         this,
         [this, generation, current] {
-            if (generation_ == generation)
-                emit message({{"event", "status"}, {"data", status(foreground_ ? current : QString{})}});
+            QJsonObject result;
+            rust::engineRun(rust::EngineMethod::PostStatus,
+                            [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &) {
+                                switch (op) {
+                                case rust::EngineOp::GenerationMatches:
+                                    out[0] = generation_ == generation;
+                                    break;
+                                case rust::EngineOp::Foreground:
+                                    out[0] = bool(foreground_);
+                                    break;
+                                case rust::EngineOp::BuildStatus:
+                                    result = status(a[0] != 0 ? current : QString{});
+                                    break;
+                                case rust::EngineOp::EmitStatus:
+                                    emit message({{"event", "status"}, {"data", result}});
+                                    break;
+                                default:
+                                    fail("Rust 状态发布宿主操作无效");
+                                }
+                            });
         },
         Qt::QueuedConnection);
 }
 QJsonObject Engine::catalog() const {
-    auto result = profile_.catalog();
-    QJsonArray tasks;
-    for (auto v : result["tasks"].toArray()) {
-        auto t = v.toObject();
-        const auto id = t["id"].toString();
-        const bool supported =
-            std::any_of(tasks_.begin(), tasks_.end(), [&](const auto &item) { return item.id == id; });
-        t["native_supported"] = supported;
-        if (!supported)
-            t["description"] = t["description"].toString() + "\n此版本不支持该任务。";
-        if (!supported)
-            t["name"] = t["name"].toString() + "（待迁移）";
-        tasks.append(t);
-    }
-    for (auto value : scripts_) {
-        auto script = value.toObject();
-        script.remove("source");
-        tasks.append(script);
-    }
-    result["tasks"] = tasks;
-    result["scripts"] = scripts_;
-    result["script_templates"] = scriptTemplates_;
-    // Native rotations stay in-process. Workshop classes use an isolated
-    // Python child and the same C++ capture/input ownership.
-    result["teams"] = teamSwitchBusy_ ? teamSwitchSnapshot_ : teams_->catalog();
+    QJsonObject result, entry, script;
+    QJsonArray input, tasks;
+    const TaskDefinition *native = nullptr;
+    rust::engineRun(rust::EngineMethod::Catalog,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::CatalogProfileLoad:
+                            result = profile_.catalog();
+                            input = result["tasks"].toArray();
+                            break;
+                        case rust::EngineOp::CatalogCount:
+                            out[0] = double(input.size());
+                            break;
+                        case rust::EngineOp::SelectCatalog:
+                            entry = input.at(int(a[0])).toObject();
+                            break;
+                        case rust::EngineOp::NativeCount:
+                            out[0] = double(tasks_.size());
+                            break;
+                        case rust::EngineOp::NativeSelect:
+                            native = &tasks_.at(int(a[0]));
+                            break;
+                        case rust::EngineOp::NativeMatches:
+                            out[0] = native->id == entry["id"].toString();
+                            break;
+                        case rust::EngineOp::CatalogSetSupported:
+                            entry["native_supported"] = a[0] != 0;
+                            break;
+                        case rust::EngineOp::CatalogUnsupportedDescription:
+                            entry["description"] = entry["description"].toString() + "\n此版本不支持该任务。";
+                            break;
+                        case rust::EngineOp::CatalogUnsupportedName:
+                            entry["name"] = entry["name"].toString() + "（待迁移）";
+                            break;
+                        case rust::EngineOp::CatalogAppendTask:
+                            tasks.append(entry);
+                            break;
+                        case rust::EngineOp::ScriptsCount:
+                            out[0] = double(scripts_.size());
+                            break;
+                        case rust::EngineOp::SelectScriptEntry:
+                            script = scripts_.at(int(a[0])).toObject();
+                            break;
+                        case rust::EngineOp::ScriptRemoveSource:
+                            script.remove("source");
+                            break;
+                        case rust::EngineOp::CatalogAppendScript:
+                            tasks.append(script);
+                            break;
+                        case rust::EngineOp::CatalogStoreTasks:
+                            result["tasks"] = tasks;
+                            break;
+                        case rust::EngineOp::CatalogStoreScripts:
+                            result["scripts"] = scripts_;
+                            break;
+                        case rust::EngineOp::CatalogStoreTemplates:
+                            result["script_templates"] = scriptTemplates_;
+                            break;
+                        case rust::EngineOp::TeamBusy:
+                            out[0] = teamSwitchBusy_;
+                            break;
+                        case rust::EngineOp::CatalogSnapshotTeams:
+                            result["teams"] = teamSwitchSnapshot_;
+                            break;
+                        case rust::EngineOp::CatalogLiveTeams:
+                            result["teams"] = teams_->catalog();
+                            break;
+                        default:
+                            fail("Rust 任务目录宿主操作无效");
+                        }
+                    });
     return result;
 }
 QJsonObject Engine::status(QString current) const {
-    QJsonArray states;
-    for (auto v : profile_.catalog()["tasks"].toArray()) {
-        auto t = v.toObject();
-        states.append(QJsonObject{{"id", t["id"]}, {"enabled", t["enabled"]}, {"paused", bool(paused_)}});
-    }
-    for (auto value : scripts_) {
-        const auto script = value.toObject();
-        states.append(
-            QJsonObject{{"id", script["id"]}, {"enabled", script["enabled"]}, {"paused", bool(paused_)}});
-    }
-    return {{"paused", bool(paused_)}, {"warming", bool(warming_)}, {"current", current}, {"tasks", states}};
+    QJsonArray input, states;
+    QJsonObject entry, script, result;
+    rust::engineRun(rust::EngineMethod::Status, [&](rust::EngineOp op, const double *a, double *out,
+                                                    const std::exception_ptr &) {
+        switch (op) {
+        case rust::EngineOp::ProfileCatalogLoad:
+            input = profile_.catalog()["tasks"].toArray();
+            break;
+        case rust::EngineOp::CatalogCount:
+            out[0] = double(input.size());
+            break;
+        case rust::EngineOp::SelectCatalog:
+            entry = input.at(int(a[0])).toObject();
+            break;
+        case rust::EngineOp::AppendCatalogState:
+            states.append(
+                QJsonObject{{"id", entry["id"]}, {"enabled", entry["enabled"]}, {"paused", bool(paused_)}});
+            break;
+        case rust::EngineOp::ScriptsCount:
+            out[0] = double(scripts_.size());
+            break;
+        case rust::EngineOp::SelectScriptEntry:
+            script = scripts_.at(int(a[0])).toObject();
+            break;
+        case rust::EngineOp::AppendScriptState:
+            states.append(QJsonObject{{"id", std::as_const(script)["id"]},
+                                      {"enabled", std::as_const(script)["enabled"]},
+                                      {"paused", bool(paused_)}});
+            break;
+        case rust::EngineOp::BuildStatusResult:
+            result = {{"paused", bool(paused_)},
+                      {"warming", bool(warming_)},
+                      {"current", current},
+                      {"tasks", states}};
+            break;
+        default:
+            fail("Rust 执行器状态宿主操作无效");
+        }
+    });
+    return result;
 }
 void Engine::load() {
-    preloadModels();
-    log("C++ 执行器已就绪；Python 工坊按需加载，采集和盒子仍由 C++ 管理。");
-    if (QDir(data_ + "/ok_tasks").exists() || QDir(data_ + "/ok_import").exists()) {
-        loadingScripts_ = true;
-        scriptCommand({{"id", 0}, {"op", "script_catalog"}});
-    } else
-        emit message({{"event", "ready"}, {"data", catalog()}});
+    rust::engineRun(rust::EngineMethod::Load,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::Preload:
+                            preloadModels();
+                            break;
+                        case rust::EngineOp::LogReady:
+                            log("C++ 执行器已就绪；Python 工坊按需加载，采集和盒子仍由 C++ 管理。");
+                            break;
+                        case rust::EngineOp::TasksDirectory:
+                            out[0] = QDir(data_ + "/ok_tasks").exists();
+                            break;
+                        case rust::EngineOp::ImportsDirectory:
+                            out[0] = QDir(data_ + "/ok_import").exists();
+                            break;
+                        case rust::EngineOp::SetLoadingScripts:
+                            loadingScripts_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::ScanScripts:
+                            scriptCommand({{"id", 0}, {"op", "script_catalog"}});
+                            break;
+                        case rust::EngineOp::EmitReady:
+                            emit message({{"event", "ready"}, {"data", catalog()}});
+                            break;
+                        default:
+                            fail("Rust 执行器载入宿主操作无效");
+                        }
+                    });
 }
 void Engine::pause() {
-    std::lock_guard lock(lifecycle_);
-    pendingTask_.reset();
-    launchTimer_.stop();
-    gate_.stop();
-    generation_ = 0;
-    paused_ = true;
-    foreground_ = false;
-    cancelForeground_ = false;
-    try {
-        backend_.arm(false);
-    } catch (const std::exception &e) {
-        log(errorText(e));
-    }
+    std::unique_lock<std::mutex> lock;
+    rust::engineRun(rust::EngineMethod::Pause,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                        switch (op) {
+                        case rust::EngineOp::LockLifecycle:
+                            lock = std::unique_lock(lifecycle_);
+                            break;
+                        case rust::EngineOp::UnlockLifecycle:
+                            lock.unlock();
+                            break;
+                        case rust::EngineOp::ClearPending:
+                            pendingTask_.reset();
+                            break;
+                        case rust::EngineOp::LaunchTimerStop:
+                            launchTimer_.stop();
+                            break;
+                        case rust::EngineOp::StopGate:
+                            gate_.stop();
+                            break;
+                        case rust::EngineOp::GenerationZero:
+                            generation_ = 0;
+                            break;
+                        case rust::EngineOp::SetPaused:
+                            paused_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::SetForeground:
+                            foreground_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::SetCancelForeground:
+                            cancelForeground_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::BackendArm:
+                            backend_.arm(a[0] != 0);
+                            break;
+                        case rust::EngineOp::LogException:
+                            try {
+                                std::rethrow_exception(error);
+                            } catch (const std::exception &failure) {
+                                log(errorText(failure));
+                            }
+                            break;
+                        default:
+                            fail("Rust 暂停宿主操作无效");
+                        }
+                    });
 }
 void Engine::start(const QString &task, QJsonObject options) {
-    if (teamSwitchBusy_)
-        fail("正在切换队伍代码，请等待完成后启动");
-    if (scriptsBusy_)
-        fail("正在更新脚本文件，请等待保存完成后启动");
-    exitTimer_.stop();
-    const auto limit = options["limit_seconds"].toDouble(0);
-    if (!std::isfinite(limit) || limit < 0 || limit > 168 * 3600)
-        fail("任务最长运行时间无效");
-    const auto script = std::find_if(scripts_.begin(), scripts_.end(),
-                                     [&](const auto &value) { return value.toObject()["id"] == task; });
-    if (script != scripts_.end() && !script->toObject()["native_supported"].toBool())
-        fail(script->toObject()["error"].toString("脚本加载失败"));
-    if (!task.isEmpty() && script == scripts_.end() &&
-        std::none_of(tasks_.begin(), tasks_.end(), [&](const auto &t) { return t.id == task; }))
-        fail("此任务尚未完成 C++ 迁移，请使用保留的兼容版。");
-    if (task.isEmpty())
-        for (auto v : profile_.catalog()["tasks"].toArray()) {
-            auto t = v.toObject();
-            const auto id = t["id"].toString();
-            if (t["trigger"].toBool() && t["enabled"].toBool() && id != "RemoteMouseResetTask" &&
-                std::none_of(tasks_.begin(), tasks_.end(), [&](const auto &item) { return item.id == id; }))
-                fail("已启用的“" + t["name"].toString() + "”尚未迁移，请先关闭该项再测试已迁移功能。");
-        }
-    pause();
-    preloadModels();
-    pendingTask_ = task;
-    foreground_ = !task.isEmpty();
-    pendingOptions_ = options;
-    pendingOptions_["scripts_snapshot"] = scripts_;
-    tryLaunch();
-    if (pendingTask_)
-        launchTimer_.start();
+    QJsonObject scriptEntry, catalogEntry;
+    QJsonArray catalog;
+    const TaskDefinition *native = nullptr;
+    rust::engineRun(rust::EngineMethod::Start,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::TeamBusy:
+                            out[0] = teamSwitchBusy_;
+                            break;
+                        case rust::EngineOp::ScriptsBusy:
+                            out[0] = scriptsBusy_;
+                            break;
+                        case rust::EngineOp::ExitTimerStop:
+                            exitTimer_.stop();
+                            break;
+                        case rust::EngineOp::LimitOption:
+                            out[0] = options["limit_seconds"].toDouble(0);
+                            break;
+                        case rust::EngineOp::ScriptsCount:
+                            out[0] = double(scripts_.size());
+                            break;
+                        case rust::EngineOp::SelectScriptEntry:
+                            scriptEntry = scripts_.at(int(a[0])).toObject();
+                            break;
+                        case rust::EngineOp::ScriptMatches:
+                            out[0] = scriptEntry["id"] == task;
+                            break;
+                        case rust::EngineOp::ScriptSupported:
+                            out[0] = scriptEntry["native_supported"].toBool();
+                            break;
+                        case rust::EngineOp::HasRequestedTask:
+                            out[0] = !task.isEmpty();
+                            break;
+                        case rust::EngineOp::NativeCount:
+                            out[0] = double(tasks_.size());
+                            break;
+                        case rust::EngineOp::NativeSelect:
+                            native = &tasks_.at(int(a[0]));
+                            break;
+                        case rust::EngineOp::NativeMatches:
+                            out[0] = native->id == (a[0] == 0 ? task : catalogEntry["id"].toString());
+                            break;
+                        case rust::EngineOp::ProfileCatalogLoad:
+                            catalog = profile_.catalog()["tasks"].toArray();
+                            break;
+                        case rust::EngineOp::CatalogCount:
+                            out[0] = double(catalog.size());
+                            break;
+                        case rust::EngineOp::SelectCatalog:
+                            catalogEntry = catalog.at(int(a[0])).toObject();
+                            break;
+                        case rust::EngineOp::CatalogTrigger:
+                            out[0] = catalogEntry["trigger"].toBool();
+                            break;
+                        case rust::EngineOp::CatalogEnabled:
+                            out[0] = catalogEntry["enabled"].toBool();
+                            break;
+                        case rust::EngineOp::CatalogRemoteReset:
+                            out[0] = catalogEntry["id"].toString() == "RemoteMouseResetTask";
+                            break;
+                        case rust::EngineOp::Error:
+                            switch (int(a[0])) {
+                            case 0:
+                                fail("正在切换队伍代码，请等待完成后启动");
+                            case 1:
+                                fail("正在更新脚本文件，请等待保存完成后启动");
+                            case 2:
+                                fail("任务最长运行时间无效");
+                            case 3:
+                                fail(scriptEntry["error"].toString("脚本加载失败"));
+                            case 4:
+                                fail("此任务尚未完成 C++ 迁移，请使用保留的兼容版。");
+                            case 5:
+                                fail("已启用的“" + catalogEntry["name"].toString() +
+                                     "”尚未迁移，请先关闭该项再测试已迁移功能。");
+                            default:
+                                fail("Rust 启动错误类型无效");
+                            }
+                        case rust::EngineOp::Pause:
+                            pause();
+                            break;
+                        case rust::EngineOp::Preload:
+                            preloadModels();
+                            break;
+                        case rust::EngineOp::PendingTaskSet:
+                            pendingTask_ = task;
+                            break;
+                        case rust::EngineOp::SetForeground:
+                            foreground_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::PendingOptionsSet:
+                            pendingOptions_ = options;
+                            break;
+                        case rust::EngineOp::PendingSnapshotSet:
+                            pendingOptions_["scripts_snapshot"] = scripts_;
+                            break;
+                        case rust::EngineOp::TryLaunch:
+                            tryLaunch();
+                            break;
+                        case rust::EngineOp::HasPending:
+                            out[0] = bool(pendingTask_);
+                            break;
+                        case rust::EngineOp::LaunchTimerStart:
+                            launchTimer_.start();
+                            break;
+                        default:
+                            fail("Rust 启动宿主操作无效");
+                        }
+                    });
 }
 void Engine::tryLaunch() {
-    if (!pendingTask_ || !workerFinished_)
-        return;
-    if (worker_.joinable())
-        worker_.join();
-    const auto task = *pendingTask_;
-    pendingTask_.reset();
-    launchTimer_.stop();
-    paused_ = false;
-    const auto epoch = gate_.start();
-    generation_ = epoch;
-    workerFinished_ = false;
-    scriptEnabled_.clear();
-    for (auto value : pendingOptions_["scripts_snapshot"].toArray()) {
-        const auto script = value.toObject();
-        scriptEnabled_[script["id"].toString()] =
-            std::make_shared<std::atomic<bool>>(script["enabled"].toBool());
-    }
-    try {
-        worker_ = std::thread(&Engine::run, this, task, epoch, pendingOptions_);
-    } catch (...) {
-        workerFinished_ = true;
-        gate_.stop();
-        paused_ = true;
-        throw;
-    }
+    QString task;
+    uint64_t epoch = 0;
+    QJsonArray scripts;
+    QJsonObject script;
+    rust::engineRun(rust::EngineMethod::TryLaunch,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &) {
+                        switch (op) {
+                        case rust::EngineOp::HasPending:
+                            out[0] = bool(pendingTask_);
+                            break;
+                        case rust::EngineOp::WorkerFinished:
+                            out[0] = bool(workerFinished_);
+                            break;
+                        case rust::EngineOp::WorkerJoinable:
+                            out[0] = worker_.joinable();
+                            break;
+                        case rust::EngineOp::JoinWorker:
+                            worker_.join();
+                            break;
+                        case rust::EngineOp::CopyLaunchTask:
+                            task = *pendingTask_;
+                            break;
+                        case rust::EngineOp::ClearPending:
+                            pendingTask_.reset();
+                            break;
+                        case rust::EngineOp::LaunchTimerStop:
+                            launchTimer_.stop();
+                            break;
+                        case rust::EngineOp::SetPaused:
+                            paused_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::StartGate:
+                            epoch = gate_.start();
+                            break;
+                        case rust::EngineOp::GenerationEpoch:
+                            generation_ = epoch;
+                            break;
+                        case rust::EngineOp::SetWorkerFinished:
+                            workerFinished_ = a[0] != 0;
+                            break;
+                        case rust::EngineOp::ScriptFlagsClear:
+                            scriptEnabled_.clear();
+                            break;
+                        case rust::EngineOp::PendingScriptsCount:
+                            scripts = pendingOptions_["scripts_snapshot"].toArray();
+                            out[0] = double(scripts.size());
+                            break;
+                        case rust::EngineOp::PendingSelectScript:
+                            script = scripts.at(int(a[0])).toObject();
+                            break;
+                        case rust::EngineOp::StoreScriptFlag:
+                            scriptEnabled_[script["id"].toString()] =
+                                std::make_shared<std::atomic<bool>>(script["enabled"].toBool());
+                            break;
+                        case rust::EngineOp::SpawnWorker:
+                            worker_ = std::thread(&Engine::run, this, task, epoch, pendingOptions_);
+                            break;
+                        case rust::EngineOp::StopGate:
+                            gate_.stop();
+                            break;
+                        default:
+                            fail("Rust 线程启动宿主操作无效");
+                        }
+                    });
 }
 void Engine::preloadModels() {
-    if (modelWorker_.joinable())
-        return;
-    modelWorker_ = std::thread([this] {
-        QElapsedTimer elapsed;
-        elapsed.start();
-        try {
-            templates_ = std::make_unique<Templates>(root_ + "/assets/coco_annotations.json");
-            QString models = root_ + "/assets/ocr/ppocrv5";
-            if (!QFile::exists(models + "/det/det.onnx"))
-                models = root_ + "/.venv/Lib/site-packages/onnxocr/models/ppocrv5";
-            ocr_ = std::make_unique<Ocr>(models);
-            echo_ = std::make_unique<EchoDetector>(root_ + "/assets/echo_model/echo.onnx");
-            log(QString("识别资源后台预加载完成，用时 %1 ms；后续启动复用。").arg(elapsed.elapsed()));
-        } catch (const std::exception &error) {
-            modelError_ = errorText(error);
-            log("识别资源准备失败：" + modelError_);
+    rust::engineRun(rust::EngineMethod::BeginPreload, [&](rust::EngineOp op, const double *, double *out,
+                                                          const std::exception_ptr &) {
+        switch (op) {
+        case rust::EngineOp::ModelJoinable:
+            out[0] = modelWorker_.joinable();
+            break;
+        case rust::EngineOp::SpawnModel:
+            modelWorker_ = std::thread([this] {
+                QElapsedTimer elapsed;
+                QString models;
+                rust::engineRun(rust::EngineMethod::LoadModels, [&](rust::EngineOp operation, const double *a,
+                                                                    double *out,
+                                                                    const std::exception_ptr &error) {
+                    switch (operation) {
+                    case rust::EngineOp::StartModelTimer:
+                        elapsed.start();
+                        break;
+                    case rust::EngineOp::CreateTemplates:
+                        templates_ = std::make_unique<Templates>(root_ + "/assets/coco_annotations.json");
+                        break;
+                    case rust::EngineOp::DefaultModelPath:
+                        models = root_ + "/assets/ocr/ppocrv5";
+                        break;
+                    case rust::EngineOp::ModelExists:
+                        out[0] = QFile::exists(models + "/det/det.onnx");
+                        break;
+                    case rust::EngineOp::FallbackModelPath:
+                        models = root_ + "/.venv/Lib/site-packages/onnxocr/models/ppocrv5";
+                        break;
+                    case rust::EngineOp::CreateOcr:
+                        ocr_ = std::make_unique<Ocr>(models);
+                        break;
+                    case rust::EngineOp::CreateEcho:
+                        echo_ = std::make_unique<EchoDetector>(root_ + "/assets/echo_model/echo.onnx");
+                        break;
+                    case rust::EngineOp::LogModelsReady:
+                        log(QString("识别资源后台预加载完成，用时 %1 ms；后续启动复用。")
+                                .arg(elapsed.elapsed()));
+                        break;
+                    case rust::EngineOp::SetModelError:
+                        try {
+                            std::rethrow_exception(error);
+                        } catch (const std::exception &failure) {
+                            modelError_ = errorText(failure);
+                        }
+                        break;
+                    case rust::EngineOp::LogModelError:
+                        log("识别资源准备失败：" + modelError_);
+                        break;
+                    case rust::EngineOp::SetModelsReady:
+                        modelsReady_ = a[0] != 0;
+                        break;
+                    default:
+                        fail("Rust 识别资源宿主操作无效");
+                    }
+                });
+            });
+            break;
+        default:
+            fail("Rust 资源预载入宿主操作无效");
         }
-        modelsReady_ = true;
     });
 }
 void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
@@ -238,66 +654,220 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
     QJsonArray stepDiagnostics;
     bool completed = false, exitAfter = false, resultRecorded = false;
     const auto recordResult = [&](const QString &task, bool success) {
-        try {
-            writeJson(data_ + "/native-last-run.json",
-                      {{"task", task}, {"success", success},
-                       {"error", success ? QString{} : failure},
-                       {"finished", QDateTime::currentDateTime().toString(Qt::ISODate)},
-                       {"diagnostic_report", diagnosticReport}, {"seconds", clock.now() - began}});
-        } catch (const std::exception &e) {
-            log("运行结果保存失败：" + errorText(e));
-        }
+        rust::engineRun(rust::EngineMethod::RecordResult, [&](rust::EngineOp op, const double *a, double *out,
+                                                              const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::WriteRunResult: {
+                writeJson(data_ + "/native-last-run.json",
+                          {{"task", task},
+                           {"success", success},
+                           {"error", success ? QString{} : failure},
+                           {"finished", QDateTime::currentDateTime().toString(Qt::ISODate)},
+                           {"diagnostic_report", diagnosticReport},
+                           {"seconds", clock.now() - began}});
+                break;
+            }
+            case rust::EngineOp::LogResultFailure: {
+                try {
+                    std::rethrow_exception(error);
+                } catch (const std::exception &e) {
+                    log("运行结果保存失败：" + errorText(e));
+                }
+                break;
+            }
+            default:
+                fail("Rust RecordResult 宿主操作无效");
+            }
+        });
     };
     EmergencyMemory emergency;
-    try {
+    auto executeSession = [&] {
         KeepAwake awake;
-        if (!awake.active())
-            log("未能阻止任务运行期间自动休眠，请检查系统电源设置。");
-        warming_ = true;
-        postStatus(epoch, selected);
-        log("正在准备任务，检查工坊代码与识别资源；可随时暂停。");
-        log(emergency.available() ? "已预留 64 MiB 识别应急内存。" : "可用提交内存不足，未建立识别应急缓冲。");
-        Execution preparation(gate_, epoch, clock);
-        preparation.checkpoint();
-        if (!selected.startsWith("script:"))
-            teams_->validateEnabled();
-        preparation.checkpoint();
-        while (!modelsReady_)
-            preparation.wait(.02);
-        if (!modelError_.isEmpty())
-            fail(modelError_);
-        preparation.checkpoint();
-        // Serialize arming with Pause so a cancelled warm-up cannot re-arm HID.
-        {
-            std::lock_guard lock(lifecycle_);
-            preparation.checkpoint();
-            backend_.arm(true);
-        }
-        warming_ = false;
-        log(QString("任务准备完成，用时 %1 ms。").arg(qRound64((clock.now() - began) * 1000)));
-        postStatus(epoch, selected);
+        std::optional<Execution> preparation;
+        std::unique_lock<std::mutex> preparationLock;
+        rust::engineRun(rust::EngineMethod::Prepare, [&](rust::EngineOp op, const double *a, double *out,
+                                                         const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::AwakeActive: {
+                out[0] = awake.active();
+                break;
+            }
+            case rust::EngineOp::LogAwakeFailure: {
+                log("未能阻止任务运行期间自动休眠，请检查系统电源设置。");
+                break;
+            }
+            case rust::EngineOp::SetWarming: {
+                warming_ = a[0] != 0;
+                break;
+            }
+            case rust::EngineOp::PostStatusSelected: {
+                postStatus(epoch, selected);
+                break;
+            }
+            case rust::EngineOp::LogPreparation: {
+                log("正在准备任务，检查工坊代码与识别资源；可随时暂停。");
+                break;
+            }
+            case rust::EngineOp::EmergencyAvailable: {
+                out[0] = emergency.available();
+                break;
+            }
+            case rust::EngineOp::LogEmergency: {
+                log(a[0] != 0 ? "已预留 64 MiB 识别应急内存。" : "可用提交内存不足，未建立识别应急缓冲。");
+                break;
+            }
+            case rust::EngineOp::CreatePreparation: {
+                preparation.emplace(gate_, epoch, clock);
+                break;
+            }
+            case rust::EngineOp::Checkpoint: {
+                preparation->checkpoint();
+                break;
+            }
+            case rust::EngineOp::SelectedIsScript: {
+                out[0] = selected.startsWith("script:");
+                break;
+            }
+            case rust::EngineOp::ValidateTeams: {
+                teams_->validateEnabled();
+                break;
+            }
+            case rust::EngineOp::ModelsReady: {
+                out[0] = modelsReady_;
+                break;
+            }
+            case rust::EngineOp::Wait: {
+                preparation->wait(a[0]);
+                break;
+            }
+            case rust::EngineOp::ModelErrorEmpty: {
+                out[0] = modelError_.isEmpty();
+                break;
+            }
+            case rust::EngineOp::ThrowModelError: {
+                fail(modelError_);
+                break;
+            }
+            case rust::EngineOp::LockLifecycle: {
+                preparationLock = std::unique_lock(lifecycle_);
+                break;
+            }
+            case rust::EngineOp::UnlockLifecycle: {
+                preparationLock.unlock();
+                break;
+            }
+            case rust::EngineOp::BackendArm: {
+                backend_.arm(a[0] != 0);
+                break;
+            }
+            case rust::EngineOp::LogPreparationDone: {
+                log(QString("任务准备完成，用时 %1 ms。").arg(qRound64((clock.now() - began) * 1000)));
+                break;
+            }
+            default:
+                fail("Rust Prepare 宿主操作无效");
+            }
+        });
         auto config = Config::load(data_ + "/dualpc.json");
         auto frame = backend_.latestFrame();
-        if (!frame)
-            fail("采集画面尚未就绪");
+        rust::engineRun(rust::EngineMethod::RequireFrame, [&](rust::EngineOp op, const double *a, double *out,
+                                                              const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::FrameAvailable: {
+                out[0] = bool(frame);
+                break;
+            }
+            case rust::EngineOp::Error: {
+                fail("采集画面尚未就绪");
+                break;
+            }
+            default:
+                fail("Rust RequireFrame 宿主操作无效");
+            }
+        });
         std::function<void()> pollControls;
         bool taskRunning = false;
         Execution execution(gate_, epoch, clock, [&] {
-            if (!backend_.heartbeat()) {
-                // Explicit Pause invalidates the epoch first. A device watchdog
-                // disarm while this epoch is live is an error, not user cancel.
-                if (!gate_.active(epoch)) throw Cancelled();
-                const auto state = backend_.snapshot();
-                throw ExecutionFailure(state["error"].toString().isEmpty()
-                    ? QString("采集或盒子连接已中断，自动操作已暂停") : state["error"].toString(),
-                    QString::fromUtf8(QJsonDocument(state).toJson(QJsonDocument::Indented)));
-            }
-            if (taskRunning && foreground_ && cancelForeground_)
-                throw Cancelled();
-            if (taskRunning && pollControls)
-                pollControls();
-            if (limit > 0 && clock.now() - began >= limit)
-                fail("任务达到设置的最长运行时间，已停止并释放按键");
+            QJsonObject state;
+            rust::engineRun(rust::EngineMethod::Health, [&](rust::EngineOp op, const double *a, double *out,
+                                                            const std::exception_ptr &error) {
+                switch (op) {
+                case rust::EngineOp::Heartbeat: {
+                    out[0] = backend_.heartbeat();
+                    break;
+                }
+                case rust::EngineOp::GateActive: {
+                    out[0] = gate_.active(epoch);
+                    break;
+                }
+                case rust::EngineOp::ThrowCancelled: {
+                    throw Cancelled();
+                    break;
+                }
+                case rust::EngineOp::ReadDeviceState: {
+                    state = backend_.snapshot();
+                    break;
+                }
+                case rust::EngineOp::DeviceErrorEmpty: {
+                    out[0] = std::as_const(state)["error"].toString().isEmpty();
+                    break;
+                }
+                case rust::EngineOp::CaptureConnected: {
+                    out[0] = std::as_const(state)["capture_connected"].toBool();
+                    break;
+                }
+                case rust::EngineOp::BoxConnected: {
+                    out[0] = std::as_const(state)["box"].toObject()["connected"].toBool();
+                    break;
+                }
+                case rust::EngineOp::ThrowInputFailure: {
+                    const QString labels[]{"自动输入通道已暂停，采集与输入设备仍保持连接，请重新开始任务",
+                                           "视频采集或键鼠输入未就绪，自动操作已暂停",
+                                           std::as_const(state)["error"].toString()};
+                    throw ExecutionFailure(labels[int(a[0])], QString::fromUtf8(QJsonDocument(state).toJson(
+                                                                  QJsonDocument::Indented)));
+                    break;
+                }
+                case rust::EngineOp::TaskRunning: {
+                    out[0] = taskRunning;
+                    break;
+                }
+                case rust::EngineOp::Foreground: {
+                    out[0] = foreground_;
+                    break;
+                }
+                case rust::EngineOp::CancelForeground: {
+                    out[0] = cancelForeground_;
+                    break;
+                }
+                case rust::EngineOp::HasControlPoll: {
+                    out[0] = bool(pollControls);
+                    break;
+                }
+                case rust::EngineOp::PollControls: {
+                    pollControls();
+                    break;
+                }
+                case rust::EngineOp::LimitSeconds: {
+                    out[0] = limit;
+                    break;
+                }
+                case rust::EngineOp::Now: {
+                    out[0] = clock.now();
+                    break;
+                }
+                case rust::EngineOp::RunBegan: {
+                    out[0] = began;
+                    break;
+                }
+                case rust::EngineOp::Error: {
+                    fail("任务达到设置的最长运行时间，已停止并释放按键");
+                    break;
+                }
+                default:
+                    fail("Rust Health 宿主操作无效");
+                }
+            });
         });
         Input input(
             config, {frame->width, frame->height}, backend_.snapshot()["box"].toObject()["absolute"].toBool(),
@@ -305,8 +875,21 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         Templates activeTemplates(*templates_);
         activeTemplates.setCheckpoint([&] { execution.checkpoint(); });
         const auto userTemplates = data_ + "/ok_templates/coco_annotations.json";
-        if (QFile::exists(userTemplates))
-            activeTemplates.add(userTemplates);
+        rust::engineRun(rust::EngineMethod::AddTemplates, [&](rust::EngineOp op, const double *a, double *out,
+                                                              const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::UserTemplatesExist: {
+                out[0] = QFile::exists(userTemplates);
+                break;
+            }
+            case rust::EngineOp::AddUserTemplates: {
+                activeTemplates.add(userTemplates);
+                break;
+            }
+            default:
+                fail("Rust AddTemplates 宿主操作无效");
+            }
+        });
         InferenceFrames inference(config);
         uint64_t captureSequence = 0;
         const auto retryRecognition = [&](auto &&read) {
@@ -324,43 +907,275 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
             },
             [&](const auto &image, auto area, double threshold) {
                 return retryRecognition([&] {
-                    return ocr_->read(image, area, threshold, true, false,
-                                      [&] { execution.checkpoint(); });
+                    return ocr_->read(image, area, threshold, true, false, [&] { execution.checkpoint(); });
                 });
             });
-        context.info = [&](auto key, auto value) { log(key + "：" + value); };
+        QJsonObject progressState;
+        double lastProgress = -1;
+        const auto publishProgress = [&](QJsonObject patch) {
+            QString task;
+            QJsonValue previousStage;
+            QJsonObject updated;
+            rust::engineRun(rust::EngineMethod::Progress, [&](rust::EngineOp op, const double *a, double *out,
+                                                              const std::exception_ptr &error) {
+                switch (op) {
+                case rust::EngineOp::SelectedEmpty: {
+                    out[0] = selected.isEmpty();
+                    break;
+                }
+                case rust::EngineOp::SelectProgressTask: {
+                    task = a[0] != 0 ? context.task : selected;
+                    break;
+                }
+                case rust::EngineOp::ProgressTaskMatches: {
+                    out[0] = progressState["task"] == task;
+                    break;
+                }
+                case rust::EngineOp::ResetProgressTask: {
+                    progressState = {{"task", task}};
+                    break;
+                }
+                case rust::EngineOp::InitializeProgressPatch: {
+                    previousStage = progressState["stage"];
+                    updated = progressState;
+                    break;
+                }
+                case rust::EngineOp::ProgressPatchCount: {
+                    out[0] = double(patch.size());
+                    break;
+                }
+                case rust::EngineOp::MergeProgressEntry: {
+                    const auto it = std::next(patch.constBegin(), int(a[0]));
+                    updated[it.key()] = it.value();
+                    break;
+                }
+                case rust::EngineOp::ProgressUnchanged: {
+                    out[0] = updated == progressState;
+                    break;
+                }
+                case rust::EngineOp::CommitProgress: {
+                    progressState = updated;
+                    break;
+                }
+                case rust::EngineOp::PatchContainsCurrent: {
+                    out[0] = patch.contains("current");
+                    break;
+                }
+                case rust::EngineOp::ProgressTotal: {
+                    out[0] = updated["total"].toDouble(-1);
+                    break;
+                }
+                case rust::EngineOp::ProgressCurrent: {
+                    out[0] = updated["current"].toDouble(-1);
+                    break;
+                }
+                case rust::EngineOp::PatchContainsFlow: {
+                    out[0] = patch.contains("flow");
+                    break;
+                }
+                case rust::EngineOp::ProgressStageUnchanged: {
+                    out[0] = previousStage == updated["stage"];
+                    break;
+                }
+                case rust::EngineOp::Now: {
+                    out[0] = execution.now();
+                    break;
+                }
+                case rust::EngineOp::LastProgress: {
+                    out[0] = lastProgress;
+                    break;
+                }
+                case rust::EngineOp::StoreProgressTime: {
+                    lastProgress = a[0];
+                    break;
+                }
+                case rust::EngineOp::QueueProgress: {
+                    QMetaObject::invokeMethod(
+                        this,
+                        [this, epoch, updated] {
+                            rust::engineRun(rust::EngineMethod::ProgressDelivery,
+                                            [&](rust::EngineOp op, const double *a, double *out,
+                                                const std::exception_ptr &error) {
+                                                switch (op) {
+                                                case rust::EngineOp::GenerationMatches: {
+                                                    out[0] = generation_ == epoch;
+                                                    break;
+                                                }
+                                                case rust::EngineOp::Paused: {
+                                                    out[0] = paused_;
+                                                    break;
+                                                }
+                                                case rust::EngineOp::GateActive: {
+                                                    out[0] = gate_.active(epoch);
+                                                    break;
+                                                }
+                                                case rust::EngineOp::EmitProgress: {
+                                                    emit message(
+                                                        {{"event", "task_progress"}, {"data", updated}});
+                                                    break;
+                                                }
+                                                default:
+                                                    fail("Rust ProgressDelivery 宿主操作无效");
+                                                }
+                                            });
+                        },
+                        Qt::QueuedConnection);
+                    break;
+                }
+                default:
+                    fail("Rust Progress 宿主操作无效");
+                }
+            });
+        };
+        context.progress = publishProgress;
+        context.info = [&](auto key, auto value) {
+            rust::engineRun(
+                rust::EngineMethod::InfoProgress,
+                [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                    switch (op) {
+                    case rust::EngineOp::LogInfo: {
+                        log(key + "：" + value);
+                        break;
+                    }
+                    case rust::EngineOp::InfoIsStage: {
+                        out[0] = QStringList{"当前任务", "current task", "stage", "当前阶段"}.contains(key);
+                        break;
+                    }
+                    case rust::EngineOp::PublishStageInfo: {
+                        publishProgress(
+                            {{"stage", value.left(160)}, {"current", -1}, {"total", -1}, {"detail", ""}});
+                        break;
+                    }
+                    case rust::EngineOp::PublishDetailInfo: {
+                        publishProgress({{"detail", (key + "：" + value).left(500)}});
+                        break;
+                    }
+                    default:
+                        fail("Rust InfoProgress 宿主操作无效");
+                    }
+                });
+        };
         context.sourceSequence = [&] { return captureSequence; };
+        context.sourceRecovering = [&] {
+            return backend_.snapshot()["actual"].toObject()["recovering"].toBool();
+        };
+        input.recovery = [&](QString text) {
+            log(text);
+            publishProgress({{"detail", text}});
+        };
         context.combatInfo = [this, epoch, &lastCombat](QJsonObject value) {
             lastCombat = value;
-            QMetaObject::invokeMethod(this, [this, epoch, value = std::move(value)] {
-                if (generation_ == epoch && !paused_)
-                    emit message({{"event", "combat_info"}, {"data", value}});
-            }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this,
+                [this, epoch, value = std::move(value)] {
+                    rust::engineRun(rust::EngineMethod::CombatDelivery,
+                                    [&](rust::EngineOp op, const double *a, double *out,
+                                        const std::exception_ptr &error) {
+                                        switch (op) {
+                                        case rust::EngineOp::GenerationMatches: {
+                                            out[0] = generation_ == epoch;
+                                            break;
+                                        }
+                                        case rust::EngineOp::Paused: {
+                                            out[0] = paused_;
+                                            break;
+                                        }
+                                        case rust::EngineOp::EmitCombat: {
+                                            emit message({{"event", "combat_info"}, {"data", value}});
+                                            break;
+                                        }
+                                        default:
+                                            fail("Rust CombatDelivery 宿主操作无效");
+                                        }
+                                    });
+                },
+                Qt::QueuedConnection);
         };
         context.notify = [&](QString title, QString text, bool error) { notify({title, text, {}, error}); };
         context.diagnostic = [&](QString reason, QJsonObject event) {
             event["error"] = reason;
             event["task"] = context.task;
             event["phase"] = "task_step";
-            // Capture before daily recovery backs out of the failed page.
-            // Diagnostic failures must not replace the task's original error.
-            try {
-                const auto folder = data_ + "/screenshots/errors";
-                const auto filePath = folder + '/' + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + "-step.png";
-                std::vector<uchar> bytes;
-                if (!context.frame.empty() && QDir().mkpath(folder) && cv::imencode(".png", context.frame, bytes)) {
-                    QSaveFile file(filePath);
-                    if (file.open(QIODevice::WriteOnly) && file.write(reinterpret_cast<const char *>(bytes.data()),
-                            qint64(bytes.size())) == qint64(bytes.size()) && file.commit())
+            QString folder, filePath;
+            std::vector<uchar> bytes;
+            std::optional<QSaveFile> file;
+            QJsonObject saved;
+            rust::engineRun(
+                rust::EngineMethod::StepDiagnostic,
+                [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                    switch (op) {
+                    case rust::EngineOp::BuildStepPaths: {
+                        folder = data_ + "/screenshots/errors";
+                        filePath = folder + '/' +
+                                   QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + "-step.png";
+                        break;
+                    }
+                    case rust::EngineOp::StepFrameEmpty: {
+                        out[0] = context.frame.empty();
+                        break;
+                    }
+                    case rust::EngineOp::CreateScreenshotDirectory: {
+                        out[0] = QDir().mkpath(folder);
+                        break;
+                    }
+                    case rust::EngineOp::EncodeStepImage: {
+                        out[0] = cv::imencode(".png", context.frame, bytes);
+                        break;
+                    }
+                    case rust::EngineOp::OpenScreenshot: {
+                        file.emplace(filePath);
+                        out[0] = file->open(QIODevice::WriteOnly);
+                        break;
+                    }
+                    case rust::EngineOp::WriteScreenshot: {
+                        out[0] = file->write(reinterpret_cast<const char *>(bytes.data()),
+                                             qint64(bytes.size())) == qint64(bytes.size());
+                        break;
+                    }
+                    case rust::EngineOp::CommitScreenshot: {
+                        out[0] = file->commit();
+                        break;
+                    }
+                    case rust::EngineOp::SetScreenshotPath: {
                         event["screenshot"] = filePath;
-                }
-                const auto saved = saveDiagnostic(data_, event);
-                if (stepDiagnostics.size() >= 3) stepDiagnostics.removeAt(0);
-                stepDiagnostics.append(saved["diagnostic_report"]);
-                log("步骤识别现场：" + saved["diagnostic_report"].toString());
-            } catch (const std::exception &error) {
-                log("步骤诊断保存失败：" + errorText(error));
-            }
+                        break;
+                    }
+                    case rust::EngineOp::DisposeScreenshot: {
+                        file.reset();
+                        break;
+                    }
+                    case rust::EngineOp::SaveStepDiagnostic: {
+                        saved = saveDiagnostic(data_, event);
+                        break;
+                    }
+                    case rust::EngineOp::StepDiagnosticCount: {
+                        out[0] = double(stepDiagnostics.size());
+                        break;
+                    }
+                    case rust::EngineOp::RemoveFirstStepDiagnostic: {
+                        stepDiagnostics.removeAt(0);
+                        break;
+                    }
+                    case rust::EngineOp::AppendStepDiagnostic: {
+                        stepDiagnostics.append(std::as_const(saved)["diagnostic_report"]);
+                        break;
+                    }
+                    case rust::EngineOp::LogStepDiagnostic: {
+                        log("步骤识别现场：" + std::as_const(saved)["diagnostic_report"].toString());
+                        break;
+                    }
+                    case rust::EngineOp::LogStepFailure: {
+                        try {
+                            std::rethrow_exception(error);
+                        } catch (const std::exception &e) {
+                            log("步骤诊断保存失败：" + errorText(e));
+                        }
+                        break;
+                    }
+                    default:
+                        fail("Rust StepDiagnostic 宿主操作无效");
+                    }
+                });
         };
         context.state = taskState_;
         context.gameLanguage = config.get("game_language").toString("zh_CN");
@@ -370,10 +1185,35 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         scripts.builtin = [&](const QString &id) {
             const auto definitions =
                 businessTasks([&](const QString &task) { return runner->dispatch(task); });
-            if (std::none_of(definitions.begin(), definitions.end(),
-                             [&](const auto &task) { return task.id == id; }))
-                fail("脚本请求的内置任务不存在：" + id);
-            return runner->dispatch(id);
+            const TaskDefinition *definition = nullptr;
+            return rust::engineRun(
+                       rust::EngineMethod::BuiltinDispatch,
+                       [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                           switch (op) {
+                           case rust::EngineOp::NativeCount: {
+                               out[0] = double(definitions.size());
+                               break;
+                           }
+                           case rust::EngineOp::NativeSelect: {
+                               definition = &definitions.at(int(a[0]));
+                               break;
+                           }
+                           case rust::EngineOp::NativeMatches: {
+                               out[0] = definition->id == id;
+                               break;
+                           }
+                           case rust::EngineOp::Error: {
+                               fail("脚本请求的内置任务不存在：" + id);
+                               break;
+                           }
+                           case rust::EngineOp::DispatchBuiltin: {
+                               out[0] = runner->dispatch(id);
+                               break;
+                           }
+                           default:
+                               fail("Rust BuiltinDispatch 宿主操作无效");
+                           }
+                       }) != 0;
         };
         // Observe physical key edges on the execution thread, including while
         // a long macro is waiting. Scripted remote F is never seen as local F.
@@ -381,509 +1221,1243 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
         auto runnable = builtinTasks();
         runnable += businessTasks([&](const QString &id) { return runner->dispatch(id); });
         QMap<QString, QJsonObject> custom;
-        for (auto value : options["scripts_snapshot"].toArray()) {
-            const auto script = value.toObject();
-            const auto id = script["id"].toString();
-            custom[id] = script;
-            log(QString("载入通用脚本：%1 · %2 · %3")
-                    .arg(script["name"].toString(), script["trigger"].toBool() ? "实时触发" : "任务",
-                         scriptEnabled_.value(id)->load() ? "已启用" : "未启用"));
-            runnable.append(
-                {id, script["trigger"].toBool(), std::max(.05, script["interval"].toDouble(.1)),
-                 [&, script](TaskContext &) {
-                     const bool trigger = script["trigger"].toBool();
-                     const int repeat = std::clamp(script["repeat"].toInt(1), 1, 1000000);
-                     const bool continuous = !trigger && script["continuous"].toBool();
-                     bool handled = false;
-                     for (uint64_t iteration = 0;
-                          trigger ? iteration < 1 : (continuous || iteration < uint64_t(repeat));
-                          ++iteration) {
-                         context.execution.checkpoint();
-                         if (!trigger && context.info)
-                             context.info("脚本循环",
-                                          QString::number(iteration + 1) +
-                                              (continuous ? " / 持续" : " / " + QString::number(repeat)));
-                         try {
-                             const auto flag = scriptEnabled_.value(script["id"].toString());
-                             handled = scripts
-                                           .run(script, trigger ? std::function<bool()>(
-                                                                      [flag] { return flag && flag->load(); })
-                                                                : std::function<bool()>{})["handled"]
-                                           .toBool() ||
-                                       handled;
-                         } catch (const ScriptDisabled &) {
-                             if (context.info)
-                                 context.info("脚本", "已停用并释放输入");
-                             return false;
-                         }
-                     }
-                     return handled;
-                 }});
-        }
-        QMap<QString, double> next;
-        const auto resumeTriggers = [&] {
-            input.release();
-            {
-                std::lock_guard lock(lifecycle_);
-                if (!gate_.active(epoch)) throw Cancelled();
-                foreground_ = false;
-                cancelForeground_ = false;
+        QJsonObject snapshotScript;
+        rust::engineRun(rust::EngineMethod::RegisterScripts, [&](rust::EngineOp op, const double *a,
+                                                                 double *out,
+                                                                 const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::SnapshotScriptCount: {
+                out[0] = double(options["scripts_snapshot"].toArray().size());
+                break;
             }
-            selected.clear();
-            activeTask.clear();
-            context.task.clear();
-            context.taskOverrides = {};
-            context.state->inCombat = false;
-            // Boss callbacks and a previous workshop actor are task-local.
-            runner = std::make_unique<TaskRunner>(context, *echo_, root_, data_, teams_);
-            context.combatInfo({{"code_state", "pending"}, {"verified", false}});
-            limit = 0;
-            next.clear();
-            postStatus(epoch);
-        };
-        const auto cancelTask = [&] {
-            failure = "当前任务已停止";
-            recordResult(selected, false);
-            resultRecorded = true;
-            resumeTriggers();
-            log("当前任务已停止，实时触发继续运行。");
-        };
-        double lastStatus = 0;
-        while (true) {
-            execution.checkpoint();
-            if (!selected.isEmpty() && cancelForeground_)
-                cancelTask();
-            context.refresh();
-            bool handled = false;
-            for (const auto &task : runnable) {
-                if (!selected.isEmpty() && task.id != selected)
-                    continue;
-                if (selected.isEmpty() && !task.trigger)
-                    continue;
-                if (selected.isEmpty() &&
-                    (custom.contains(task.id)
-                         ? !custom[task.id]["trigger"].toBool() || !scriptEnabled_.value(task.id)->load()
-                         : !profile_.value(task.id, "_enabled", false).toBool()))
-                    continue;
-                if (execution.now() < next.value(task.id, 0))
-                    continue;
-                context.task = task.id;
-                activeTask = task.id;
-                phase = "task";
-                taskRunning = true;
-                try {
-                    handled = task.step(context);
-                } catch (const Cancelled &) {
-                    if (!gate_.active(epoch) || !cancelForeground_)
-                        throw;
-                    taskRunning = false;
-                    cancelTask();
-                    break;
-                } catch (const CombatEnded &error) {
-                    if (task.id != "AutoCombatTask" || profile_.value(task.id, "_enabled", true).toBool())
-                        throw;
-                    input.release();
-                    log(errorText(error));
-                    handled = false;
-                }
-                taskRunning = false;
-                next[task.id] = execution.now() + task.interval;
-                if (!task.trigger) {
-                    execution.checkpoint();
-                    input.release();
-                    exitAfter = options["exit_after"].toBool() ||
-                                (!custom.contains(task.id) &&
-                                 profile_.value(task.id, "Exit After Task", false).toBool());
-                    recordResult(selected, true);
-                    resultRecorded = true;
-                    emit message({{"event", "task_done"}, {"task", selected}});
-                    QString name = selected;
-                    for (auto value : profile_.catalog()["tasks"].toArray())
-                        if (value.toObject()["id"] == selected)
-                            name = value.toObject()["name"].toString();
-                    notify({product::name + " 任务完成", name, {}});
-                    if (exitAfter) {
-                        completed = true;
-                        gate_.stop();
-                        break;
-                    }
-                    resumeTriggers();
-                    log("当前任务已完成，实时触发继续运行。");
-                    break;
-                }
-                if (handled)
-                    break;
+            case rust::EngineOp::SelectSnapshotScript: {
+                snapshotScript = options["scripts_snapshot"].toArray().at(int(a[0])).toObject();
+                break;
             }
-            if (execution.now() - lastStatus > .25) {
-                postStatus(epoch, selected);
-                lastStatus = execution.now();
+            case rust::EngineOp::StoreCustomScript: {
+                const auto script = snapshotScript;
+                custom[script["id"].toString()] = script;
+                break;
             }
-            const double interval =
-                std::clamp(profile_.value("Basic Options", "Trigger Interval", 1).toDouble(1), 1., 60000.) /
-                1000.;
-            execution.wait(interval);
-        }
-    } catch (const Cancelled &) {
-        emergency.release();
-        failure = "已暂停或取消";
-    } catch (const std::exception &e) {
-        emergency.release();
-        const bool lowMemory = memoryFailure(e);
-        failure = taskFailureText(e);
-        if (lowMemory)
-            log("内存不足的原始错误：" + errorText(e));
-        // Stop accepting input before allocating a screenshot or notifying UI.
-        {
-            std::lock_guard lock(lifecycle_);
-            gate_.stop();
-            paused_ = true;
-            warming_ = false;
-            try { backend_.arm(false); }
-            catch (const std::exception &releaseError) { log(errorText(releaseError)); }
-        }
-        QJsonObject errorEvent{{"event", "error"}, {"error", failure}, {"task", activeTask},
-                               {"selected_task", selected}, {"phase", phase}, {"combat", lastCombat},
-                               {"devices", backend_.snapshot()}, {"elapsed_seconds", clock.now() - began}};
-        errorEvent["step_diagnostics"] = stepDiagnostics;
-        if (const auto bridgeError = dynamic_cast<const ExecutionFailure *>(&e))
-            errorEvent["traceback"] = bridgeError->details;
-        else
-            errorEvent["exception_type"] = QString::fromLatin1(typeid(e).name());
-        Notice errorNotice{product::name + " 任务停止", failure, {}, true};
-        try {
-            // Error screenshots need another full image and PNG buffer. Avoid
-            // making allocation failures worse while reporting low memory.
-            if (auto last = lowMemory ? FramePtr{} : backend_.latestFrame()) {
-                auto picture = inferenceImage(*last, Config::load(data_ + "/dualpc.json"));
-                std::vector<uchar> bytes;
-                if (cv::imencode(".png", picture, bytes)) {
-                    QByteArray png(reinterpret_cast<const char *>(bytes.data()), qsizetype(bytes.size()));
-                    const auto folder = data_ + "/screenshots/errors";
-                    QDir().mkpath(folder);
-                    const auto filePath =
-                        folder + '/' + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + ".png";
-                    QSaveFile file(filePath);
-                    if (file.open(QIODevice::WriteOnly) && file.write(png) == png.size() && file.commit()) {
-                        log("错误现场已保存：" + filePath);
-                        errorEvent["screenshot"] = filePath;
-                    }
-                    errorNotice.images << png;
-                }
+            case rust::EngineOp::LogScriptLoaded: {
+                const auto script = snapshotScript;
+                const auto id = script["id"].toString();
+                log(QString("载入通用脚本：%1 · %2 · %3")
+                        .arg(script["name"].toString(), script["trigger"].toBool() ? "实时触发" : "任务",
+                             scriptEnabled_.value(id)->load() ? "已启用" : "未启用"));
+                break;
             }
-        } catch (const std::exception &captureError) {
-            log("错误现场保存失败：" + errorText(captureError));
-            errorEvent["screenshot_error"] = errorText(captureError);
-        }
-        errorEvent = saveDiagnostic(data_, errorEvent);
-        diagnosticReport = errorEvent["diagnostic_report"].toString();
-        log("任务异常，自动操作已暂停。诊断记录：" + diagnosticReport);
-        emit message(errorEvent);
-        notify(std::move(errorNotice));
-        // Keep the diagnostic available until the user explicitly resumes/exits.
-        exitAfter = false;
-    }
-    {
-        std::lock_guard lock(lifecycle_);
-        gate_.stop();
-        paused_ = true;
-        warming_ = false;
-        try {
-            backend_.arm(false);
-        } catch (const std::exception &e) {
-            log(errorText(e));
-        }
-    }
-    postStatus(epoch);
-    if (!resultRecorded)
-        recordResult(selected, completed);
-    if (exitAfter)
-        QMetaObject::invokeMethod(
-            this,
-            [this, epoch] {
-                if (generation_ != epoch || pendingTask_)
-                    return;
-                log("任务结束，正在等待通知队列处理后退出。");
-                exitWait_.start();
-                exitTimer_.start();
-            },
-            Qt::QueuedConnection);
-    workerFinished_ = true;
-}
-void Engine::scriptCommand(QJsonObject request) {
-    const QJsonValue id = request.value("id");
-    try {
-        if (scriptsBusy_) {
-            QTimer::singleShot(50, this, [this, request] { scriptCommand(request); });
-            return;
-        }
-        const bool liveToggle = request["op"] == "script_configure" && request["key"] == "_enabled";
-        const bool triggerSettings = request["op"] == "script_configure" &&
-            std::any_of(scripts_.begin(), scripts_.end(), [&](const auto &value) {
-                const auto entry = value.toObject();
-                const auto fields = entry["fields"].toArray();
-                return entry["id"] == request["script"] && entry["trigger"].toBool() &&
-                    std::any_of(fields.begin(), fields.end(), [&](auto field) {
-                        return field.toObject()["key"] == request["key"];
-                    });
-            });
-        if ((!paused_ || !workerFinished_ || pendingTask_) && !liveToggle && !triggerSettings)
-            fail("请先暂停任务，再修改或重新载入脚本");
-        if (request["op"] == "script_configure") {
-            const auto ident = request["script"].toString(), key = request["key"].toString();
-            const auto value = request["value"];
-            auto state = QFile::exists(data_ + "/native-scripts.json")
-                             ? readJson(data_ + "/native-scripts.json")
-                             : QJsonObject{};
-            auto settings = state[ident].toObject();
-            bool found = false;
-            auto changed = scripts_;
-            for (int i = 0; i < changed.size(); ++i) {
-                auto entry = changed[i].toObject();
-                if (entry["id"] != ident)
-                    continue;
-                found = true;
-                if (key == "_enabled" || key == "_continuous") {
-                    if (!value.isBool())
-                        fail("脚本开关需要布尔值");
-                    const auto property = key == "_enabled" ? "enabled" : "continuous";
-                    settings[property] = value;
-                    entry[property] = value;
-                    if (key == "_enabled" && scriptEnabled_.contains(ident))
-                        scriptEnabled_.value(ident)->store(value.toBool());
-                } else if (key == "_repeat") {
-                    if (!value.isDouble() || value.toDouble() != value.toInt() || value.toInt() < 1 ||
-                        value.toInt() > 1000000)
-                        fail("循环次数应在 1 至 1000000 之间");
-                    settings["repeat"] = value;
-                    entry["repeat"] = value;
-                } else {
-                    auto fields = entry["fields"].toArray();
-                    bool fieldFound = false;
-                    for (int f = 0; f < fields.size(); ++f) {
-                        auto field = fields[f].toObject();
-                        if (field["key"] != key)
-                            continue;
-                        fieldFound = true;
-                        field["value"] = value;
-                        fields[f] = field;
-                    }
-                    if (!fieldFound)
-                        fail("脚本参数不存在");
-                    auto values = settings["values"].toObject();
-                    values[key] = value;
-                    settings["values"] = values;
-                    entry["fields"] = fields;
-                }
-                changed[i] = entry;
+            case rust::EngineOp::ScriptTrigger: {
+                out[0] = std::as_const(snapshotScript)["trigger"].toBool();
+                break;
             }
-            if (!found)
-                fail("脚本已不存在");
-            state[ident] = settings;
-            writeJson(data_ + "/native-scripts.json", state);
-            scripts_ = changed;
-            writeJson(data_ + "/native-script-catalog.json",
-                      {{"scripts", scripts_}, {"templates", scriptTemplates_}});
-            const auto result = catalog();
-            emit message({{"event", "catalog_changed"}, {"data", result}});
-            emit message({{"id", id}, {"ok", true}, {"data", result}});
-            return;
-        }
-        scriptsBusy_ = true;
-        auto command = request;
-        command["op"] = request["op"].toString().mid(7);
-        auto watcher = new QFutureWatcher<QJsonObject>(this);
-        connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, id] {
-            const auto response = watcher->result();
-            watcher->deleteLater();
-            scriptsBusy_ = false;
-            if (response["ok"].toBool()) {
-                scripts_ = response["data"].toObject()["scripts"].toArray();
-                scriptTemplates_ = response["data"].toObject()["templates"].toArray();
-                auto result = catalog();
-                result["selected_script"] = response["data"].toObject()["selected"];
-                result["snippet"] = response["data"].toObject()["snippet"];
-                emit message({{"event", "catalog_changed"}, {"data", result}});
-                emit message({{"id", id}, {"ok", true}, {"data", result}});
-            } else
-                emit message({{"id", id}, {"ok", false}, {"error", response["error"]}});
-            // A queued UI start must not race the initial script-catalog scan.
-            if (loadingScripts_) {
-                loadingScripts_ = false;
-                emit message({{"event", "ready"}, {"data", catalog()}});
+            case rust::EngineOp::ScriptInterval: {
+                out[0] = std::as_const(snapshotScript)["interval"].toDouble(.1);
+                break;
+            }
+            case rust::EngineOp::AppendRunnableScript: {
+                const auto script = snapshotScript;
+                const auto id = script["id"].toString();
+                runnable.append(
+                    {id, a[0] != 0, a[1], [&, script](TaskContext &) {
+                         return rust::engineRun(
+                                    rust::EngineMethod::ScriptIterations,
+                                    [&](rust::EngineOp op, const double *a, double *out,
+                                        const std::exception_ptr &) {
+                                        switch (op) {
+                                        case rust::EngineOp::Checkpoint:
+                                            context.execution.checkpoint();
+                                            break;
+                                        case rust::EngineOp::ScriptTrigger:
+                                            out[0] = script["trigger"].toBool();
+                                            break;
+                                        case rust::EngineOp::ScriptRepeat:
+                                            out[0] = script["repeat"].toInt(1);
+                                            break;
+                                        case rust::EngineOp::ScriptContinuous:
+                                            out[0] = script["continuous"].toBool();
+                                            break;
+                                        case rust::EngineOp::HasInfo:
+                                            out[0] = bool(context.info);
+                                            break;
+                                        case rust::EngineOp::ScriptProgress: {
+                                            const auto next = (uint64_t(a[4]) << 32) | uint64_t(a[3]);
+                                            context.reportProgress("执行脚本", a[0], a[2] != 0 ? -1. : a[1],
+                                                                   "轮",
+                                                                   QString("第 %1 轮%2")
+                                                                       .arg(qulonglong(next))
+                                                                       .arg(a[2] != 0 ? " · 持续循环" : ""));
+                                            break;
+                                        }
+                                        case rust::EngineOp::ScriptInfo: {
+                                            const auto next = (uint64_t(a[1]) << 32) | uint64_t(a[0]);
+                                            context.info("脚本循环",
+                                                         QString::number(qulonglong(next)) +
+                                                             (a[2] != 0
+                                                                  ? " / 持续"
+                                                                  : " / " + QString::number(int(a[3]))));
+                                            break;
+                                        }
+                                        case rust::EngineOp::ScriptRun: {
+                                            const auto flag = scriptEnabled_.value(script["id"].toString());
+                                            out[0] = scripts
+                                                         .run(script,
+                                                              a[0] != 0 ? std::function<bool()>([flag] {
+                                                                  return flag && flag->load();
+                                                              })
+                                                                        : std::function<bool()>{})["handled"]
+                                                         .toBool();
+                                            break;
+                                        }
+                                        case rust::EngineOp::ScriptDisabledInfo:
+                                            context.info("脚本", "已停用并释放输入");
+                                            break;
+                                        case rust::EngineOp::ScriptComplete:
+                                            context.reportProgress("脚本执行完成", a[0], a[0], "轮");
+                                            break;
+                                        default:
+                                            fail("Rust 脚本循环宿主操作无效");
+                                        }
+                                    }) != 0;
+                     }});
+                break;
+            }
+            default:
+                fail("Rust RegisterScripts 宿主操作无效");
             }
         });
-        watcher->setFuture(QtConcurrent::run([root = root_, data = data_, command] {
-            try {
-                return QJsonObject{{"ok", true}, {"data", scriptManage(root, data, command)}};
-            } catch (const std::exception &error) {
-                return QJsonObject{{"ok", false}, {"error", errorText(error)}};
+        QMap<QString, double> next;
+        const TaskDefinition *activeDefinition = nullptr;
+        QString completionName;
+        QJsonArray completionCatalog;
+        QJsonObject completionEntry;
+        std::unique_lock<std::mutex> resumeLock;
+        rust::engineRun(rust::EngineMethod::Run, [&](rust::EngineOp op, const double *a, double *out,
+                                                     const std::exception_ptr &error) {
+            switch (op) {
+            case rust::EngineOp::Checkpoint:
+                execution.checkpoint();
+                break;
+            case rust::EngineOp::HasSelected:
+                out[0] = !selected.isEmpty();
+                break;
+            case rust::EngineOp::CancelForeground:
+                out[0] = bool(cancelForeground_);
+                break;
+            case rust::EngineOp::Refresh:
+                context.refresh();
+                break;
+            case rust::EngineOp::TaskCount:
+                out[0] = double(runnable.size());
+                break;
+            case rust::EngineOp::SelectTask:
+                activeDefinition = &runnable.at(int(a[0]));
+                break;
+            case rust::EngineOp::TaskSelected:
+                out[0] = activeDefinition->id == selected;
+                break;
+            case rust::EngineOp::TaskTrigger:
+                out[0] = activeDefinition->trigger;
+                break;
+            case rust::EngineOp::TaskCustom:
+                out[0] = custom.contains(activeDefinition->id);
+                break;
+            case rust::EngineOp::CustomTrigger:
+                out[0] = custom[activeDefinition->id]["trigger"].toBool();
+                break;
+            case rust::EngineOp::ScriptEnabled:
+                out[0] = scriptEnabled_.value(activeDefinition->id)->load();
+                break;
+            case rust::EngineOp::ProfileEnabled:
+                out[0] = profile_.value(activeDefinition->id, "_enabled", a[0] != 0).toBool();
+                break;
+            case rust::EngineOp::Now:
+                out[0] = execution.now();
+                break;
+            case rust::EngineOp::NextTime:
+                out[0] = next.value(activeDefinition->id, 0);
+                break;
+            case rust::EngineOp::SetTaskContext:
+                context.task = activeDefinition->id;
+                activeTask = activeDefinition->id;
+                phase = "task";
+                break;
+            case rust::EngineOp::SetTaskRunning:
+                taskRunning = a[0] != 0;
+                break;
+            case rust::EngineOp::RunTask:
+                out[0] = activeDefinition->step(context);
+                break;
+            case rust::EngineOp::GateActive:
+                out[0] = gate_.active(epoch);
+                break;
+            case rust::EngineOp::TaskAutoCombat:
+                out[0] = activeDefinition->id == "AutoCombatTask";
+                break;
+            case rust::EngineOp::ReleaseInput:
+                input.release();
+                break;
+            case rust::EngineOp::LogException:
+                try {
+                    std::rethrow_exception(error);
+                } catch (const std::exception &failure) {
+                    log(errorText(failure));
+                }
+                break;
+            case rust::EngineOp::SetNextTime:
+                next[activeDefinition->id] = a[0];
+                break;
+            case rust::EngineOp::TaskInterval:
+                out[0] = activeDefinition->interval;
+                break;
+            case rust::EngineOp::ExitOption:
+                out[0] = options["exit_after"].toBool();
+                break;
+            case rust::EngineOp::ExitProfile:
+                out[0] = profile_.value(activeDefinition->id, "Exit After Task", false).toBool();
+                break;
+            case rust::EngineOp::SetExitAfter:
+                exitAfter = a[0] != 0;
+                break;
+            case rust::EngineOp::RecordResult:
+                recordResult(selected, a[0] != 0);
+                break;
+            case rust::EngineOp::SetResultRecorded:
+                resultRecorded = a[0] != 0;
+                break;
+            case rust::EngineOp::TaskDone:
+                emit message({{"event", "task_done"}, {"task", selected}});
+                break;
+            case rust::EngineOp::CompletionNameReset:
+                completionName = selected;
+                completionCatalog = profile_.catalog()["tasks"].toArray();
+                break;
+            case rust::EngineOp::CatalogCount:
+                out[0] = double(completionCatalog.size());
+                break;
+            case rust::EngineOp::SelectCatalog:
+                completionEntry = completionCatalog.at(int(a[0])).toObject();
+                break;
+            case rust::EngineOp::CatalogSelected:
+                out[0] = completionEntry["id"] == selected;
+                break;
+            case rust::EngineOp::CompletionNameSet:
+                completionName = completionEntry["name"].toString();
+                break;
+            case rust::EngineOp::NotifyDone:
+                notify({product::name + " 任务完成", completionName, {}});
+                break;
+            case rust::EngineOp::SetCompleted:
+                completed = a[0] != 0;
+                break;
+            case rust::EngineOp::StopGate:
+                gate_.stop();
+                break;
+            case rust::EngineOp::PostStatusSelected:
+                postStatus(epoch, selected);
+                break;
+            case rust::EngineOp::TriggerInterval:
+                out[0] = profile_.value("Basic Options", "Trigger Interval", 1).toDouble(1);
+                break;
+            case rust::EngineOp::Wait:
+                execution.wait(a[0]);
+                break;
+            case rust::EngineOp::LockLifecycle:
+                resumeLock = std::unique_lock(lifecycle_);
+                break;
+            case rust::EngineOp::UnlockLifecycle:
+                resumeLock.unlock();
+                break;
+            case rust::EngineOp::SetForeground:
+                foreground_ = a[0] != 0;
+                break;
+            case rust::EngineOp::SetCancelForeground:
+                cancelForeground_ = a[0] != 0;
+                break;
+            case rust::EngineOp::ClearSelected:
+                selected.clear();
+                break;
+            case rust::EngineOp::ClearActiveTask:
+                activeTask.clear();
+                break;
+            case rust::EngineOp::ClearContextTask:
+                context.task.clear();
+                break;
+            case rust::EngineOp::ClearOverrides:
+                context.taskOverrides = {};
+                break;
+            case rust::EngineOp::ClearContextCombat:
+                context.state->inCombat = false;
+                break;
+            case rust::EngineOp::ResetRunner:
+                runner = std::make_unique<TaskRunner>(context, *echo_, root_, data_, teams_);
+                break;
+            case rust::EngineOp::CombatPending:
+                context.combatInfo({{"code_state", "pending"}, {"verified", false}});
+                break;
+            case rust::EngineOp::ClearLimit:
+                limit = 0;
+                break;
+            case rust::EngineOp::ClearNext:
+                next.clear();
+                break;
+            case rust::EngineOp::PostStatus:
+                postStatus(epoch);
+                break;
+            case rust::EngineOp::SetStoppedFailure:
+                failure = "当前任务已停止";
+                break;
+            case rust::EngineOp::LogStopped:
+                log("当前任务已停止，实时触发继续运行。");
+                break;
+            case rust::EngineOp::LogCompleted:
+                log("当前任务已完成，实时触发继续运行。");
+                break;
+            case rust::EngineOp::ThrowCancelled:
+                throw Cancelled();
+            default:
+                fail("Rust 执行器宿主操作无效");
             }
-        }));
-    } catch (const std::exception &error) {
-        emit message({{"id", id}, {"ok", false}, {"error", errorText(error)}});
-    }
+        });
+    };
+    std::exception_ptr runError;
+    bool lowMemory = false;
+    QJsonObject errorEvent;
+    std::optional<Notice> errorNotice;
+    std::unique_lock<std::mutex> cleanupLock;
+    rust::engineRun(rust::EngineMethod::SessionLifetime, [&](rust::EngineOp op, const double *a, double *out,
+                                                             const std::exception_ptr &error) {
+        switch (op) {
+        case rust::EngineOp::ExecuteSession: {
+            executeSession();
+            break;
+        }
+        case rust::EngineOp::ReleaseEmergency: {
+            emergency.release();
+            break;
+        }
+        case rust::EngineOp::SetCancelledFailure: {
+            failure = "已暂停或取消";
+            break;
+        }
+        case rust::EngineOp::ClassifyFailure: {
+            runError = error;
+            try {
+                std::rethrow_exception(runError);
+            } catch (const std::exception &e) {
+                lowMemory = memoryFailure(e);
+                out[0] = lowMemory;
+            }
+            break;
+        }
+        case rust::EngineOp::SetTaskFailure: {
+            try {
+                std::rethrow_exception(runError);
+            } catch (const std::exception &e) {
+                failure = taskFailureText(e);
+            }
+            break;
+        }
+        case rust::EngineOp::LogLowMemoryError: {
+            try {
+                std::rethrow_exception(runError);
+            } catch (const std::exception &e) {
+                log("内存不足的原始错误：" + errorText(e));
+            }
+            break;
+        }
+        case rust::EngineOp::LockLifecycle: {
+            cleanupLock = std::unique_lock(lifecycle_);
+            break;
+        }
+        case rust::EngineOp::UnlockLifecycle: {
+            cleanupLock.unlock();
+            break;
+        }
+        case rust::EngineOp::StopGate: {
+            gate_.stop();
+            break;
+        }
+        case rust::EngineOp::SetPaused: {
+            paused_ = a[0] != 0;
+            break;
+        }
+        case rust::EngineOp::SetWarming: {
+            warming_ = a[0] != 0;
+            break;
+        }
+        case rust::EngineOp::BackendArm: {
+            backend_.arm(a[0] != 0);
+            break;
+        }
+        case rust::EngineOp::LogException: {
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception &e) {
+                log(errorText(e));
+            }
+            break;
+        }
+        case rust::EngineOp::BuildErrorEvent: {
+            errorEvent = {{"event", "error"},
+                          {"error", failure},
+                          {"task", activeTask},
+                          {"selected_task", selected},
+                          {"phase", phase},
+                          {"combat", lastCombat},
+                          {"devices", backend_.snapshot()},
+                          {"elapsed_seconds", clock.now() - began}};
+            errorEvent["step_diagnostics"] = stepDiagnostics;
+            break;
+        }
+        case rust::EngineOp::IsExecutionFailure: {
+            try {
+                std::rethrow_exception(runError);
+            } catch (const std::exception &e) {
+                out[0] = dynamic_cast<const ExecutionFailure *>(&e) != nullptr;
+            }
+            break;
+        }
+        case rust::EngineOp::SetErrorTraceback: {
+            try {
+                std::rethrow_exception(runError);
+            } catch (const ExecutionFailure &e) {
+                errorEvent["traceback"] = e.details;
+            }
+            break;
+        }
+        case rust::EngineOp::SetErrorType: {
+            try {
+                std::rethrow_exception(runError);
+            } catch (const std::exception &e) {
+                errorEvent["exception_type"] = QString::fromLatin1(typeid(e).name());
+            }
+            break;
+        }
+        case rust::EngineOp::CreateErrorNotice: {
+            errorNotice.emplace(Notice{product::name + " 任务停止", failure, {}, true});
+            break;
+        }
+        case rust::EngineOp::CaptureErrorScreenshot: {
+            FramePtr last;
+            cv::Mat picture;
+            std::vector<uchar> bytes;
+            QByteArray png;
+            QString filePath;
+            std::optional<QSaveFile> file;
+            rust::engineRun(rust::EngineMethod::ErrorScreenshot, [&](rust::EngineOp op, const double *a,
+                                                                     double *out,
+                                                                     const std::exception_ptr &error) {
+                switch (op) {
+                case rust::EngineOp::LowMemory: {
+                    out[0] = lowMemory;
+                    break;
+                }
+                case rust::EngineOp::ReadErrorFrame: {
+                    last = backend_.latestFrame();
+                    break;
+                }
+                case rust::EngineOp::ErrorFrameAvailable: {
+                    out[0] = bool(last);
+                    break;
+                }
+                case rust::EngineOp::PrepareErrorImage: {
+                    picture = inferenceImage(*last, Config::load(data_ + "/dualpc.json"));
+                    break;
+                }
+                case rust::EngineOp::EncodeErrorImage: {
+                    out[0] = cv::imencode(".png", picture, bytes);
+                    break;
+                }
+                case rust::EngineOp::BuildErrorScreenshot: {
+                    png = QByteArray(reinterpret_cast<const char *>(bytes.data()), qsizetype(bytes.size()));
+                    const auto folder = data_ + "/screenshots/errors";
+                    QDir().mkpath(folder);
+                    filePath =
+                        folder + '/' + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz") + ".png";
+                    break;
+                }
+                case rust::EngineOp::OpenScreenshot: {
+                    file.emplace(filePath);
+                    out[0] = file->open(QIODevice::WriteOnly);
+                    break;
+                }
+                case rust::EngineOp::WriteScreenshot: {
+                    out[0] = file->write(png) == png.size();
+                    break;
+                }
+                case rust::EngineOp::CommitScreenshot: {
+                    out[0] = file->commit();
+                    break;
+                }
+                case rust::EngineOp::LogScreenshot: {
+                    log("错误现场已保存：" + filePath);
+                    break;
+                }
+                case rust::EngineOp::SetScreenshotPath: {
+                    errorEvent["screenshot"] = filePath;
+                    break;
+                }
+                case rust::EngineOp::DisposeScreenshot: {
+                    file.reset();
+                    break;
+                }
+                case rust::EngineOp::AppendNoticeImage: {
+                    errorNotice->images << png;
+                    break;
+                }
+                default:
+                    fail("Rust ErrorScreenshot 宿主操作无效");
+                }
+            });
+            break;
+        }
+        case rust::EngineOp::LogScreenshotFailure: {
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception &e) {
+                log("错误现场保存失败：" + errorText(e));
+            }
+            break;
+        }
+        case rust::EngineOp::SetScreenshotError: {
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception &e) {
+                errorEvent["screenshot_error"] = errorText(e);
+            }
+            break;
+        }
+        case rust::EngineOp::SaveErrorDiagnostic: {
+            errorEvent = saveDiagnostic(data_, errorEvent);
+            break;
+        }
+        case rust::EngineOp::AssignDiagnosticReport: {
+            diagnosticReport = errorEvent["diagnostic_report"].toString();
+            break;
+        }
+        case rust::EngineOp::LogDiagnosticReport: {
+            log("任务异常，自动操作已暂停。诊断记录：" + diagnosticReport);
+            break;
+        }
+        case rust::EngineOp::EmitErrorEvent: {
+            emit message(errorEvent);
+            break;
+        }
+        case rust::EngineOp::NotifyError: {
+            notify(std::move(*errorNotice));
+            break;
+        }
+        case rust::EngineOp::SetExitAfterFalse: {
+            exitAfter = false;
+            break;
+        }
+        case rust::EngineOp::PostStatus: {
+            postStatus(epoch);
+            break;
+        }
+        case rust::EngineOp::ResultRecorded: {
+            out[0] = resultRecorded;
+            break;
+        }
+        case rust::EngineOp::RecordSelectedResult: {
+            recordResult(selected, completed);
+            break;
+        }
+        case rust::EngineOp::ExitAfter: {
+            out[0] = exitAfter;
+            break;
+        }
+        case rust::EngineOp::QueueExit: {
+            QMetaObject::invokeMethod(
+                this,
+                [this, epoch] {
+                    rust::engineRun(rust::EngineMethod::ScheduleExit,
+                                    [&](rust::EngineOp op, const double *a, double *out,
+                                        const std::exception_ptr &error) {
+                                        switch (op) {
+                                        case rust::EngineOp::GenerationMatches: {
+                                            out[0] = generation_ == epoch;
+                                            break;
+                                        }
+                                        case rust::EngineOp::HasPending: {
+                                            out[0] = bool(pendingTask_);
+                                            break;
+                                        }
+                                        case rust::EngineOp::LogWaitingExit: {
+                                            log("任务结束，正在等待通知队列处理后退出。");
+                                            break;
+                                        }
+                                        case rust::EngineOp::StartExitWait: {
+                                            exitWait_.start();
+                                            break;
+                                        }
+                                        case rust::EngineOp::StartExitTimer: {
+                                            exitTimer_.start();
+                                            break;
+                                        }
+                                        default:
+                                            fail("Rust ScheduleExit 宿主操作无效");
+                                        }
+                                    });
+                },
+                Qt::QueuedConnection);
+            break;
+        }
+        case rust::EngineOp::SetWorkerFinished: {
+            workerFinished_ = a[0] != 0;
+            break;
+        }
+        default:
+            fail("Rust SessionLifetime 宿主操作无效");
+        }
+    });
+}
+
+void Engine::scriptCommand(QJsonObject request) {
+    const QJsonValue id = request.value("id");
+    QJsonObject entry, field, state, settings, result, reply, command;
+    QJsonArray fields, changed;
+    QString ident, key;
+    QJsonValue value;
+    bool configuring = false;
+    rust::engineRun(rust::EngineMethod::ScriptCommand, [&](rust::EngineOp op, const double *a, double *out,
+                                                           const std::exception_ptr &error) {
+        switch (op) {
+        case rust::EngineOp::ScriptsBusy:
+            out[0] = scriptsBusy_;
+            break;
+        case rust::EngineOp::ScheduleScriptRetry:
+            QTimer::singleShot(50, this, [this, request] { scriptCommand(request); });
+            break;
+        case rust::EngineOp::RequestConfigure:
+            out[0] = request["op"] == "script_configure";
+            break;
+        case rust::EngineOp::RequestKeyKind: {
+            const auto bytes = request["key"].toString().toUtf8();
+            out[0] = rust::okww_rs_engine_script_key(reinterpret_cast<const uint8_t *>(bytes.constData()),
+                                                     size_t(bytes.size()));
+            break;
+        }
+        case rust::EngineOp::ScriptsCount:
+            out[0] = double(scripts_.size());
+            break;
+        case rust::EngineOp::SelectScriptEntry:
+            entry = scripts_.at(int(a[0])).toObject();
+            break;
+        case rust::EngineOp::LoadEntryFields:
+            fields = entry["fields"].toArray();
+            break;
+        case rust::EngineOp::ScriptValueMatches:
+            out[0] = std::as_const(entry)["id"] == request["script"];
+            break;
+        case rust::EngineOp::ScriptTrigger:
+            out[0] = std::as_const(entry)["trigger"].toBool();
+            break;
+        case rust::EngineOp::ScriptFieldsCount:
+            out[0] = double(fields.size());
+            break;
+        case rust::EngineOp::SelectScriptField:
+            field = fields.at(int(a[0])).toObject();
+            break;
+        case rust::EngineOp::ScriptFieldMatches:
+            out[0] = field["key"] == (configuring ? QJsonValue(key) : request["key"]);
+            break;
+        case rust::EngineOp::Paused:
+            out[0] = paused_;
+            break;
+        case rust::EngineOp::WorkerFinished:
+            out[0] = workerFinished_;
+            break;
+        case rust::EngineOp::HasPending:
+            out[0] = bool(pendingTask_);
+            break;
+        case rust::EngineOp::ScriptStateExists:
+            ident = request["script"].toString();
+            key = request["key"].toString();
+            value = request["value"];
+            out[0] = QFile::exists(data_ + "/native-scripts.json");
+            break;
+        case rust::EngineOp::ReadScriptState:
+            state = readJson(data_ + "/native-scripts.json");
+            break;
+        case rust::EngineOp::EmptyScriptState:
+            state = {};
+            break;
+        case rust::EngineOp::InitializeScriptChanges:
+            settings = state[ident].toObject();
+            changed = scripts_;
+            configuring = true;
+            break;
+        case rust::EngineOp::ChangedScriptCount:
+            out[0] = double(changed.size());
+            break;
+        case rust::EngineOp::SelectChangedScript:
+            entry = changed.at(int(a[0])).toObject();
+            break;
+        case rust::EngineOp::ScriptIdentMatches:
+            out[0] = entry["id"] == ident;
+            break;
+        case rust::EngineOp::RequestValueBool:
+            out[0] = value.isBool();
+            break;
+        case rust::EngineOp::SetScriptBoolean: {
+            const auto property = a[0] == 0 ? "enabled" : "continuous";
+            settings[property] = value;
+            entry[property] = value;
+            break;
+        }
+        case rust::EngineOp::ScriptFlagExists:
+            out[0] = scriptEnabled_.contains(ident);
+            break;
+        case rust::EngineOp::StoreScriptFlagValue:
+            scriptEnabled_.value(ident)->store(value.toBool());
+            break;
+        case rust::EngineOp::RequestValueNumber:
+            out[0] = value.isDouble();
+            break;
+        case rust::EngineOp::RequestValueDouble:
+            out[0] = value.toDouble();
+            break;
+        case rust::EngineOp::RequestValueInt:
+            out[0] = value.toInt();
+            break;
+        case rust::EngineOp::SetScriptRepeat:
+            settings["repeat"] = value;
+            entry["repeat"] = value;
+            break;
+        case rust::EngineOp::SetFieldValue:
+            field["value"] = value;
+            break;
+        case rust::EngineOp::StoreField:
+            fields[int(a[0])] = field;
+            break;
+        case rust::EngineOp::StoreScriptValues: {
+            auto values = settings["values"].toObject();
+            values[key] = value;
+            settings["values"] = values;
+            entry["fields"] = fields;
+            break;
+        }
+        case rust::EngineOp::StoreChangedScript:
+            changed[int(a[0])] = entry;
+            break;
+        case rust::EngineOp::StoreScriptSettings:
+            state[ident] = settings;
+            break;
+        case rust::EngineOp::WriteScriptState:
+            writeJson(data_ + "/native-scripts.json", state);
+            break;
+        case rust::EngineOp::CommitChangedScripts:
+            scripts_ = changed;
+            break;
+        case rust::EngineOp::WriteScriptCatalog:
+            writeJson(data_ + "/native-script-catalog.json",
+                      {{"scripts", scripts_}, {"templates", scriptTemplates_}});
+            break;
+        case rust::EngineOp::ResultCatalog:
+            result = catalog();
+            break;
+        case rust::EngineOp::EmitCatalogChanged:
+            emit message({{"event", "catalog_changed"}, {"data", result}});
+            break;
+        case rust::EngineOp::ReplySuccess:
+            reply = {{"id", id}, {"ok", true}, {"data", result}};
+            break;
+        case rust::EngineOp::ReplyError:
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception &e) {
+                reply = {{"id", id}, {"ok", false}, {"error", errorText(e)}};
+            }
+            break;
+        case rust::EngineOp::EmitReply:
+            emit message(reply);
+            break;
+        case rust::EngineOp::SetScriptsBusy:
+            scriptsBusy_ = a[0] != 0;
+            break;
+        case rust::EngineOp::BuildScriptManageCommand:
+            command = request;
+            command["op"] = request["op"].toString().mid(7);
+            break;
+        case rust::EngineOp::SpawnScriptManage: {
+            auto watcher = new QFutureWatcher<QJsonObject>(this);
+            connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, id] {
+                const auto response = watcher->result();
+                QJsonObject result, reply;
+                rust::engineRun(
+                    rust::EngineMethod::ScriptReply,
+                    [&](rust::EngineOp action, const double *args, double *out, const std::exception_ptr &) {
+                        switch (action) {
+                        case rust::EngineOp::DeleteWatcher:
+                            watcher->deleteLater();
+                            break;
+                        case rust::EngineOp::SetScriptsBusy:
+                            scriptsBusy_ = args[0] != 0;
+                            break;
+                        case rust::EngineOp::ResponseOk:
+                            out[0] = response["ok"].toBool();
+                            break;
+                        case rust::EngineOp::AdoptResponseScripts:
+                            scripts_ = response["data"].toObject()["scripts"].toArray();
+                            break;
+                        case rust::EngineOp::AdoptResponseTemplates:
+                            scriptTemplates_ = response["data"].toObject()["templates"].toArray();
+                            break;
+                        case rust::EngineOp::ResultCatalog:
+                            result = catalog();
+                            break;
+                        case rust::EngineOp::ResultSelectedScript:
+                            result["selected_script"] = response["data"].toObject()["selected"];
+                            break;
+                        case rust::EngineOp::ResultSnippet:
+                            result["snippet"] = response["data"].toObject()["snippet"];
+                            break;
+                        case rust::EngineOp::EmitCatalogChanged:
+                            emit message({{"event", "catalog_changed"}, {"data", result}});
+                            break;
+                        case rust::EngineOp::ReplySuccess:
+                            reply = {{"id", id}, {"ok", true}, {"data", result}};
+                            break;
+                        case rust::EngineOp::EmitReply:
+                            emit message(reply);
+                            break;
+                        case rust::EngineOp::ReplyResponseError:
+                            emit message({{"id", id}, {"ok", false}, {"error", response["error"]}});
+                            break;
+                        case rust::EngineOp::LoadingScripts:
+                            out[0] = loadingScripts_;
+                            break;
+                        case rust::EngineOp::SetLoadingScripts:
+                            loadingScripts_ = args[0] != 0;
+                            break;
+                        case rust::EngineOp::EmitReady:
+                            emit message({{"event", "ready"}, {"data", catalog()}});
+                            break;
+                        default:
+                            fail("Rust 脚本完成宿主操作无效");
+                        }
+                    });
+            });
+            watcher->setFuture(QtConcurrent::run([root = root_, data = data_, command] {
+                QJsonObject reply;
+                rust::engineRun(
+                    rust::EngineMethod::ScriptManage,
+                    [&](rust::EngineOp action, const double *, double *, const std::exception_ptr &error) {
+                        switch (action) {
+                        case rust::EngineOp::ScriptManage:
+                            reply = {{"ok", true}, {"data", scriptManage(root, data, command)}};
+                            break;
+                        case rust::EngineOp::ReplyError:
+                            try {
+                                std::rethrow_exception(error);
+                            } catch (const std::exception &e) {
+                                reply = {{"ok", false}, {"error", errorText(e)}};
+                            }
+                            break;
+                        default:
+                            fail("Rust 脚本管理宿主操作无效");
+                        }
+                    });
+                return reply;
+            }));
+            break;
+        }
+        case rust::EngineOp::Error:
+            switch (int(a[0])) {
+            case 11:
+                fail("请先暂停任务，再修改或重新载入脚本");
+            case 12:
+                fail("脚本开关需要布尔值");
+            case 13:
+                fail("循环次数应在 1 至 1000000 之间");
+            case 14:
+                fail("脚本参数不存在");
+            case 15:
+                fail("脚本已不存在");
+            default:
+                fail("Rust 脚本错误标识无效");
+            }
+        default:
+            fail("Rust 脚本配置宿主操作无效");
+        }
+    });
 }
 void Engine::invalidateParty() {
-    // Configuration mutations run only after the old combat worker exits.
-    // Keep account/login state, but discard combat context and old UI identity.
-    taskState_->inCombat = false;
-    taskState_->retryingStep = false;
-    ++taskState_->combatEnableRevision;
-    emit message({{"event", "party_invalidated"}});
+    rust::engineRun(rust::EngineMethod::InvalidateParty,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                        switch (op) {
+                        case rust::EngineOp::SetTaskInCombat: {
+                            taskState_->inCombat = a[0] != 0;
+                            break;
+                        }
+                        case rust::EngineOp::SetRetryingStep: {
+                            taskState_->retryingStep = a[0] != 0;
+                            break;
+                        }
+                        case rust::EngineOp::IncrementCombatRevision: {
+                            ++taskState_->combatEnableRevision;
+                            break;
+                        }
+                        case rust::EngineOp::EmitPartyInvalidated: {
+                            emit message({{"event", "party_invalidated"}});
+                            break;
+                        }
+                        default:
+                            fail("Rust InvalidateParty 宿主操作无效");
+                        }
+                    });
 }
 void Engine::switchTeamCode(QJsonObject request) {
-    if (teamSwitchBusy_) fail("正在切换队伍代码，请等待完成");
-    if (!paused_ || !workerFinished_ || pendingTask_)
-        fail("请先暂停任务，再修改队伍。");
-    if (worker_.joinable()) worker_.join();
-    teamSwitchSnapshot_ = teams_->catalog();
-    teamSwitchBusy_ = true;
-    auto watcher = new QFutureWatcher<QJsonObject>(this);
-    connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, request] {
-        auto reply = watcher->result();
-        watcher->deleteLater();
-        teamSwitchBusy_ = false;
-        // A batch failure can still have changed some teams. Re-detect on the
-        // next start in either case; TaskRunner/CombatSession are recreated.
-        invalidateParty();
-        reply["id"] = request["id"];
-        try {
-            auto data = catalog();
-            data["team_switch_ms"] = reply.take("elapsed_ms");
-            // A failed batch can have switched other valid teams; show disk state.
-            emit message({{"event", "catalog_changed"}, {"data", data}});
-            reply["data"] = data;
-        } catch (const std::exception &error) {
-            reply["ok"] = false;
-            reply["error"] = errorText(error);
+    rust::engineRun(rust::EngineMethod::SwitchTeam, [&](rust::EngineOp op, const double *a, double *out,
+                                                        const std::exception_ptr &error) {
+        switch (op) {
+        case rust::EngineOp::TeamBusy: {
+            out[0] = teamSwitchBusy_;
+            break;
         }
-        emit message(reply);
+        case rust::EngineOp::Paused: {
+            out[0] = paused_;
+            break;
+        }
+        case rust::EngineOp::WorkerFinished: {
+            out[0] = workerFinished_;
+            break;
+        }
+        case rust::EngineOp::HasPending: {
+            out[0] = bool(pendingTask_);
+            break;
+        }
+        case rust::EngineOp::WorkerJoinable: {
+            out[0] = worker_.joinable();
+            break;
+        }
+        case rust::EngineOp::JoinWorker: {
+            worker_.join();
+            break;
+        }
+        case rust::EngineOp::SnapshotTeams: {
+            teamSwitchSnapshot_ = teams_->catalog();
+            break;
+        }
+        case rust::EngineOp::SetTeamBusy: {
+            teamSwitchBusy_ = a[0] != 0;
+            break;
+        }
+        case rust::EngineOp::SpawnTeamSwitch: {
+            auto watcher = new QFutureWatcher<QJsonObject>(this);
+            connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, request] {
+                auto reply = watcher->result();
+                QJsonObject data;
+                rust::engineRun(
+                    rust::EngineMethod::TeamReply,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                        switch (op) {
+                        case rust::EngineOp::DeleteWatcher: {
+                            watcher->deleteLater();
+                            break;
+                        }
+                        case rust::EngineOp::SetTeamBusy: {
+                            teamSwitchBusy_ = a[0] != 0;
+                            break;
+                        }
+                        case rust::EngineOp::InvalidateParty: {
+                            invalidateParty();
+                            break;
+                        }
+                        case rust::EngineOp::ReplyRequestId: {
+                            reply["id"] = request["id"];
+                            break;
+                        }
+                        case rust::EngineOp::ResultCatalog: {
+                            data = catalog();
+                            break;
+                        }
+                        case rust::EngineOp::ResultTeamElapsed: {
+                            data["team_switch_ms"] = reply.take("elapsed_ms");
+                            break;
+                        }
+                        case rust::EngineOp::EmitCatalogChanged: {
+                            emit message({{"event", "catalog_changed"}, {"data", data}});
+                            break;
+                        }
+                        case rust::EngineOp::ReplyData: {
+                            reply["data"] = data;
+                            break;
+                        }
+                        case rust::EngineOp::ReplyError: {
+                            try {
+                                std::rethrow_exception(error);
+                            } catch (const std::exception &e) {
+                                reply["ok"] = false;
+                                reply["error"] = errorText(e);
+                            }
+                            break;
+                        }
+                        case rust::EngineOp::EmitReply: {
+                            emit message(reply);
+                            break;
+                        }
+                        default:
+                            fail("Rust TeamReply 宿主操作无效");
+                        }
+                    });
+            });
+            watcher->setFuture(QtConcurrent::run([teams = teams_, request] {
+                QElapsedTimer elapsed;
+                QJsonObject reply;
+                rust::engineRun(
+                    rust::EngineMethod::TeamWork,
+                    [&](rust::EngineOp op, const double *a, double *out, const std::exception_ptr &error) {
+                        switch (op) {
+                        case rust::EngineOp::StartTeamTimer: {
+                            elapsed.start();
+                            break;
+                        }
+                        case rust::EngineOp::RequestCommand: {
+                            const auto bytes = request["op"].toString().toUtf8();
+                            out[0] = rust::okww_rs_engine_command_kind(
+                                reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size()));
+                            break;
+                        }
+                        case rust::EngineOp::SetTeamMode: {
+                            teams->setMode(request["team"].toArray(), request["mode"].toString());
+                            break;
+                        }
+                        case rust::EngineOp::SetAllTeamModes: {
+                            teams->setAllModes(request["mode"].toString());
+                            break;
+                        }
+                        case rust::EngineOp::ReplyOk: {
+                            reply["ok"] = true;
+                            break;
+                        }
+                        case rust::EngineOp::ReplyError: {
+                            try {
+                                std::rethrow_exception(error);
+                            } catch (const std::exception &e) {
+                                reply["ok"] = false;
+                                reply["error"] = errorText(e);
+                            }
+                            break;
+                        }
+                        case rust::EngineOp::ReplyElapsed: {
+                            reply["elapsed_ms"] = double(elapsed.elapsed());
+                            break;
+                        }
+                        default:
+                            fail("Rust TeamWork 宿主操作无效");
+                        }
+                    });
+                return reply;
+            }));
+            break;
+        }
+        case rust::EngineOp::Error: {
+            switch (int(a[0])) {
+            case 6:
+                fail("正在切换队伍代码，请等待完成");
+            case 7:
+                fail("请先暂停任务，再修改队伍。");
+            default:
+                fail("Rust 队伍错误标识无效");
+            }
+            break;
+        }
+        default:
+            fail("Rust SwitchTeam 宿主操作无效");
+        }
     });
-    watcher->setFuture(QtConcurrent::run([teams = teams_, request] {
-        QElapsedTimer elapsed;
-        elapsed.start();
-        QJsonObject result;
-        try {
-            if (request["op"] == "team_mode")
-                teams->setMode(request["team"].toArray(), request["mode"].toString());
-            else teams->setAllModes(request["mode"].toString());
-            result["ok"] = true;
-        } catch (const std::exception &error) {
-            result["ok"] = false;
-            result["error"] = errorText(error);
-        }
-        result["elapsed_ms"] = double(elapsed.elapsed());
-        return result;
-    }));
 }
 void Engine::command(const QJsonObject &request) {
-    QJsonObject reply{{"id", request["id"]}};
-    try {
-        const auto op = request["op"].toString();
-        QJsonObject result;
-        if (op == "team_mode" || op == "team_all_mode") {
+    QJsonObject reply{{"id", request["id"]}}, result;
+    const TaskDefinition *native = nullptr;
+    rust::engineRun(rust::EngineMethod::Command, [&](rust::EngineOp op, const double *a, double *out,
+                                                     const std::exception_ptr &error) {
+        switch (op) {
+        case rust::EngineOp::RequestCommand: {
+            const auto value = request["op"].toString().toUtf8();
+            out[0] = rust::okww_rs_engine_command_kind(reinterpret_cast<const uint8_t *>(value.constData()),
+                                                       size_t(value.size()));
+            break;
+        }
+        case rust::EngineOp::SwitchTeam:
             switchTeamCode(request);
-            return;
-        }
-        if (op.startsWith("script_")) {
+            break;
+        case rust::EngineOp::ScriptCommand:
             scriptCommand(request);
-            return;
-        }
-        if (op == "catalog")
+            break;
+        case rust::EngineOp::ResultCatalog:
             result = catalog();
-        else if (op == "pause" || op == "shutdown") {
+            break;
+        case rust::EngineOp::ResultStatus:
+            result = status(a[0] != 0 ? request["task"].toString() : QString{});
+            break;
+        case rust::EngineOp::Pause:
             pause();
-            result = status();
-        } else if (op == "stop_task") {
-            // Explicit global pause/error must never be undone by a late task
-            // button. Cancelling a foreground task hands control to triggers.
-            if (pendingTask_ && !pendingTask_->isEmpty()) {
-                pendingTask_ = QString{};
-                pendingOptions_["exit_after"] = false;
-                pendingOptions_["limit_seconds"] = 0;
-                foreground_ = false;
-            } else if (foreground_ && !paused_)
-                cancelForeground_ = true;
-            result = status();
-        } else if (op == "start") {
+            break;
+        case rust::EngineOp::PendingTaskNonempty:
+            out[0] = pendingTask_ && !pendingTask_->isEmpty();
+            break;
+        case rust::EngineOp::PendingTaskEmpty:
+            pendingTask_ = QString{};
+            break;
+        case rust::EngineOp::PendingExitFalse:
+            pendingOptions_["exit_after"] = false;
+            break;
+        case rust::EngineOp::PendingLimitZero:
+            pendingOptions_["limit_seconds"] = 0;
+            break;
+        case rust::EngineOp::SetForeground:
+            foreground_ = a[0] != 0;
+            break;
+        case rust::EngineOp::SetCancelForeground:
+            cancelForeground_ = a[0] != 0;
+            break;
+        case rust::EngineOp::Foreground:
+            out[0] = foreground_;
+            break;
+        case rust::EngineOp::Paused:
+            out[0] = paused_;
+            break;
+        case rust::EngineOp::StartRequest:
             start(request["task"].toString(), request);
-            result = status(request["task"].toString());
-        } else if (op == "task_config" || op == "global_config") {
-            if (request["task"].toString().startsWith("script:")) {
-                auto q = request;
-                q["op"] = "script_configure";
-                q["script"] = request["task"];
-                scriptCommand(q);
-                return;
-            }
-            profile_.set(request[op == "task_config" ? "task" : "group"].toString(),
-                         request["key"].toString(), request["value"]);
-            result = catalog();
-        } else if (op == "reset_config") {
-            if (request["group"].toString().startsWith("script:")) {
-                auto q = request;
-                q["op"] = "script_reset";
-                q["script"] = request["group"];
-                scriptCommand(q);
-                return;
-            }
+            break;
+        case rust::EngineOp::TaskIsScript:
+            out[0] = request["task"].toString().startsWith("script:");
+            break;
+        case rust::EngineOp::GroupIsScript:
+            out[0] = request["group"].toString().startsWith("script:");
+            break;
+        case rust::EngineOp::ScriptConfigureTask: {
+            auto q = request;
+            q["op"] = "script_configure";
+            q["script"] = request["task"];
+            scriptCommand(q);
+            break;
+        }
+        case rust::EngineOp::ScriptResetGroup: {
+            auto q = request;
+            q["op"] = "script_reset";
+            q["script"] = request["group"];
+            scriptCommand(q);
+            break;
+        }
+        case rust::EngineOp::ScriptToggleTask: {
+            auto q = request;
+            q["op"] = "script_configure";
+            q["script"] = request["task"].toString();
+            q["key"] = "_enabled";
+            q["value"] = request["enabled"];
+            scriptCommand(q);
+            break;
+        }
+        case rust::EngineOp::SetProfile:
+            profile_.set(request[a[0] != 0 ? "task" : "group"].toString(), request["key"].toString(),
+                         request["value"]);
+            break;
+        case rust::EngineOp::ResetProfile:
             profile_.reset(request["group"].toString());
-            result = catalog();
-        } else if (op == "trigger") {
-            const auto id = request["task"].toString();
-            if (id.startsWith("script:")) {
-                auto q = request;
-                q["op"] = "script_configure";
-                q["script"] = id;
-                q["key"] = "_enabled";
-                q["value"] = request["enabled"];
-                scriptCommand(q);
-                return;
+            break;
+        case rust::EngineOp::RequestEnabled:
+            out[0] = request["enabled"].toBool();
+            break;
+        case rust::EngineOp::NativeCount:
+            out[0] = double(tasks_.size());
+            break;
+        case rust::EngineOp::NativeSelect:
+            native = &tasks_.at(int(a[0]));
+            break;
+        case rust::EngineOp::NativeMatches:
+            out[0] = native->id == request["task"].toString();
+            break;
+        case rust::EngineOp::ProfileWasEnabled:
+            out[0] = profile_.value(request["task"].toString(), "_enabled", false).toBool();
+            break;
+        case rust::EngineOp::SetTrigger:
+            profile_.set(request["task"].toString(), "_enabled", request["enabled"]);
+            break;
+        case rust::EngineOp::RequestAutoCombat:
+            out[0] = request["task"].toString() == "AutoCombatTask";
+            break;
+        case rust::EngineOp::IncrementCombatRevision:
+            ++taskState_->combatEnableRevision;
+            break;
+        case rust::EngineOp::TeamBusy:
+            out[0] = teamSwitchBusy_;
+            break;
+        case rust::EngineOp::WorkerFinished:
+            out[0] = workerFinished_;
+            break;
+        case rust::EngineOp::HasPending:
+            out[0] = bool(pendingTask_);
+            break;
+        case rust::EngineOp::WorkerJoinable:
+            out[0] = worker_.joinable();
+            break;
+        case rust::EngineOp::JoinWorker:
+            worker_.join();
+            break;
+        case rust::EngineOp::TeamCode:
+            result = teams_->code(request["team"].toArray(), request["member"].toString());
+            break;
+        case rust::EngineOp::TeamEditor:
+            result = teams_->editor(request["team"].toArray(), request["member"].toString(),
+                                    request["source"].toString(), request["view"].toString("active"));
+            break;
+        case rust::EngineOp::TeamExport:
+            teams_->exportTeam(request["team"].toArray(), request["path"].toString());
+            break;
+        case rust::EngineOp::TeamCreate:
+            teams_->createTeam(request["team"].toArray());
+            break;
+        case rust::EngineOp::TeamDelete:
+            teams_->removeTeam(request["team"].toArray());
+            break;
+        case rust::EngineOp::TeamSave:
+            teams_->saveDraft(request["team"].toArray(), request["member"].toString(),
+                              request["code"].toString());
+            break;
+        case rust::EngineOp::TeamImport:
+            teams_->importTeam(request["path"].toString());
+            break;
+        case rust::EngineOp::InvalidateParty:
+            invalidateParty();
+            break;
+        case rust::EngineOp::ReplySuccess:
+            reply["ok"] = true;
+            reply["data"] = result;
+            break;
+        case rust::EngineOp::ReplyError:
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception &e) {
+                reply["ok"] = false;
+                reply["error"] = errorText(e);
             }
-            if (request["enabled"].toBool() &&
-                std::none_of(tasks_.begin(), tasks_.end(), [&](const auto &t) { return t.id == id; }))
+            break;
+        case rust::EngineOp::EmitReply:
+            emit message(reply);
+            break;
+        case rust::EngineOp::Error:
+            switch (int(a[0])) {
+            case 6:
+                fail("正在切换队伍代码，请等待完成");
+            case 7:
+                fail("请先暂停任务，再修改队伍。");
+            case 8:
                 fail("此实时任务尚未迁移，当前不能启用。");
-            const bool wasEnabled = profile_.value(id, "_enabled", false).toBool();
-            profile_.set(id, "_enabled", request["enabled"]);
-            if (id == "AutoCombatTask" && !wasEnabled && request["enabled"].toBool())
-                ++taskState_->combatEnableRevision;
-            result = status();
-        } else if (op.startsWith("team_")) {
-            if (teamSwitchBusy_) fail("正在切换队伍代码，请等待完成");
-            const auto team = request["team"].toArray();
-            if (op == "team_code")
-                result = teams_->code(team, request["member"].toString());
-            else if (op == "team_editor")
-                result = teams_->editor(team, request["member"].toString(), request["source"].toString(),
-                                        request["view"].toString("active"));
-            else if (op == "team_export")
-                teams_->exportTeam(team, request["path"].toString());
-            else {
-                if (!paused_ || !workerFinished_ || pendingTask_)
-                    fail("请先暂停任务，再修改队伍。");
-                if (worker_.joinable())
-                    worker_.join();
-                if (op == "team_create")
-                    teams_->createTeam(team);
-                else if (op == "team_delete")
-                    teams_->removeTeam(team);
-                else if (op == "team_save")
-                    teams_->saveDraft(team, request["member"].toString(), request["code"].toString());
-                else if (op == "team_import")
-                    teams_->importTeam(request["path"].toString());
-                else
-                    fail("未知队伍操作");
-                invalidateParty();
-                result = catalog();
+            case 9:
+                fail("未知队伍操作");
+            case 10:
+                fail("未知原生执行器操作：" + request["op"].toString());
+            default:
+                fail("Rust 命令错误标识无效");
             }
-        } else
-            fail("未知原生执行器操作：" + op);
-        reply["ok"] = true;
-        reply["data"] = result;
-    } catch (const std::exception &e) {
-        reply["ok"] = false;
-        reply["error"] = errorText(e);
-    }
-    emit message(reply);
+        default:
+            fail("Rust 命令宿主操作无效");
+        }
+    });
 }
 } // namespace okww::runtime

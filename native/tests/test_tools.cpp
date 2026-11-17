@@ -2,6 +2,7 @@
 #include "runtime/scripts.hpp"
 #include "runtime/template_store.hpp"
 #include "runtime/workshop.hpp"
+#include "capture.hpp"
 #include <QPainter>
 #include <QtTest>
 using namespace okww;
@@ -9,6 +10,23 @@ using namespace okww::runtime;
 class ToolTests final : public QObject {
     Q_OBJECT
   private slots:
+    void desktopLivenessDoesNotInvalidateRecognitionPixels() {
+        auto config = Config::defaults();
+        config.set("capture.source", "desktop");
+        config.set("capture.output_width", 16);
+        config.set("capture.output_height", 8);
+        Capture capture(config);
+        QByteArray pixels(16 * 8 * 4, char(77));
+        capture.publish(reinterpret_cast<const uint8_t *>(pixels.constData()), pixels.size(),
+                        16, 8, 64, PixelFormat::BGRA32, false, nowNs());
+        InferenceFrames cache(config);
+        const auto first = cache.get(capture.latest());
+        for (int i = 0; i < 100; ++i) {
+            capture.verifyUnchangedDesktop(nowNs());
+            QCOMPARE(cache.get(capture.latest()).data, first.data);
+        }
+        QCOMPARE(cache.conversions(), uint64_t(1));
+    }
     void recognitionConvertsEachPublishedFrameOnlyOnce() {
         auto config = Config::defaults();
         config.set("capture.output_width", 1280);
@@ -110,7 +128,8 @@ class ToolTests final : public QObject {
             "self.default_config = {'Amount': 3 + 4}\n"
             "    def run(self):\n"
             "        self.send_key_down('a')\n        self.click_relative(.5, .5, down_time=.04)\n"
-            "        self.send_key_up('a')\n        self.info_set('checked', 'yes')\n";
+            "        self.send_key_up('a')\n        self.info_set('checked', 'yes')\n"
+            "        self.info_set('运行进度', {'stage':'离线步骤','current':2,'total':5,'unit':'步'})\n";
         auto saved = scriptManage(root, data.path(), {{"op", "save"}, {"script", id}, {"code", code}});
         auto entry = saved["scripts"].toArray()[0].toObject();
         QCOMPARE(entry["fields"].toArray()[0].toObject()["value"].toInt(), 7);
@@ -158,6 +177,8 @@ class ToolTests final : public QObject {
             [] { return cv::Mat(720, 1280, CV_8UC3, cv::Scalar(20, 30, 40)); },
             [](const auto &, QRect, double) { return QVector<TextLine>{}; });
         bool checked = false;
+        QJsonObject reported;
+        context.progress=[&](QJsonObject data) { if (data["stage"]=="离线步骤") reported=data; };
         context.info = [&](QString key, QString value) {
             if (key == "checked" && value == "yes")
                 checked = true;
@@ -166,6 +187,8 @@ class ToolTests final : public QObject {
             ScriptRuntime worker(context, root, data.path());
             worker.run(entry);
             QVERIFY(checked);
+            QCOMPARE(reported["current"].toInt(),2); QCOMPARE(reported["total"].toInt(),5);
+            QCOMPARE(reported["unit"].toString(),"步");
             const auto point =
                 std::find_if(events.begin(), events.end(), [](auto e) { return e["op"] == "absolute"; });
             QVERIFY(point != events.end());

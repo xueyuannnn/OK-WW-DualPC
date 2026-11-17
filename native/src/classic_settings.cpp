@@ -124,7 +124,11 @@ QWidget *Window::buildClassicAbout() {
     const auto documentation = QFile::exists(root_ + "/source/README.md") ? root_ + "/source/README.md"
                                                                         : root_ + "/README.md";
     header->addWidget(link("项目说明", "Info", QUrl::fromLocalFile(documentation).toString(), this));
+    auto github = link("GitHub", "GitHub", product::github, this);
+    github->setObjectName("projectGithub");
+    header->addWidget(github);
     layout->addWidget(version);
+    layout->addWidget(buildAppUpdates());
 
     auto contact = frame();
     contact->setProperty("aboutSection", "contact");

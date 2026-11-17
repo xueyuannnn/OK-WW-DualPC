@@ -626,6 +626,8 @@ class BaseChar:
         clicked = False
         if not self.task.in_liberation:
             while self.liberation_available():  # clicked and still in team wait for animation
+                if clicked and not self.task.in_team()[0]:
+                    break
                 self.logger.debug(f'click_liberation liberation_available click')
                 if send_click:
                     self.click(interval=0.1)

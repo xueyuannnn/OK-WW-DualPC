@@ -14,6 +14,7 @@ class TestCD(TaskTestCase):
 
     def assert_cd_values(self, image, expected):
         self.task.do_reset_to_false()
+        self.task.cds = {}  # Each fixture is an independent combat observation.
         self.set_image(image)
         self.task.chars = [SimpleNamespace(index=0, is_current_char=True), None, None]
         self.task.refresh_cd()

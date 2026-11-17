@@ -1,5 +1,6 @@
 #pragma once
 #include "character.hpp"
+#include "rotation_abi.hpp"
 
 namespace okww::runtime {
 struct CharacterRegistration {
@@ -17,4 +18,5 @@ std::span<const CharacterRegistration> gaugeCharacters();
 std::span<const CharacterRegistration> formCharacters();
 std::span<const CharacterRegistration> spectroCharacters();
 std::span<const CharacterRegistration> additionalCharacters();
+bool isShoreKeeper(const Character *character);
 } // namespace okww::runtime

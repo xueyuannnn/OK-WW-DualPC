@@ -34,6 +34,7 @@ void sendDesktopNotice(bool wechat, const QJsonObject &config, const Notice &not
 // Worker owns every network/desktop operation. Neither OCR nor network waits
 // block the GUI or the combat loop. No retry after an uncertain delivery.
 class Notifications {
+    friend struct NotificationQueueSdk;
     struct Pending {
         QJsonObject config;
         Notice notice;

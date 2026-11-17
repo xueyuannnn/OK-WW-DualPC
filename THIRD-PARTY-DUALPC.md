@@ -1,11 +1,11 @@
 # Sources and licenses
 
 - OK-WW Enhanced: https://github.com/zzc-tongji/ok-ww-enhanced ; commit `310d8d9428ec78e62f11f429de75baf47d189add`. AGPL-3.0, see `LICENSE.txt`.
-- Selected character updates: https://github.com/zzc-tongji/ok-ww-enhanced/tree/726b10e65cbeb1303214774664d0277a71b7e18a ; Aalto, Lingyang, Lumi, Yangyang, Suoming and the bounded `continues_click_until` helper. Python character implementations are retained and rotations are ported to C++; registration and resource provenance are recorded in `native/resources/character-updates.json` and `assets/upstream-characters/manifest.json`. This does not replace the overall source baseline above.
+- Selected character updates: https://github.com/zzc-tongji/ok-ww-enhanced/tree/726b10e65cbeb1303214774664d0277a71b7e18a ; Aalto, Lingyang, Lumi, Yangyang, Suoming and the bounded `continues_click_until` helper. Python character implementations are retained and rotations are ported to Rust; registration and resource provenance are recorded in `native/resources/character-updates.json` and `assets/upstream-characters/manifest.json`. This does not replace the overall source baseline above.
 - OK-WW original: https://github.com/ok-oldking/ok-wuthering-waves . Original upstream of the enhanced game logic.
 - ok-script: https://github.com/ok-oldking/ok-script ; commit `428bcd563292ac6451c84c0222e6b790d468215f`. See `vendor/ok-script/LICENSE.txt` and its attribution requirements.
 - Character workshop rescue mirror: https://github.com/yamadafz/ok-ww-char-code ; public snapshot of the unavailable original workshop repository. Downloaded teams retain their original authors and metadata. See `docs/project-links.md` and `docs/workshop.md` in the source tree.
-- KMBox Net protocol reference: https://github.com/kvmaibox/kmboxnet/blob/main/c%2B%2B_demo/NetConfig/kmboxNet.cpp . The Python and C++ adapters implement the publicly documented packet layouts.
+- KMBox Net protocol reference: https://github.com/kvmaibox/kmboxnet/blob/main/c%2B%2B_demo/NetConfig/kmboxNet.cpp . The Python bridge and Rust core implement the publicly documented packet layouts.
 - Dual-PC architecture reference: https://github.com/ai123lj/DualPC-TensorRT-Aim-KMBOX . No FPS model, targeting logic or runtime DLL is included in this adapter.
 - GC573 driver: https://www.avermedia.com/support/download?model_number=GC573 . Install the manufacturer's driver on the inference PC.
 
@@ -15,6 +15,7 @@ Project and reference URLs were checked on 2026-11-10. Current source, release, 
 
 | Component | Use | License record |
 | --- | --- | --- |
+| Rust 1.100.0 standard library | Statically linked execution core | MIT / Apache-2.0 and component notices in `native/licenses/rust`; copied to `licenses/rust` in the full package |
 | Qt 6 | Native interface and platform services | `native/licenses/`; dynamic libraries in the full package |
 | OpenCV 4.12 | Image processing | SDK license and third-party notices included under `licenses/opencv` in the full package |
 | OpenVINO Runtime | Native inference | Package license and notices included under `licenses/openvino` in the full package |

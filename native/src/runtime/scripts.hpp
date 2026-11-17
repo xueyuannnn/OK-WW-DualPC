@@ -17,6 +17,8 @@ class ScriptRuntime {
     HANDLE mapping_ = nullptr;
     void *mapped_ = nullptr;
     std::function<bool()> enabled_;
+    friend struct ScriptContractAccess;
+    QJsonObject rustScript(int method, QJsonObject message = {}, QJsonObject script = {});
     void write(QJsonObject message);
     QJsonObject receive();
     QJsonObject rpc(QJsonObject request);

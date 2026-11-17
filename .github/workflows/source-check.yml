@@ -19,9 +19,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Check Rust core
+        shell: pwsh
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
       - name: Check public source boundaries
         shell: pwsh
         run: python tools_release/prepare_source.py --check
       - name: Check Python bridge syntax
         shell: pwsh
         run: python -m compileall -q native/bridge dualpc src
+      - name: Check Windows updater
+        shell: pwsh
+        run: python -m unittest native.tests.test_app_update -v

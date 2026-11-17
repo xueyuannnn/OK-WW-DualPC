@@ -1,5 +1,6 @@
 #pragma once
 #include "execution.hpp"
+#include <array>
 #include <optional>
 
 namespace okww::runtime {
@@ -14,7 +15,17 @@ class Input {
     std::optional<QPointF> position_;
     bool absolute_;
     double positionReadyAt_ = -1;
+    friend struct InputContractAccess;
+    struct RustRequest {
+        QJsonObject command;
+        QString key, text;
+        std::optional<QPointF> point;
+        QPointF to;
+    };
+    std::array<double, 3> rustInput(int method, std::initializer_list<double> args, RustRequest request,
+                                    QJsonObject *reply = nullptr);
     void send(QJsonObject command);
+    QJsonObject transmit(QJsonObject command);
     void counts(int x, int y, bool precise);
     void settlePosition();
 
@@ -24,6 +35,7 @@ class Input {
           execution_(execution), absolute_(absolute) {}
     ~Input() { release(); }
     static int keyCode(QString key);
+    std::function<void(QString)> recovery;
     QJsonObject workshopCommand(QJsonObject command);
     QPoint screenPoint(QPointF point) const;
     void keyDown(QString key);

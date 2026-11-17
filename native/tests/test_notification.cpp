@@ -297,6 +297,22 @@ class NotificationTests final : public QObject {
         QVERIFY(timer.elapsed() < 500);
         QCOMPARE(sent.load(), 1);
     }
+    void retainedCancellationTracksOwnerAfterWorkerHasStopped() {
+        NoticeCancelled retained;
+        std::atomic<bool> copied = false;
+        Notifications queue({}, {}, [&](const NoticeRequest &, const NoticeCancelled &cancel) {
+            retained = cancel;
+            copied = true;
+            return QByteArray{};
+        });
+        queue.submit({{"Discord Notification", true},
+                      {"Discord Webhook", "https://discord.com/api/webhooks/test/test"}},
+                     {"标题", "正文", {}});
+        QTRY_VERIFY_WITH_TIMEOUT(copied.load(), 1000);
+        queue.stop();
+        QVERIFY(retained);
+        QVERIFY(retained());
+    }
     void notificationFieldsFollowProviderSwitchAndPersist() {
         QTemporaryDir temp;
         Profile profile(temp.path(), QString(OKWW_SOURCE_ROOT) + "/native/resources/catalog.json");

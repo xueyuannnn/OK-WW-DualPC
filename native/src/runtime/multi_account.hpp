@@ -9,11 +9,14 @@ class AccountCycle {
     void complete(const QString &account);
     bool completed(const QString &account) const;
     std::optional<TextLine> next(const QVector<TextLine> &accounts) const;
-    int count() const { return completed_.size(); }
+    int count() const;
 };
 class MultiAccountDaily {
     TaskContext &c_;
     Navigation navigation_;
+    std::optional<TextLine> rustRun(int method, AccountCycle *cycle = nullptr,
+                                    const std::function<void()> &daily = {},
+                                    QVector<TextLine> *result = nullptr);
     QVector<TextLine> accounts();
     void logout();
     TextLine currentAccount();

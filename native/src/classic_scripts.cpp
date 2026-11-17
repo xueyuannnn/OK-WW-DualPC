@@ -232,6 +232,12 @@ QWidget *Window::scriptsPage() {
     auto title = new QLabel("脚本");
     title->setObjectName("pageTitle");
     layout->addWidget(title);
+    auto progressCard = new QFrame;
+    progressCard->setObjectName("classicCard");
+    auto progressLayout = new QVBoxLayout(progressCard);
+    progressLayout->setContentsMargins(16,12,16,12);
+    progressLayout->addWidget(buildExecutionProgress());
+    layout->addWidget(progressCard);
     auto first = new QHBoxLayout;
     scriptChoice_ = new classic::ComboBox;
     scriptChoice_->setObjectName("scriptChoice");

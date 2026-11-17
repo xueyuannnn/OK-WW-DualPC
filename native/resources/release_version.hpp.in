@@ -1,0 +1,2 @@
+#pragma once
+#define OKWW_RELEASE_VERSION "@OKWW_RELEASE_VERSION@"

@@ -1,6 +1,7 @@
 #include "runtime/input.hpp"
 #include "runtime/vision.hpp"
 #include "backend.hpp"
+#include "backend_capture_fixture.hpp"
 #include "runtime/profile.hpp"
 #include "runtime/task.hpp"
 #include "runtime/combat_vision.hpp"
@@ -20,6 +21,7 @@
 #include <QXmlStreamReader>
 #include <opencv2/imgproc.hpp>
 #include "rotation_replay.hpp"
+#include "controller.hpp"
 #include <QtTest>
 
 using namespace okww;
@@ -59,6 +61,187 @@ class MacroProbe final : public TeamMacro {
 class RuntimeTests : public QObject {
     Q_OBJECT
   private slots:
+    void captureRecoveryStatusRaceRechecksTheArrivingFrame_data() {
+        QTest::addColumn<bool>("duringWait");
+        QTest::newRow("first-read") << false;
+        QTest::newRow("during-wait") << true;
+    }
+    void captureRecoveryStatusRaceRechecksTheArrivingFrame() {
+        QFETCH(bool, duringWait);
+        Harness h;
+        QTemporaryDir directory;
+        Templates templates(QString(OKWW_SOURCE_ROOT)+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),QString(OKWW_SOURCE_ROOT)+"/native/resources/catalog.json");
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        cv::Mat image(4,4,CV_8UC3,cv::Scalar(10,20,30));
+        int reads = 0, statuses = 0;
+        const int missingReads = duringWait ? 2 : 1;
+        TaskContext c(h.execution,input,templates,profile,[&] { return ++reads <= missingReads ? cv::Mat{} : image; },
+                      [](const cv::Mat &,QRect,double){return QVector<TextLine>{};});
+        c.sourceRecovering = [&] { return ++statuses == 1 && duringWait; };
+        c.refresh();
+        QVERIFY(!c.frame.empty());
+        QCOMPARE(reads,missingReads+1);
+        QVERIFY(h.clock.time < .2);
+    }
+    void cardCaptureOutageResumesTheSameDailyTaskAndInput() {
+        Harness h;
+        QTemporaryDir directory;
+        Templates templates(QString(OKWW_SOURCE_ROOT)+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),QString(OKWW_SOURCE_ROOT)+"/native/resources/catalog.json");
+        BackendCaptureFixture fixture;
+        auto &backend = fixture.backend;
+        backend.arm(true);
+        backend.nativeCommand({{"op","key"},{"code",4},{"down",true}});
+        fixture.publish(174.1941);
+        Execution execution(h.gate,h.gate.start(),h.clock,[&] {
+            if(!backend.heartbeat()) fail("Capture jitter must not disarm the daily task");
+        });
+        Input input(h.config,{4,4},false,[&](QJsonObject event) {return backend.nativeCommand(event);},execution);
+        TaskContext c(execution,input,templates,profile,[&] {
+            auto frame = backend.latestFrame();
+            return frame ? decode(*frame) : cv::Mat{};
+        },[](const cv::Mat &,QRect,double){return QVector<TextLine>{};});
+        c.task = "DailyTask2";
+        c.sourceRecovering = [&] {return backend.snapshot()["actual"].toObject()["recovering"].toBool();};
+        h.clock.tick = [&] {if(h.clock.time >= .3) fixture.publish();};
+        c.refresh();
+        QCOMPARE(c.task,QString("DailyTask2"));
+        QVERIFY(!c.frame.empty());
+        QVERIFY(h.clock.time >= .3 && h.clock.time < .5);
+        QVERIFY(backend.snapshot()["box"].toObject()["keys"].toArray().isEmpty());
+        fixture.publish(174.1941);
+        h.clock.tick = [&] {if(h.clock.time >= .6) fixture.publish();};
+        input.keyDown("e");
+        QVERIFY(h.clock.time >= .6 && h.clock.time < .8);
+        QVERIFY(backend.snapshot()["box"].toObject()["keys"].toArray().contains(Input::keyCode("e")));
+        input.keyUp("e");
+        QVERIFY(backend.snapshot()["armed"].toBool());
+        QVERIFY(backend.snapshot()["input_fault"].toObject().isEmpty());
+    }
+    void stopDuringCaptureRecoveryCancelsWithoutSendingMoreActions() {
+        Harness h;
+        QTemporaryDir directory;
+        Templates templates(QString(OKWW_SOURCE_ROOT)+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),QString(OKWW_SOURCE_ROOT)+"/native/resources/catalog.json");
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        input.keyDown("w");
+        TaskContext c(h.execution,input,templates,profile,[] {return cv::Mat{};},
+                      [](const cv::Mat &,QRect,double){return QVector<TextLine>{};});
+        c.sourceRecovering = [] {return true;};
+        h.clock.tick = [&] {if(h.clock.time >= .2) h.gate.stop();};
+        QVERIFY_THROWS_EXCEPTION(Cancelled,c.refresh());
+        QVERIFY(input.idle());
+        QCOMPARE(h.events.last()["op"].toString(),QString("release"));
+        QVERIFY(h.clock.time < .3);
+    }
+    void localRunDialogIsAutomaticallyDismissedBeforeResumingTheOriginalInput() {
+        Harness h;
+        bool dialog = true;
+        int escapes = 0, delivered = 0;
+        Input input(h.config,{1920,1080},true,[&](QJsonObject event) {
+            h.events.append(event);
+            if(event["op"]=="key" && event["code"].toInt()==Input::keyCode("esc")) {
+                if(!event["down"].toBool()) {++escapes; dialog=false;}
+            } else if(event["op"]=="key" && event["down"].toBool()) {
+                if(dialog) throw LocalInputBlocked("运行",LocalInputBlocked::Recovery::DismissRunDialog);
+                ++delivered;
+            }
+            return QJsonObject{};
+        },h.execution);
+        input.key("r");
+        QCOMPARE(escapes,1);
+        QCOMPARE(delivered,1);
+        QVERIFY(input.idle());
+        h.execution.checkpoint();
+    }
+    void desktopCaptureOutageWaitsForFreshVideoAndContinuesTheSameTask() {
+        Harness h;
+        QTemporaryDir directory;
+        Templates templates(QString(OKWW_SOURCE_ROOT)+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),QString(OKWW_SOURCE_ROOT)+"/native/resources/catalog.json");
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        cv::Mat image(1080,1920,CV_8UC3,cv::Scalar(10,20,30));
+        TaskContext c(h.execution,input,templates,profile,[&] {return h.clock.time<.5 ? cv::Mat{} : image;},
+                      [](const cv::Mat &,QRect,double){return QVector<TextLine>{};});
+        c.task="DailyTask2";
+        c.sourceRecovering=[] {return true;};
+        QStringList status;
+        c.info=[&](QString,QString text){status.append(text);};
+        c.refresh();
+        QCOMPARE(c.task,QString("DailyTask2"));
+        QVERIFY(!c.frame.empty());
+        QVERIFY(h.clock.time>=.5 && h.clock.time<1);
+        QVERIFY(status.last().contains("已恢复"));
+        h.execution.checkpoint();
+        for(auto event:h.events)QCOMPARE(event["op"].toString(),QString("release"));
+    }
+    void temporaryInputFocusLossAutomaticallyResumesWithoutAThreadRestart() {
+        Harness h;
+        int attempts=0, delivered=0;
+        QStringList recovery;
+        Input input(h.config,{1920,1080},true,[&](QJsonObject event) {
+            h.events.append(event);
+            if(event["op"]=="key" && event["down"].toBool()) {
+                ++attempts;
+                if(h.clock.time<.4) throw LocalInputBlocked("等待焦点恢复");
+                ++delivered;
+            }
+            return QJsonObject{};
+        },h.execution);
+        input.recovery=[&](QString text){recovery.append(text);};
+        input.key("r");
+        QVERIFY(attempts>1);
+        QCOMPARE(delivered,1);
+        QVERIFY(h.clock.time>=.4 && h.clock.time<1);
+        QVERIFY(recovery.first().contains("自动恢复"));
+        QVERIFY(recovery.last().contains("已恢复"));
+        h.execution.checkpoint();
+        QVERIFY(input.idle());
+    }
+    void stopCancelsAutomaticInputRecoveryAndReleasesHeldControls() {
+        Harness h;
+        h.clock.tick=[&] { if(h.clock.time>.2)h.gate.stop(); };
+        Input input(h.config,{1920,1080},true,[](QJsonObject event) {
+            if(event["op"]=="key" && event["down"].toBool()) throw LocalInputBlocked("等待窗口");
+            return QJsonObject{};
+        },h.execution);
+        QVERIFY_THROWS_EXCEPTION(Cancelled,input.key("e"));
+        QVERIFY(input.idle());
+        QVERIFY(h.clock.time<1);
+    }
+    void workflowPublishesTheWholePlanAndLearnsOnlySuccessfulDurations() {
+        Harness h;
+        QTemporaryDir directory;
+        Templates templates(QString(OKWW_SOURCE_ROOT) + "/assets/coco_annotations.json");
+        Profile profile(directory.path(), QString(OKWW_SOURCE_ROOT) + "/native/resources/catalog.json");
+        Input input(h.config, {1920,1080}, true, h.transport, h.execution);
+        TaskContext context(h.execution,input,templates,profile, [] { return cv::Mat{}; },
+                            [](const cv::Mat &, QRect, double) { return QVector<TextLine>{}; });
+        context.task = "DailyTask2";
+        QJsonObject last;
+        context.progress = [&](QJsonObject patch) { if (patch.contains("flow")) last=patch; };
+        const QJsonArray plan{QJsonObject{{"id","a"},{"name","每日目标"},{"estimate_seconds",100}},
+                              QJsonObject{{"id","b"},{"name","周常"},{"estimate_seconds",200}}};
+        const auto path = directory.filePath("timings.json");
+        context.beginWorkflow(plan,path);
+        QCOMPARE(last["flow"].toArray().size(),2);
+        QCOMPARE(last["flow"].toArray()[1].toObject()["state"].toString(),QString("pending"));
+        context.workflowStep("a","running"); h.clock.time += 42;
+        context.workflowStep("a","completed");
+        context.workflowStep("b","running"); h.clock.time += 20;
+        context.workflowStep("b","failed");
+        const auto saved = readJson(path);
+        QCOMPARE(saved["DailyTask2:a"].toArray().first().toDouble(),42.);
+        QVERIFY(!saved.contains("DailyTask2:b"));
+        context.beginWorkflow(plan,path);
+        QCOMPARE(last["flow"].toArray()[0].toObject()["estimate_seconds"].toDouble(),42.);
+        QCOMPARE(last["flow"].toArray()[0].toObject()["estimate_source"].toString(),QString("history"));
+        QCOMPARE(last["flow"].toArray()[1].toObject()["estimate_seconds"].toDouble(),200.);
+        context.workflowStep("b","skipped");
+        QVERIFY(!readJson(path).contains("DailyTask2:b"));
+        QVERIFY(h.events.isEmpty());
+    }
     void localInputUsesAbsolutePointsAndIgnoresKmboxRelativeCalibration() {
         Harness h;
         h.config.set("kmbox.protocol","sendinput");
@@ -423,6 +606,19 @@ class RuntimeTests : public QObject {
         progress = dailyProgress({{"100/100", {}, 1}}, {{"100/100", {}, 1}});
         QVERIFY(!progress.stamina);
         QVERIFY(!progress.ready());
+        QCOMPARE(progress.points,-1);
+        progress = dailyProgress({}, {{"200", {}, 1}});
+        QCOMPARE(progress.points,200);
+        QVERIFY(progress.ready());
+        progress = dailyProgress({}, {{"0", {}, 1}, {"100", {}, 1}});
+        QCOMPARE(progress.points,-1);
+        progress=dailyProgress({{"获得1个声骸 0/1",{100,200,300,30},1}},{{"80",{},1}});
+        QVERIFY(progress.echoNeeded.value_or(false));
+        progress=dailyProgress({{"吸收声骸",{100,200,200,30},1},{"1/1",{600,200,70,30},1},
+                                {"0/180",{600,280,70,30},1}},{{"80",{},1}});
+        QVERIFY(progress.echoNeeded.has_value()); QVERIFY(!*progress.echoNeeded);
+        progress=dailyProgress({{"Absorb an Echo",{100,200,200,30},1},{"0/1",{600,200,70,30},1}},{{"80",{},1}});
+        QVERIFY(progress.echoNeeded.value_or(false));
         QCOMPARE(dailyDomain({{"Run Tacet or Forgery First", "Forgery First"}}), DomainKind::Forgery);
     }
     void scopedTaskSettingsRestoreAfterExceptions() {
@@ -645,6 +841,12 @@ class RuntimeTests : public QObject {
         host.character = &actor;
         QVERIFY(!actor.liberation());
         QVERIFY(!host.inLiberation);
+        test::RotationReplay blurred({{"ready",QJsonArray{false,false,true}},
+                                      {"animation",true},{"sticky_ready",true}});
+        Character actor3(blurred,state); blurred.character=&actor3;
+        QVERIFY(actor3.liberation());
+        QVERIFY(blurred.now()<105);
+        QVERIFY(!blurred.inLiberation);
         test::RotationReplay interrupted({{"ready", QJsonArray{false, false, true}}, {"stop_at", 100.2}});
         Character actor2(interrupted, state);
         interrupted.character = &actor2;
@@ -933,6 +1135,14 @@ class RuntimeTests : public QObject {
         const auto counted = planStaminaSpend({240, 0, 240}, 60, 60, true);
         QCOMPARE(counted.used, 60);
         QVERIFY(!counted.repeat);
+        const auto single = planStaminaSpend({240,0,240},60,180,true,false);
+        QCOMPARE(single.used,60); QVERIFY(single.repeat);
+        QCOMPARE(dailyStaminaBatch(0,60,240,true),120);
+        QCOMPARE(dailyStaminaBatch(120,60,240,true),60);
+        QCOMPARE(dailyStaminaBatch(0,40,40,true),40);
+        QCOMPARE(dailyStaminaBatch(140,40,240,true),40);
+        QCOMPARE(dailyStaminaBatch(180,60,240,true),0);
+        QCOMPARE(dailyStaminaBatch(0,60,240,false),60);
         const auto reserve = planStaminaSpend({0, 120, 120}, 40, 80, true);
         QCOMPARE(reserve.used, 80);
         QVERIFY(!reserve.repeat);
@@ -1003,6 +1213,9 @@ class RuntimeTests : public QObject {
         QCOMPARE(missed.step(RestartKind::Restart, false, false), RestartAction::Fail);
     }
     void nestSelectionSkipsCompletedAndCachedRows() {
+        const auto partial=nextNestTarget({{"12 ／ 36",{1000,450,100,30},.99}}, {1920,1080},0,{});
+        QVERIFY(partial);
+        QVERIFY(!nextNestTarget({{"36/36",{1000,450,100,30},.99},{"100/24",{1000,650,100,30},.99}}, {1920,1080},0,{}));
         const QVector<TextLine> lines{{"24/24", {1000, 200, 100, 30}, .99},
                                       {"0/8", {1000, 300, 100, 30}, .99},
                                       {"0/36", {1000, 450, 100, 30}, .99},

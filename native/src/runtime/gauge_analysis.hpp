@@ -7,6 +7,8 @@ double gaugeRingRatio(const cv::Mat &image, ColorRange color, double inner, doub
 // Preserve Phoebe's original width test and strict final-segment boundary.
 int phoebeGaugeValue(const cv::Mat &image, ColorRange color, int segments, int minFrequency, int maxFrequency,
                      double minAmplitude);
+int nativeSegmentedGaugeMask(const cv::Mat &mask, int segments, int minFrequency, int maxFrequency,
+                             double minAmplitude);
 std::pair<int, int> stripeRegion(const cv::Mat &gray);
 double stripedGaugeRatio(const cv::Mat &image, ColorRange color);
 double gaugeRoundHalfUp(double value, int decimals);

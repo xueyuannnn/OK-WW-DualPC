@@ -15,6 +15,18 @@ QString normalizeEchoStat(QString property, const QString &value);
 bool echoMergeResultConfirmed(const QVector<TextLine> &lines);
 void awaitEchoMergeResult(TaskContext &context);
 class EchoOperations {
+    friend struct EchoOpsContractAccess;
+    struct OperationRequest {
+        QRect area;
+        QString pattern, category, reason;
+        int count = 0;
+    };
+    struct OperationResult {
+        std::optional<TextLine> text;
+        double value = 0;
+    };
+    OperationResult rustOperation(int method, std::initializer_list<double> args, OperationRequest request);
+
     TaskContext &c_;
     Navigation navigation_;
     QString screenshots_;

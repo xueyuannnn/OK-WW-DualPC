@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
     QApplication::setStyle("Fusion");
     QCoreApplication::setApplicationName("OKWW-DualPC-Native-Dev");
     QGuiApplication::setApplicationDisplayName(product::title);
-    QCoreApplication::setApplicationVersion(product::version);
+    QCoreApplication::setApplicationVersion(product::releaseVersion);
     QCommandLineParser parser;
     parser.addHelpOption();
     parser.addOptions({{"root", "Native resources root", "path"},
@@ -33,6 +33,7 @@ int main(int argc, char **argv) {
         }
         if (root.isEmpty() || !QFile::exists(root + "/assets/coco_annotations.json"))
             fail("缺少原生资源目录");
+        if (update::installationBusy(root)) fail("软件正在安装更新，请稍候再打开。");
         QString data = parser.value("data");
         if (data.isEmpty())
             data = root + "/native-full-data";

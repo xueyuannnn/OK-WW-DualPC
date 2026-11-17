@@ -124,6 +124,10 @@ class Character {
     virtual void send(Skill skill, double after = 0, double interval = -1, double down = .01);
     void record(Skill skill);
     void alertSkillFailed();
+    std::array<double,3> rustRun(rust::RotationMethod method, std::initializer_list<double> args = {},
+                                const QString &key = {}, const std::function<bool()> &condition = {},
+                                const SwitchAction &post = {}, Character **selected = nullptr,
+                                std::span<double> local = {}, Character **related = nullptr);
 
   public:
     CharacterState state;

@@ -130,6 +130,7 @@ Window::Window(QString root, QString data, QString python,
     resize(1250, 860);
     setMinimumSize(1000, 680);
     qApp->installEventFilter(new NoWheel(qApp));
+    updateClient_ = new update::Client(this);
     buildUi();
     if (!draftError.isEmpty()) log("设备配置草稿读取失败，已载入上次应用的配置：" + draftError);
     QIcon icon(root_ + "/icons/icon.png");
@@ -208,8 +209,20 @@ Window::Window(QString root, QString data, QString python,
         workshopTimer_.start();
     }
 #endif
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") != "offscreen") {
+        QTimer::singleShot(8000, this, [this] { checkAppUpdates(false); });
+        auto timer = new QTimer(this);
+        timer->setInterval(6*60*60*1000);
+        connect(timer, &QTimer::timeout, this, [this] { checkAppUpdates(false); });
+        timer->start();
+    }
 }
 Window::~Window() {
+    updateClient_->cancel();
+    if (updatePrepare_ && updatePrepare_->state() != QProcess::NotRunning) {
+        updatePrepare_->kill();
+        updatePrepare_->waitForFinished(2000);
+    }
     closing_ = true;
     deviceAutoSaveReady_ = false;
     deviceSaveTimer_.stop();
@@ -334,6 +347,11 @@ void Window::closeEvent(QCloseEvent *e) {
         return;
     }
 #endif
+    if (!pendingUpdatePlan_.isEmpty() && !launchUpdateInstaller()) {
+        closing_ = false;
+        e->ignore();
+        return;
+    }
     closing_ = true;
     closeRetryTimer_.stop();
     pause();
@@ -390,6 +408,11 @@ QWidget *Window::devicePage() {
     deviceSaveStatus_->setFixedSize(300, 34);
     deviceSaveStatus_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     pageHeader->addWidget(deviceSaveStatus_);
+    retryExecution_ = button("重试任务", [this] { startTask(retryTaskId_); }, this);
+    retryExecution_->setObjectName("retryExecution");
+    retryExecution_->setFixedHeight(34);
+    retryExecution_->hide();
+    pageHeader->addWidget(retryExecution_);
     start_ = button("开始(F9)", [this] { toggleDevices(); }, this);
     start_->setObjectName("primary");
     start_->setProperty("automationControl", true);
@@ -533,7 +556,7 @@ QWidget *Window::devicePage() {
     row->addWidget(deviceChoice_, 1);
     row->addWidget(refresh);
     cap->addLayout(row);
-    captureScanStatus_ = new QLabel("点击“检测设备与参数”，一次读取所有发现设备的分辨率、帧率和格式。");
+    captureScanStatus_ = new QLabel("点击“检测设备与参数”，一次读取所有设备支持的 NV12 分辨率和帧率。");
     captureScanStatus_->setObjectName("captureScanStatus");
     captureScanStatus_->setProperty("caption", true);
     captureScanStatus_->setWordWrap(true);
@@ -546,12 +569,9 @@ QWidget *Window::devicePage() {
     resolution_->setCurrentIndex(0);
     format_ = new classic::ComboBox;
     format_->setObjectName("captureFormat");
-    format_->setPlaceholderText("暂无可用格式");
-    if (deviceDraftConfig_.s("capture.fourcc").isEmpty())
-        format_->addItem("自动 · 驱动协商", "");
-    else
-        format_->addItem(deviceDraftConfig_.s("capture.fourcc"));
+    format_->addItem("NV12", "NV12");
     format_->setCurrentIndex(0);
+    format_->setEnabled(false);
     fps_ = new classic::ComboBox;
     fps_->setObjectName("captureFps");
     fps_->setPlaceholderText("暂无可用帧率");
@@ -569,7 +589,7 @@ QWidget *Window::devicePage() {
         parameters->addLayout(column, 1);
     }
     cap->addLayout(parameters);
-    auto note = new QLabel("列表来自采集卡驱动。运行状态分别显示协商参数和实测收帧率；预览帧率独立设置。");
+    auto note = new QLabel("采集格式固定为 NV12，列表仅显示驱动支持的 NV12 参数。运行状态显示协商参数与实测帧率；预览帧率独立设置。");
     note->setWordWrap(true);
     cap->addWidget(note);
     captureForms_->addWidget(cardCapture);
@@ -727,13 +747,10 @@ QWidget *Window::devicePage() {
     addField(manualForm, "宽度", "capture.width", true, 1, 16384);
     addField(manualForm, "高度", "capture.height", true, 1, 16384);
     addDecimal(manualForm, "请求帧率", "capture.fps", 1, 1000);
-    auto fourcc = qobject_cast<QLineEdit *>(addField(manualForm, "格式 FourCC", "capture.fourcc"));
-    fourcc->setMaxLength(4);
-    fourcc->setPlaceholderText("留空自动，如 NV12");
     for (const auto &key : {"capture.device_name", "capture.device_index", "capture.width", "capture.height",
-                            "capture.fps", "capture.fourcc"})
+                            "capture.fps"})
         settings_[key]->setProperty("manualCaptureField", true);
-    auto manualHint = new QLabel("手动模式按填写值请求；实际运行参数以采集卡驱动协商结果为准。");
+    auto manualHint = new QLabel("手动模式使用 NV12 格式，按填写的分辨率和帧率请求采集；实际参数以驱动协商结果为准。");
     manualHint->setWordWrap(true);
     manualHint->setObjectName("caption");
     manualForm->addRow(manualHint);
@@ -741,7 +758,7 @@ QWidget *Window::devicePage() {
     manual->hide();
     connect(manualCapture_, &QCheckBox::toggled, this, [this, manual](bool enabled) {
         manual->setVisible(enabled);
-        for (auto choice : {deviceChoice_, resolution_, format_, fps_})
+        for (auto choice : {deviceChoice_, resolution_, fps_})
             choice->setEnabled(!enabled);
     });
     auto cropToggle = new QCheckBox("裁剪采集画面");
@@ -1153,7 +1170,9 @@ void Window::scanDevices() {
 }
 void Window::selectCaptureDevice() {
     const auto device = QJsonObject::fromVariantMap(deviceChoice_->currentData().toMap());
-    modes_ = device["modes"].toArray();
+    modes_ = {};
+    for (const auto &mode : device["modes"].toArray())
+        if (mode.toObject()["fourcc"].toString() == "NV12") modes_.append(mode);
     // A saved, not-yet-scanned selection keeps its current manual parameters.
     if (!device.isEmpty() && !device.contains("modes"))
         return;
@@ -1162,10 +1181,9 @@ void Window::selectCaptureDevice() {
     resolution_->clear();
     if (modes_.isEmpty()) {
         QSignalBlocker formatBlock(format_), fpsBlock(fps_);
-        format_->clear();
         fps_->clear();
         captureScanStatus_->setText(device.isEmpty() ? "未检测到视频设备，请检查连接和驱动后重试。"
-            : device["error"].toString().isEmpty() ? "此设备未报告可用参数，可切换设备或使用手动参数。"
+            : device["error"].toString().isEmpty() ? "此设备未报告 NV12 参数，可切换设备或手动输入 NV12 参数。"
                                                   : "此设备参数读取失败：" + device["error"].toString());
         return;
     }
@@ -1180,7 +1198,7 @@ void Window::selectCaptureDevice() {
     }
     resolution_->setCurrentIndex(std::max(0, resolution_->findData(saved)));
     filterModes();
-    captureScanStatus_->setText(QString("已检测 %1 个设备 · 当前设备 %2 组参数 · 切换设备无需再次读取")
+    captureScanStatus_->setText(QString("已检测 %1 个设备 · 当前设备 %2 组 NV12 参数 · 切换设备无需再次读取")
                                    .arg(deviceChoice_->count()).arg(modes_.size()));
 }
 void Window::filterModes() {
@@ -1190,16 +1208,7 @@ void Window::filterModes() {
     auto size = resolution_->currentData().toList();
     if (size.size() != 2)
         return;
-    auto oldFormat = format_->currentText();
     auto oldFps = fps_->currentData();
-    format_->clear();
-    for (auto v : modes_) {
-        auto m = v.toObject();
-        if (m["width"].toInt() == size[0].toInt() && m["height"].toInt() == size[1].toInt() &&
-            format_->findText(m["fourcc"].toString()) < 0)
-            format_->addItem(m["fourcc"].toString());
-    }
-    format_->setCurrentIndex(std::max(0, format_->findText(oldFormat)));
     fps_->clear();
     for (auto v : modes_) {
         auto m = v.toObject();
@@ -1230,12 +1239,10 @@ Config Window::deviceConfiguration(bool requireSelection) const {
     auto size = resolution_->currentData().toList();
     const bool complete = size.size() == 2 && fps_->currentData().isValid() && format_->currentIndex() >= 0;
     if (!local && !manualCapture_->isChecked() && !complete && requireSelection)
-        fail("请选择采集设备及分辨率、图像格式和帧率，或使用手动参数");
+        fail("请选择采集设备及 NV12 分辨率和帧率，或使用手动参数");
     if (!manualCapture_->isChecked() && complete) {
         current.set("capture.width", size[0].toInt());
         current.set("capture.height", size[1].toInt());
-        current.set("capture.fourcc", format_->currentData().isValid() ? format_->currentData().toString()
-                                                                       : format_->currentText());
         current.set("capture.fps", fps_->currentData().toDouble());
     }
     current.set("kmbox.protocol", protocol_->currentData().toString());
@@ -1253,6 +1260,7 @@ Config Window::deviceConfiguration(bool requireSelection) const {
         else if (auto w = qobject_cast<QCheckBox *>(it.value()))
             current.set(it.key(), w->isChecked());
     }
+    if (!local) current.set("capture.fourcc", "NV12");
     const auto inference = inferenceResolution_->currentData().toSize();
     current.set("capture.output_width", inference.width());
     current.set("capture.output_height", inference.height());
@@ -1390,6 +1398,7 @@ void Window::stopDevices() {
         [this](auto) {
             stoppingDevices_ = false;
             devicesRunning_ = false;
+            executionError_.clear();
             log("已停止自动任务并断开采集卡与盒子连接。");
             if (taskStatus_)
                 taskStatus_->setText("已停止 · 设备已断开");
@@ -1402,12 +1411,19 @@ void Window::updateStartControl() {
     start_->setProperty("deviceBusy", busy_);
     start_->setProperty("devicesRunning", devicesRunning_);
     const bool stopping = stopRequested_ || stoppingDevices_;
+    if (retryExecution_) {
+        retryExecution_->setVisible(!executionError_.isEmpty());
+        retryExecution_->setText(retryTaskId_.isEmpty() ? "恢复实时触发" : "重试任务");
+        retryExecution_->setEnabled(!stopping && !busy_ && !pendingStart_);
+        retryExecution_->setToolTip("设备正常时复用现有连接，重新执行上次任务；无需先终止线程。");
+    }
     if (auto test = findChild<QPushButton *>("boxTest"))
         test->setEnabled(!busy_ && !pendingStart_ && !stopping && devicesRunning_ &&
                          test->property("boxConnected").toBool());
     if (auto action = findChild<QPushButton *>("refreshDevices"))
         action->setEnabled(!busy_ && !pendingStart_ && !stopping && !devicesRunning_);
     start_->setText(stopping ? "正在停止…" : pendingStart_ ? "取消启动"
+                             : devicesRunning_ && !executionError_.isEmpty() ? "终止线程"
                              : devicesRunning_ || automation_ ? "停止" : "开始(" + hotkey_ + ")");
     classic::setFluentIcon(start_, pendingStart_ ? "Cancel" : devicesRunning_ || automation_ ? "Stop" : "Play", true);
     start_->setEnabled(!stopping && (bool(pendingStart_) || !busy_));
@@ -1433,7 +1449,14 @@ void Window::showExecutionError(const QString &error, QJsonObject event) {
     pendingStart_.reset();
     startupTimer_.stop();
     pauseExecution();
+    executionError_ = error;
+    retryTaskId_ = event["task"].toString(currentTask_);
+    if (taskStatus_) taskStatus_->setText("异常已暂停 · 可重试任务");
+    updateStartControl();
+    refreshTaskInfo();
     log(error);
+    banner_->setText("异常已暂停：" + error);
+    banner_->show();
     if (closing_) return;
 #ifdef OKWW_NATIVE_ONLY
     if (event["diagnostic_report"].toString().isEmpty()) {
@@ -1456,11 +1479,15 @@ void Window::showExecutionError(const QString &error, QJsonObject event) {
     runtimeErrorDialog_ = dialog;
     dialog->setObjectName("runtimeErrorDialog");
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setInformativeText("已释放键鼠按键，采集预览保持连接。请检查原因后手动开始；关闭提示不会恢复任务。" +
+    dialog->setInformativeText("自动任务已暂停并释放按键，采集预览保持连接。修正问题后可点“重试任务”，无需先终止线程；关闭提示不会恢复任务。" +
         (event.contains("diagnostic_write_error") ? "\n诊断保存失败：" + event["diagnostic_write_error"].toString()
          : "\n诊断记录：" + QDir::toNativeSeparators(event["diagnostic_report"].toString())));
     dialog->setDetailedText(details);
     dialog->button(QMessageBox::Ok)->setText("知道了");
+    dialog->setDefaultButton(QMessageBox::Ok);
+    auto retry = dialog->addButton("重试任务", QMessageBox::AcceptRole);
+    retry->setObjectName("retryFailedTask");
+    connect(retry, &QPushButton::clicked, this, [this] { startTask(retryTaskId_); });
     auto copy = dialog->addButton("复制详情", QMessageBox::ActionRole);
     connect(copy, &QPushButton::clicked, dialog, [details] { QApplication::clipboard()->setText(details); });
     const auto folder = event["diagnostic_directory"].toString();
@@ -1587,10 +1614,14 @@ void Window::continueStart() {
           {"limit_seconds", request.limitSeconds}},
          [this, id = request.task](auto) {
              automation_ = true;
+             executionError_.clear();
+             retryTaskId_.clear();
+             banner_->hide();
              taskStopped_ = false;
              taskRunClock_.restart();
              taskInfoElapsedSeconds_ = 0;
              combatInfo_ = {};
+             taskProgress_ = {};
              updateStartControl();
              emit taskStartAccepted(id);
          },
@@ -1708,6 +1739,14 @@ void Window::handleEngineMessage(const QJsonObject &o) {
         log(o["text"].toString());
     } else if (event == "task_done") {
         log("任务执行完毕：" + o["task"].toString());
+        if (taskProgress_["task"] != o["task"]) taskProgress_ = {};
+        taskProgress_["task"] = o["task"];
+        taskProgress_["stage"] = "上次任务已完成";
+        taskProgress_["finished"] = true;
+        taskProgress_["current"] = 1;
+        taskProgress_["total"] = 1;
+        taskProgress_["unit"] = "项任务";
+        refreshTaskInfo();
     } else if (event == "notification") {
         if (tray_)
             tray_->showMessage(o["title"].toString(), o["text"].toString(),
@@ -1719,6 +1758,19 @@ void Window::handleEngineMessage(const QJsonObject &o) {
         QTimer::singleShot(0, this, &QWidget::close);
     } else if (event == "error") {
         showExecutionError(o["error"].toString(), o);
+    } else if (event == "task_progress") {
+        const auto progress = o["data"].toObject();
+        bool matches = progress["task"] == currentTask_;
+        if (currentTask_.isEmpty()) {
+            matches=false;
+            for (auto entry:catalog_["tasks"].toArray())
+                if (entry.toObject()["id"]==progress["task"] && entry.toObject()["trigger"].toBool()) matches=true;
+        }
+        if (automation_ && matches && !(currentTask_.isEmpty() && taskProgress_["finished"].toBool() &&
+                                       !taskProgress_["flow"].toArray().isEmpty())) {
+            taskProgress_ = progress;
+            refreshTaskInfo();
+        }
     } else if (event == "combat_info") {
         combatInfo_ = o["data"].toObject();
         refreshTaskInfo();
@@ -1734,6 +1786,7 @@ void Window::handleEngineMessage(const QJsonObject &o) {
         taskStatus_->setText(
             stopRequested_ || stoppingDevices_ ? "正在停止并断开设备…"
             : pendingStart_ ? "正在准备设备与任务… 可取消"
+            : !executionError_.isEmpty() ? "异常已暂停 · 修正问题后可直接重试任务"
             : automation_
                 ? "正在运行：" + (s["current"].toString().isEmpty() ? "实时触发" : s["current"].toString())
                 : devicesRunning_ && taskStopped_ ? "当前任务已停止 · 设备保持连接"
@@ -1748,10 +1801,6 @@ void Window::handleEngineMessage(const QJsonObject &o) {
             log(o["error"].toString());
             if (failed)
                 failed(o["error"].toString());
-            try {
-                backend_.arm(false);
-            } catch (...) {
-            }
         } else if (cb)
             cb(o["data"].toObject());
     }
@@ -1801,6 +1850,7 @@ void Window::updateStatus() {
                                                             : "点击右上角“开始”一键连接并运行，无需单独启动线程。");
     connectionTaskStatus_->setText(
         pendingStart_ ? "正在准备设备与任务… 可点击“取消启动”。"
+        : !executionError_.isEmpty() ? "异常已暂停 · 设备保持连接。修正问题后点击“重试任务”，无需终止线程。"
         : automation_ ? "自动任务正在运行。"
         : running && taskStopped_ ? "当前任务已停止，设备保持连接。可开始新任务，或点击右上角“停止”释放设备。"
         : running ? "自动任务已暂停，设备保持连接。按快捷键继续，或点击右上角“停止”释放设备。"
@@ -2281,7 +2331,7 @@ void Window::showTeam() {
         teamStatus_->setText("当前使用：内置连招");
     if (t["python"].toBool())
         teamStatus_->setText(mode == "import" ? "当前使用：Python 工坊连招"
-                                              : "当前使用：内置 C++ 连招（工坊代码已保留）");
+                                              : "当前使用：内置 Rust 连招（工坊代码已保留）");
     if (mode == "import" && t["native"].toBool() && !t["available"].toBool())
         teamStatus_->setText(teamStatus_->text() + "\n" + t["error"].toString());
     teamStatus_->setWordWrap(true);
@@ -2396,7 +2446,7 @@ void Window::smoke(const QString &report, bool integration) {
             pythonLoaded |=
                 GetModuleHandleW(reinterpret_cast<LPCWSTR>(QString("python3%1.dll").arg(minor).utf16())) !=
                 nullptr;
-        result["execution_engine"] = "C++ in-process";
+        result["execution_engine"] = "Rust in-process / Qt frontend";
         result["python_loaded"] = pythonLoaded;
         bool importsValid = true;
         QJsonArray nativeTeams;

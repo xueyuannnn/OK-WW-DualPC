@@ -7,6 +7,8 @@ class TemplateStore {
     QString directory_;
     QJsonObject document() const;
     QString imagePath(const QString &name) const;
+    QJsonObject rustStore(int method, int image = 0, const QJsonArray &regions = {}, QString path = {},
+                          QString enumFile = {}, const QImage *inputImage = nullptr) const;
 
   public:
     explicit TemplateStore(QString directory) : directory_(std::move(directory)) {}

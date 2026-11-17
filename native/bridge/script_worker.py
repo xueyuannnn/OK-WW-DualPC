@@ -2,12 +2,36 @@
 from __future__ import annotations
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import sys
 import threading
 import time
 import traceback
+
+
+def progress_payload(key, value):
+    """Opt-in progress metadata; existing info_set calls retain their behavior."""
+    if str(key).casefold() not in {'progress', '运行进度', '任务进度', '进度'}:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = {'current': value, 'total': 100, 'unit': '%'}
+    if not isinstance(value, dict):
+        return None
+    current, total = value.get('current', -1), value.get('total', -1)
+    if (isinstance(current, bool) or isinstance(total, bool) or
+            not isinstance(current, (int, float)) or not isinstance(total, (int, float)) or
+            current < 0 or total <= 0):
+        return None
+    try:
+        finite = math.isfinite(current) and math.isfinite(total)
+    except OverflowError:
+        finite = False
+    if not finite:
+        return None
+    return dict(stage=str(value.get('stage', '执行脚本'))[:160], current=current, total=total,
+                unit=str(value.get('unit', ''))[:16], detail=str(value.get('detail', ''))[:500])
 
 
 def create_runtime(root, data, channel):
@@ -113,7 +137,11 @@ def run_script(runtime, data, request, channel):
     original_info = task.info_set
     def info(key, value):
         original_info(key, value)
-        channel.request('script_info', key=str(key), value=str(value))
+        progress = progress_payload(key, value)
+        if progress is not None:
+            channel.request('script_progress', **progress)
+        else:
+            channel.request('script_info', key=str(key), value=str(value))
     task.info_set = info
     original_run_task = task.run_task_by_class
     def run_task(cls):

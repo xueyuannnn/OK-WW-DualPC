@@ -1,4 +1,5 @@
 #include "instance_flow.hpp"
+#include "workflow_abi.hpp"
 namespace okww::runtime {
 namespace {
 QString clean(QString text) { return text.remove(QRegularExpression("\\s+")); }
@@ -7,179 +8,401 @@ bool matches(const QString &pattern, const QString &text) {
 }
 QString combine(const QVector<TextLine> &lines) {
     QString value;
-    for (const auto &line : lines)
-        value += clean(line.text);
+    rust::workflowRun(rust::WorkflowMethod::CombineDialog, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::DialogLineCount: {
+                              out[0] = double(lines.size());
+                              break;
+                          }
+                          case rust::WorkflowOp::AppendCleanLine: {
+                              value += clean(lines.at(int(a[0])).text);
+                              break;
+                          }
+                          default:
+                              fail("Rust CombineDialog 副本界面宿主操作无效");
+                          }
+                      });
     return value;
 }
 std::optional<TextLine> exact(const QVector<TextLine> &lines, const QString &pattern) {
-    for (const auto &line : lines)
-        if (matches(pattern, clean(line.text)))
-            return line;
-    return {};
+    std::optional<TextLine> selected;
+    rust::workflowRun(rust::WorkflowMethod::ExactDialog, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::DialogLineCount: {
+                              out[0] = double(lines.size());
+                              break;
+                          }
+                          case rust::WorkflowOp::ExactLineMatch: {
+                              out[0] = matches(pattern, clean(lines.at(int(a[0])).text));
+                              break;
+                          }
+                          case rust::WorkflowOp::StoreSelectedLine: {
+                              selected = lines.at(int(a[0]));
+                              break;
+                          }
+                          default:
+                              fail("Rust ExactDialog 副本界面宿主操作无效");
+                          }
+                      });
+    return selected;
 }
 } // namespace
 RestartDialog restartDialog(const QVector<TextLine> &lines) {
-    const auto all = combine(lines);
-    const auto cancel = exact(lines, "^(?:取消|cancel)$");
-    if (matches("结晶波片|結晶波片|体力|體力|领取奖励|領取獎勵|领取次数|領取次數|waveplate|claimreward|"
-                "claimlimit",
-                all) &&
-        (matches("是否|确定|確定|确认|確認|sure|confirm", all) || cancel))
-        return {RestartKind::Resource, cancel};
-    if (auto button =
-            exact(lines,
-                  "^(?:重新挑战|再次挑战|重新挑戰|再次挑戰|challengeagain|retrychallenge|restartchallenge)$"))
-        return {RestartKind::Restart, button};
-    if (matches("重新挑战|再次挑战|重新挑戰|再次挑戰|challengeagain|restartchallenge", all) &&
-        matches("是否|确定|確定|确认|確認|sure|confirm", all))
-        if (auto button = exact(lines, "^(?:确认|确定|確認|確定|confirm)$"))
-            return {RestartKind::Confirm, button};
-    return {};
+    QString all;
+    std::optional<TextLine> cancel, button;
+    const auto result = rust::workflowRun(
+        rust::WorkflowMethod::RestartDialog, {}, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::JoinDialog: {
+                all = combine(lines);
+                break;
+            }
+            case rust::WorkflowOp::FindCancelLine: {
+                cancel = exact(lines, "^(?:取消|cancel)$");
+                break;
+            }
+            case rust::WorkflowOp::DialogResource: {
+                out[0] = matches("结晶波片|結晶波片|体力|體力|领取奖励|領取獎勵|领取次数|領取次數|waveplate|"
+                                 "claimreward|claimlimit",
+                                 all);
+                break;
+            }
+            case rust::WorkflowOp::DialogConfirm: {
+                out[0] = matches("是否|确定|確定|确认|確認|sure|confirm", all);
+                break;
+            }
+            case rust::WorkflowOp::CancelLineExists: {
+                out[0] = cancel.has_value();
+                break;
+            }
+            case rust::WorkflowOp::AdoptCancelLine: {
+                button = cancel;
+                break;
+            }
+            case rust::WorkflowOp::FindRestartLine: {
+                button = exact(lines, "^(?:重新挑战|再次挑战|重新挑戰|再次挑戰|challengeagain|retrychallenge|"
+                                      "restartchallenge)$");
+                out[0] = button.has_value();
+                break;
+            }
+            case rust::WorkflowOp::DialogRestart: {
+                out[0] = matches("重新挑战|再次挑战|重新挑戰|再次挑戰|challengeagain|restartchallenge", all);
+                break;
+            }
+            case rust::WorkflowOp::FindConfirmLine: {
+                button = exact(lines, "^(?:确认|确定|確認|確定|confirm)$");
+                out[0] = button.has_value();
+                break;
+            }
+            default:
+                fail("Rust RestartDialog 副本界面宿主操作无效");
+            }
+        });
+    return {RestartKind(int(result[0])), button};
 }
 bool isNestExitText(QString text) {
-    return matches("^(?:F[:：]?)?(?:(?:离开|離開|退出)(?:当前|當前)?(?:副本|秘境|挑战|挑戰)|(?:leave|exit)(?:"
-                   "domain|instance|challenge))$",
-                   clean(text));
+    return rust::workflowRun(rust::WorkflowMethod::NestExitText, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::MatchExitText: {
+                                     out[0] = matches(
+                                         "^(?:F[:：]?)?(?:(?:离开|離開|退出)(?:当前|當前)?(?:副本|秘境|挑战|"
+                                         "挑戰)|(?:leave|exit)(?:domain|instance|challenge))$",
+                                         clean(text));
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust NestExitText 副本界面宿主操作无效");
+                                 }
+                             })[0] != 0;
 }
 bool isNestCompleteText(QString text) {
-    return matches("(?:梦魔|夢魔|梦魇|夢魘).*(?:已被除|已破除|已净化|已淨化)|(?:nightmare|nest).*(?:purified|"
-                   "cleared|defeated)",
-                   clean(text));
+    return rust::workflowRun(rust::WorkflowMethod::NestCompleteText, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::MatchCompleteText: {
+                                     out[0] =
+                                         matches("(?:梦魔|夢魔|梦魇|夢魘).*(?:已被除|已破除|已净化|已淨化)|(?"
+                                                 ":nightmare|nest).*(?:purified|cleared|defeated)",
+                                                 clean(text));
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust NestCompleteText 副本界面宿主操作无效");
+                                 }
+                             })[0] != 0;
 }
 bool nestExitContext(const QVector<TextLine> &lines) {
-    const auto all = combine(lines);
-    if (!matches("(?:离开|離開|退出).{0,20}(?:副本|秘境|挑战|挑戰)|(?:leave|exit).{0,20}(?:domain|instance|"
-                 "challenge)",
-                 all) ||
-        !matches("是否|确定|確定|确认|確認|进度|進度|sure|progress", all) ||
-        matches("消耗|结晶波片|結晶波片|贝币|貝幣|星声|星聲|重构|重構|复苏|復甦|购买|購買|purchase|waveplate|"
-                "revive",
-                all))
-        return false;
-    return true;
+    QString all;
+    return rust::workflowRun(rust::WorkflowMethod::NestExitContext, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::JoinDialog: {
+                                     all = combine(lines);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::DialogExit: {
+                                     out[0] = matches("(?:离开|離開|退出).{0,20}(?:副本|秘境|挑战|挑戰)|(?:"
+                                                      "leave|exit).{0,20}(?:domain|instance|challenge)",
+                                                      all);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::DialogExitConfirm: {
+                                     out[0] =
+                                         matches("是否|确定|確定|确认|確認|进度|進度|sure|progress", all);
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::DialogForbidden: {
+                                     out[0] = matches("消耗|结晶波片|結晶波片|贝币|貝幣|星声|星聲|重构|重構|"
+                                                      "复苏|復甦|购买|購買|purchase|waveplate|revive",
+                                                      all);
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust NestExitContext 副本界面宿主操作无效");
+                                 }
+                             })[0] != 0;
 }
 std::optional<TextLine> nestExitConfirmation(const QVector<TextLine> &lines, int width) {
-    if (!nestExitContext(lines))
-        return {};
     std::optional<TextLine> selected;
-    for (const auto &line : lines)
-        if (matches("^(?:确认|確認|确定|確定|离开|離開|退出|confirm|leave|exit)$", clean(line.text)) &&
-            line.center().x() > width * .5 && (!selected || line.box.x() > selected->box.x()))
-            selected = line;
+    const std::array args{double(width)};
+    rust::workflowRun(rust::WorkflowMethod::NestExitConfirmation, args,
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::ExitContext: {
+                              out[0] = nestExitContext(lines);
+                              break;
+                          }
+                          case rust::WorkflowOp::DialogLineCount: {
+                              out[0] = double(lines.size());
+                              break;
+                          }
+                          case rust::WorkflowOp::IsExitConfirmLine: {
+                              out[0] = matches("^(?:确认|確認|确定|確定|离开|離開|退出|confirm|leave|exit)$",
+                                               clean(lines.at(int(a[0])).text));
+                              break;
+                          }
+                          case rust::WorkflowOp::DialogCenterX: {
+                              out[0] = lines.at(int(a[0])).center().x();
+                              break;
+                          }
+                          case rust::WorkflowOp::SelectedLineExists: {
+                              out[0] = selected.has_value();
+                              break;
+                          }
+                          case rust::WorkflowOp::DialogLineX: {
+                              out[0] = lines.at(int(a[0])).box.x();
+                              break;
+                          }
+                          case rust::WorkflowOp::SelectedLineX: {
+                              out[0] = selected->box.x();
+                              break;
+                          }
+                          case rust::WorkflowOp::StoreSelectedLine: {
+                              selected = lines.at(int(a[0]));
+                              break;
+                          }
+                          default:
+                              fail("Rust NestExitConfirmation 副本界面宿主操作无效");
+                          }
+                      });
     return selected;
 }
 RestartAction RestartTracker::step(RestartKind kind, bool hud, bool realm) {
-    if (kind != RestartKind::None) {
-        if (requested_ && kind == RestartKind::Restart && pending_ < 4) {
-            ++pending_;
-            return RestartAction::Wait;
-        }
-        if (++actions_[int(kind) - 1] > 3)
-            return RestartAction::Fail;
-        if (kind == RestartKind::Resource) {
-            requested_ = false;
-            loading_ = false;
-        } else {
-            requested_ = true;
-            pending_ = 0;
-        }
-        return RestartAction::Click;
-    }
-    if (requested_) {
-        if (!hud)
-            loading_ = true;
-        else if (loading_ && realm)
-            return RestartAction::Complete;
-    } else if (hud) {
-        if (++actions_[3] > 3)
-            return RestartAction::Fail;
-        return RestartAction::Menu;
-    }
-    return RestartAction::Observe;
+    return RestartAction(rust::okww_rs_restart_step(&state_, int(kind), hud, realm));
 }
+
 void restartBossDomain(TaskContext &c) {
     Navigation navigation(c);
-    RestartTracker tracker;
-    for (int i = 0; i < 120; ++i) {
-        c.refresh();
-        const auto dialog = restartDialog(c.text(.16, .2, .86, .82, .7));
-        const bool hud = c.inTeam();
-        const auto action = tracker.step(dialog.kind, hud, hud && navigation.inRealm());
-        if (action == RestartAction::Complete) {
-            if (c.info)
-                c.info("再次挑战", "下一轮副本已确认加载完成");
-            return;
-        }
-        if (action == RestartAction::Fail)
-            break;
-        if (action == RestartAction::Click) {
-            if (dialog.button)
-                c.click(*dialog.button, dialog.kind == RestartKind::Resource ? .3 : 0);
-            else
-                c.key("esc", .3);
-            if (dialog.kind != RestartKind::Resource)
-                continue;
-        } else if (action == RestartAction::Menu)
-            c.key("esc", .5);
-        c.sleep(.5);
-    }
-    throw NavigationFailure("再次挑战未完成：尚未确认下一轮副本加载");
+    RestartDialog dialog;
+    rust::workflowRun(rust::WorkflowMethod::RestartBoss, {},
+                      [&](rust::WorkflowOp op, const double *a, double *out) {
+                          switch (op) {
+                          case rust::WorkflowOp::Refresh: {
+                              c.refresh();
+                              break;
+                          }
+                          case rust::WorkflowOp::ReadRestartDialog: {
+                              dialog = restartDialog(c.text(.16, .2, .86, .82, .7));
+                              out[0] = int(dialog.kind);
+                              break;
+                          }
+                          case rust::WorkflowOp::InTeam: {
+                              out[0] = c.inTeam();
+                              break;
+                          }
+                          case rust::WorkflowOp::NavInRealm: {
+                              out[0] = navigation.inRealm();
+                              break;
+                          }
+                          case rust::WorkflowOp::HasInfo: {
+                              out[0] = bool(c.info);
+                              break;
+                          }
+                          case rust::WorkflowOp::RestartCompleteInfo: {
+                              c.info("再次挑战", "下一轮副本已确认加载完成");
+                              break;
+                          }
+                          case rust::WorkflowOp::RestartButtonExists: {
+                              out[0] = dialog.button.has_value();
+                              break;
+                          }
+                          case rust::WorkflowOp::ClickRestartButton: {
+                              c.click(*dialog.button, a[0]);
+                              break;
+                          }
+                          case rust::WorkflowOp::Key: {
+                              c.key("esc", a[1]);
+                              break;
+                          }
+                          case rust::WorkflowOp::Sleep: {
+                              c.sleep(a[0]);
+                              break;
+                          }
+                          case rust::WorkflowOp::Throw: {
+                              throw NavigationFailure("再次挑战未完成：尚未确认下一轮副本加载");
+                              break;
+                          }
+                          default:
+                              fail("Rust RestartBoss 副本界面宿主操作无效");
+                          }
+                      });
 }
 bool completedNest(TaskContext &c) {
-    for (const auto &line : c.text(.015, .15, .38, .38, .7))
-        if (isNestCompleteText(line.text))
-            return true;
-    return false;
+    QVector<TextLine> lines;
+    return rust::workflowRun(rust::WorkflowMethod::CompletedNest, {},
+                             [&](rust::WorkflowOp op, const double *a, double *out) {
+                                 switch (op) {
+                                 case rust::WorkflowOp::ReadCompleteText: {
+                                     lines = c.text(.015, .15, .38, .38, .7);
+                                     out[0] = double(lines.size());
+                                     break;
+                                 }
+                                 case rust::WorkflowOp::LineIsComplete: {
+                                     out[0] = isNestCompleteText(lines.at(int(a[0])).text);
+                                     break;
+                                 }
+                                 default:
+                                     fail("Rust CompletedNest 副本界面宿主操作无效");
+                                 }
+                             })[0] != 0;
 }
 void leaveNest(TaskContext &c, bool sendEscape) {
     Navigation navigation(c);
-    const auto outside = [&] { return navigation.inWorld() && !completedNest(c); };
-    if (outside())
-        return;
-    bool escape = !sendEscape;
-    for (int i = 0; i < 4; ++i) {
-        c.refresh();
-        if (outside())
-            return;
-        const auto dialogText = c.text(.2, .25, .82, .78, .7);
-        auto button = nestExitConfirmation(dialogText, c.frame.cols);
-        if (!button && nestExitContext(dialogText))
-            if (auto feature =
-                    c.findAny({"confirm_btn_hcenter_vcenter", "confirm_btn_highlight_hcenter_vcenter"},
-                              {.threshold = .6}))
-                button = TextLine{feature->name, feature->box, feature->confidence};
-        if (button)
-            c.click(*button, 1);
-        else {
-            bool prompt = false;
-            if (c.find("pick_up_f_hcenter_vcenter", {.threshold = .7, .search = fSearchBox(c)}))
-                for (const auto &line : c.text(.59, .34, .94, .67, .7))
-                    prompt |= isNestExitText(line.text);
-            if (prompt)
-                c.key("f", 1);
-            else {
-                std::optional<TextLine> exit;
-                for (const auto &line : c.text(.04, .18, .96, .92, .7))
-                    if (isNestExitText(line.text)) {
-                        exit = line;
-                        break;
-                    }
-                if (exit)
-                    c.click(*exit, 1);
-                else {
-                    if (c.inTeam() && !escape) {
-                        c.key("esc", 1);
-                        escape = true;
-                    } else
-                        c.sleep(1);
-                    continue;
-                }
+    QVector<TextLine> lines, dialogText;
+    std::optional<TextLine> button;
+    std::optional<Match> feature;
+    const std::array args{double(sendEscape)};
+    rust::workflowRun(
+        rust::WorkflowMethod::LeaveNest, args, [&](rust::WorkflowOp op, const double *a, double *out) {
+            switch (op) {
+            case rust::WorkflowOp::Now: {
+                out[0] = c.execution.now();
+                break;
             }
-        }
-        if (c.wait(outside, 4))
-            return;
-    }
-    if (!c.wait(outside, 45))
-        throw NavigationFailure("巢穴退出未完成：尚未确认回到大世界");
+            case rust::WorkflowOp::Checkpoint: {
+                c.execution.checkpoint();
+                break;
+            }
+            case rust::WorkflowOp::ExecutionWait: {
+                c.execution.wait(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::InvalidCondition: {
+                fail("等待条件参数无效");
+                break;
+            }
+            case rust::WorkflowOp::Refresh: {
+                c.refresh();
+                break;
+            }
+            case rust::WorkflowOp::NavInWorld: {
+                out[0] = navigation.inWorld();
+                break;
+            }
+            case rust::WorkflowOp::ReadCompleteText: {
+                lines = c.text(.015, .15, .38, .38, .7);
+                out[0] = double(lines.size());
+                break;
+            }
+            case rust::WorkflowOp::LineIsComplete: {
+                out[0] = isNestCompleteText(lines.at(int(a[0])).text);
+                break;
+            }
+            case rust::WorkflowOp::ReadNestExitDialog: {
+                dialogText = c.text(.2, .25, .82, .78, .7);
+                break;
+            }
+            case rust::WorkflowOp::ReadExitConfirmation: {
+                button = nestExitConfirmation(dialogText, c.frame.cols);
+                break;
+            }
+            case rust::WorkflowOp::ExitButtonExists: {
+                out[0] = button.has_value();
+                break;
+            }
+            case rust::WorkflowOp::ReadExitContext: {
+                out[0] = nestExitContext(dialogText);
+                break;
+            }
+            case rust::WorkflowOp::FindNestConfirmFeature: {
+                feature = c.findAny({"confirm_btn_hcenter_vcenter", "confirm_btn_highlight_hcenter_vcenter"},
+                                    {.threshold = a[0]});
+                out[0] = feature.has_value();
+                break;
+            }
+            case rust::WorkflowOp::FeatureAsExitButton: {
+                button = TextLine{feature->name, feature->box, feature->confidence};
+                break;
+            }
+            case rust::WorkflowOp::ClickExitButton: {
+                c.click(*button, a[0]);
+                break;
+            }
+            case rust::WorkflowOp::FindExitPrompt: {
+                out[0] =
+                    bool(c.find("pick_up_f_hcenter_vcenter", {.threshold = a[0], .search = fSearchBox(c)}));
+                break;
+            }
+            case rust::WorkflowOp::ReadExitPromptText: {
+                lines = c.text(.59, .34, .94, .67, .7);
+                out[0] = double(lines.size());
+                break;
+            }
+            case rust::WorkflowOp::LineIsExit: {
+                out[0] = isNestExitText(lines.at(int(a[0])).text);
+                break;
+            }
+            case rust::WorkflowOp::Key: {
+                c.key(a[0] == 6 ? "f" : "esc", a[1]);
+                break;
+            }
+            case rust::WorkflowOp::ReadNestExitLines: {
+                lines = c.text(.04, .18, .96, .92, .7);
+                out[0] = double(lines.size());
+                break;
+            }
+            case rust::WorkflowOp::SelectNestExitLine: {
+                button = lines.at(int(a[0]));
+                break;
+            }
+            case rust::WorkflowOp::InTeam: {
+                out[0] = c.inTeam();
+                break;
+            }
+            case rust::WorkflowOp::Sleep: {
+                c.sleep(a[0]);
+                break;
+            }
+            case rust::WorkflowOp::Throw: {
+                throw NavigationFailure("巢穴退出未完成：尚未确认回到大世界");
+                break;
+            }
+            default:
+                fail("Rust LeaveNest 副本界面宿主操作无效");
+            }
+        });
 }
 } // namespace okww::runtime

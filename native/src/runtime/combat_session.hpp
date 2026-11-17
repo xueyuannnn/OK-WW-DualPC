@@ -1,5 +1,6 @@
 #pragma once
 #include "combat_vision.hpp"
+#include "session_abi.hpp"
 #include "team_store.hpp"
 namespace okww::runtime {
 class CharacterDead final : public CombatEnded {
@@ -57,6 +58,27 @@ class CombatSession final : public CombatHost {
     bool combatActive();
     void resetCombat();
     void performCurrent();
+    void rustRecover(rust::SessionMethod, bool realmEntryAtHealPoint,
+                     const std::function<void()> &custom = {});
+    bool rustAccess(rust::SessionOp, const double *, double *, uint64_t &revision, Character *&actor,
+                    const std::exception_ptr &error);
+    template <class Action>
+    double rustRun(rust::SessionMethod method, std::span<const double> args, Action &&action) {
+        uint64_t revision = 0;
+        Character *actor = nullptr;
+        return rust::sessionRun(
+            method, args,
+            [&](rust::SessionOp op, const double *a, double *out, const std::exception_ptr &error) {
+                if (!rustAccess(op, a, out, revision, actor, error))
+                    action(op, a, out, error);
+            });
+    }
+    double rustRun(rust::SessionMethod method, std::span<const double> args = {}) {
+        return rustRun(method, args,
+                       [](rust::SessionOp, const double *, double *, const std::exception_ptr &) {
+                           fail("Rust 战斗宿主操作无效");
+                       });
+    }
 
   public:
     CombatSession(TaskContext &context, const QString &resources, const QString &profileDirectory,
@@ -75,24 +97,10 @@ class CombatSession final : public CombatHost {
     void sleep(double seconds) override;
     void nextFrame() override;
     int partyCount() override { return vision_.party().size; }
-    void refreshObservation() override {
-        context_.refresh();
-        watchdog();
-    }
+    void refreshObservation() override;
     void preciseWait(double seconds) override { context_.execution.wait(seconds); }
-    void workshopCheckpoint() override {
-        context_.execution.checkpoint();
-        if (lastWorkshopObservation_ < 0 || now() - lastWorkshopObservation_ >= .1) {
-            lastWorkshopObservation_ = now();
-            refreshObservation();
-        }
-    }
-    QJsonObject workshopTaskConfig() const override {
-        auto config = context_.profile.group(context_.task);
-        for (auto it = context_.taskOverrides.begin(); it != context_.taskOverrides.end(); ++it)
-            config[it.key()] = it.value();
-        return config;
-    }
+    void workshopCheckpoint() override;
+    QJsonObject workshopTaskConfig() const override;
     bool combatEngaged() const override { return engaged_; }
     void rawTap(const QString &key, double hold) override { context_.input.key(key, hold); }
     void rawClick(const QString &button, double hold) override { context_.input.click({}, hold, button); }
@@ -150,9 +158,7 @@ class CombatSession final : public CombatHost {
     QJsonValue characterSetting(const QString &name, QJsonValue fallback = {}) override {
         return context_.profile.value("Character Config", name, fallback);
     }
-    QString targetName() const override {
-        return context_.frame.cols == 1600 ? "has_target_169" : "has_target";
-    }
+    QString targetName() const override;
     int partyIndex() override { return vision_.party().current; }
     QString taskId() const override { return context_.task; }
     cv::Mat imageRegion(QSize reference, QRect area, bool hc = true) override;
@@ -162,16 +168,10 @@ class CombatSession final : public CombatHost {
     }
     bool featureInRegion(const QString &name, QSize reference, QRect area, double threshold) override;
     bool targetLocked() override;
-    void ensureElement(Character &character) override {
-        if (character.state.ringIndex < 0)
-            concerto(character);
-    }
+    void ensureElement(Character &character) override;
     int segmentedGauge(QSize reference, QRect area, ColorRange color, int segments, int minFrequency,
                        int maxFrequency, double minAmplitude) override;
     bool isAutoCombatTask() const override { return context_.task == "AutoCombatTask"; }
-    void log(const QString &message) override {
-        if (context_.info)
-            context_.info("战斗", message);
-    }
+    void log(const QString &message) override;
 };
 } // namespace okww::runtime

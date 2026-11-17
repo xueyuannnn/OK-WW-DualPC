@@ -16,11 +16,14 @@ struct CharacterIdentity {
 };
 struct Cooldowns {
     double timestamp = 0;
+    double fallbackAt = -1;
     std::array<double, 3> seconds{};
+    std::array<double, 3> observedAt{};
 };
 struct TargetObservation {
     bool matched = false, locked = false, extended = false;
 };
+bool systemRunDialogConfirmed(const QVector<TextLine> &lines);
 QVector<Match> shiftedBarCandidates(const cv::Mat &frame);
 int segmentedGaugeValue(const cv::Mat &image, ColorRange color, int segments, int minFrequency,
                         int maxFrequency, double minAmplitude);
@@ -38,10 +41,7 @@ class CombatVision {
   public:
     CombatVision(TaskContext &context, const QString &catalog);
     PartyHud party();
-    void reset() {
-        cooldowns_.clear();
-        cdVersion_ = partyVersion_ = UINT64_MAX;
-    }
+    void reset();
     QRect box(const QString &name);
     std::optional<CharacterIdentity> character(int index, const CharacterState *previous = nullptr);
     void refreshCooldowns(int currentIndex);

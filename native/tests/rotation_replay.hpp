@@ -149,7 +149,7 @@ class RotationReplay final : public CombatHost {
             if (key == hotkey(Skill(i))) {
                 if (i == 2 && ready_[i])
                     liberationAt_ = time_;
-                ready_[i] = false;
+                if (!config_["sticky_ready"].toBool()) ready_[i] = false;
             }
         sleep(down);
         if (after)

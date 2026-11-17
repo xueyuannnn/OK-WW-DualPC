@@ -393,7 +393,7 @@ void Window::requestTeamCode(const QString &requested) {
             code_->setReadOnly(result["read_only"].toBool(true));
             code_->document()->setModified(false);
             saveCodeButton_->setEnabled(!code_->isReadOnly());
-            const QString kind = result["code_kind"] == "builtin"  ? "内置 C++ 连招"
+            const QString kind = result["code_kind"] == "builtin"  ? "内置 Rust 连招"
                                  : result["code_kind"] == "python" ? "Python 工坊连招"
                                                                    : "导入队伍连招";
             saveCodeButton_->setToolTip(result["code_kind"] == "python"

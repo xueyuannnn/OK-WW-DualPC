@@ -10,5 +10,15 @@
     <file alias="characters_forms.cpp">../src/runtime/characters_forms.cpp</file>
     <file alias="characters_spectro.cpp">../src/runtime/characters_spectro.cpp</file>
     <file alias="characters_additional.cpp">../src/runtime/characters_additional.cpp</file>
+    <file alias="rust/rotation.rs">../rust/src/rotation.rs</file>
+    <file alias="rust/combat.rs">../rust/src/combat.rs</file>
+    <file alias="rust/rotation/basic.rs">../rust/src/rotation/basic.rs</file>
+    <file alias="rust/rotation/extended.rs">../rust/src/rotation/extended.rs</file>
+    <file alias="rust/rotation/stateful.rs">../rust/src/rotation/stateful.rs</file>
+    <file alias="rust/rotation/advanced.rs">../rust/src/rotation/advanced.rs</file>
+    <file alias="rust/rotation/gauges.rs">../rust/src/rotation/gauges.rs</file>
+    <file alias="rust/rotation/forms.rs">../rust/src/rotation/forms.rs</file>
+    <file alias="rust/rotation/spectro.rs">../rust/src/rotation/spectro.rs</file>
+    <file alias="rust/rotation/additional.rs">../rust/src/rotation/additional.rs</file>
   </qresource>
 </RCC>

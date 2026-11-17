@@ -16,11 +16,15 @@ struct Mode {
 };
 std::vector<Device> devices(const QString &backend);
 std::vector<Mode> modes(const Config &config);
-QJsonArray captureCapabilities(
-    const Config &config,
-    const std::function<std::vector<Device>(const QString &)> &enumerateDevices = devices,
-    const std::function<std::vector<Mode>(const Config &)> &enumerateModes = modes);
+QJsonArray
+captureCapabilities(const Config &config,
+                    const std::function<std::vector<Device>(const QString &)> &enumerateDevices = devices,
+                    const std::function<std::vector<Mode>(const Config &)> &enumerateModes = modes);
 class Capture {
+    friend struct CaptureFlowSdk;
+    friend struct CaptureDsRunSdk;
+    friend struct CaptureMfRunSdk;
+    friend struct CaptureDesktopRunSdk;
     Config config_;
     std::thread thread_;
     std::mutex mutex_;
@@ -28,9 +32,11 @@ class Capture {
     std::array<std::shared_ptr<Frame>, 6> pool_;
     FramePtr latest_;
     QString error_;
+    QString desktopRecovery_;
     bool ready_ = false;
     std::atomic<bool> stop_{false};
     uint64_t seq_ = 0;
+    uint64_t unchangedPolls_ = 0;
     double negotiatedFps_ = 0;
     std::deque<i64> arrivals_;
     void run();
@@ -48,7 +54,11 @@ class Capture {
     FramePtr latest();
     QJsonObject actual();
     QString error();
+    bool stopped() const { return stop_.load(); }
+    void desktopRecovery(QString reason);
+    bool recovering();
     void publish(const uint8_t *data, size_t length, int width, int height, int stride, PixelFormat format,
-                 bool bottomUp, i64 stamp);
+                 bool bottomUp, i64 stamp, bool compareContents = false);
+    void verifyUnchangedDesktop(i64 stamp);
 };
 } // namespace okww

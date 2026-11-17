@@ -13,10 +13,10 @@ set(OKWW_RUST_TARGET "x86_64-pc-windows-msvc")
 set(OKWW_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/rust-target")
 list(APPEND OKWW_RUST_ENV "CARGO_TARGET_DIR=${OKWW_RUST_TARGET_DIR}")
 set(OKWW_RUST_LIBRARY "${OKWW_RUST_TARGET_DIR}/${OKWW_RUST_TARGET}/release/okww_core.lib")
-file(GLOB_RECURSE OKWW_RUST_SOURCES CONFIGURE_DEPENDS "${OKWW_RUST_ROOT}/native/rust/*.rs" "${OKWW_RUST_ROOT}/native/rust/abi/*.def")
+file(GLOB_RECURSE OKWW_RUST_SOURCES CONFIGURE_DEPENDS "${OKWW_RUST_ROOT}/crates/okww-core/*.rs" "${OKWW_RUST_ROOT}/crates/okww-core/abi/*.def")
 add_custom_command(OUTPUT "${OKWW_RUST_LIBRARY}"
     COMMAND "${CMAKE_COMMAND}" -E env ${OKWW_RUST_ENV} "${OKWW_CARGO}" build --manifest-path "${OKWW_RUST_ROOT}/Cargo.toml" --release --locked --target "${OKWW_RUST_TARGET}"
-    DEPENDS ${OKWW_RUST_SOURCES} "${OKWW_RUST_ROOT}/Cargo.toml" "${OKWW_RUST_ROOT}/Cargo.lock" "${OKWW_RUST_ROOT}/rust-toolchain.toml" "${OKWW_RUST_ROOT}/native/rust/Cargo.toml"
+    DEPENDS ${OKWW_RUST_SOURCES} "${OKWW_RUST_ROOT}/Cargo.toml" "${OKWW_RUST_ROOT}/Cargo.lock" "${OKWW_RUST_ROOT}/rust-toolchain.toml" "${OKWW_RUST_ROOT}/crates/okww-core/Cargo.toml"
     WORKING_DIRECTORY "${OKWW_RUST_ROOT}" VERBATIM)
 add_custom_target(okww_rust_build DEPENDS "${OKWW_RUST_LIBRARY}")
 add_library(okww_rust_core STATIC IMPORTED GLOBAL)

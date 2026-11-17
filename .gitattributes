@@ -1,6 +1,8 @@
 * text=auto
 *.cpp text eol=lf
 *.hpp text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
 *.h text eol=lf
 *.py text eol=lf
 *.md text eol=lf
@@ -18,3 +20,5 @@
 vendor/** linguist-vendored
 native/third_party/** linguist-vendored
 native/resources/fluent/** linguist-vendored
+native/licenses/** linguist-documentation
+tests/parity/fixtures/cpp/** linguist-generated

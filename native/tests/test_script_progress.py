@@ -1,5 +1,5 @@
 import unittest
-from native.bridge.script_worker import progress_payload
+from workshop.bridge.script_worker import progress_payload
 
 
 class ProgressTests(unittest.TestCase):

@@ -15,7 +15,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'native/bridge'))
+sys.path.insert(0, str(ROOT / 'workshop/bridge'))
 from workshop_protocol import PROTOCOL_VERSION, API_VERSION, CAPABILITIES, TIMES
 
 
@@ -45,7 +45,7 @@ def main():
         shutil.copytree(a.data/'configs-dualpc',data/'configs-dualpc')
         env=dict(os.environ,PYTHONUTF8='1',PYTHONDONTWRITEBYTECODE='1')
         log = a.report.with_suffix('.log').open('w',encoding='utf-8')
-        proc = subprocess.Popen([str(a.python),str(a.engine/'native/bridge/workshop_worker.py'),
+        proc = subprocess.Popen([str(a.python),str(a.engine/'workshop/bridge/workshop_worker.py'),
                     '--root',str(a.engine),'--data',str(data),'--mapping',mapping],
                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,text=True,encoding='utf-8',env=env)
         inbox = queue.Queue()

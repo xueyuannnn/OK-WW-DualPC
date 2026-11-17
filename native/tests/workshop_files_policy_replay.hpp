@@ -143,7 +143,7 @@ struct Replay {
                 fail("缺少工坊 Python 兼容引擎，请使用完整包");
             process->setProcessEnvironment(environment());
             process->setWorkingDirectory(engine);
-            process->start(python, {engine + "/native/bridge/workshop_manager.py", "--root", engine, "--data",
+            process->start(python, {engine + "/workshop/bridge/workshop_manager.py", "--root", engine, "--data",
                                     data, "--persistent"});
             if (!process->waitForStarted(10000))
                 fail("工坊管理器启动失败：" + process->errorString());
@@ -233,7 +233,7 @@ struct Replay {
                 process->setWorkingDirectory(engine);
                 break;
             case rust::WorkflowOp::WorkshopFileStartPersistentManager:
-                process->start(python, {engine + "/native/bridge/workshop_manager.py", "--root", engine,
+                process->start(python, {engine + "/workshop/bridge/workshop_manager.py", "--root", engine,
                                         "--data", data, "--persistent"});
                 break;
             case rust::WorkflowOp::WorkshopFileWaitStarted:

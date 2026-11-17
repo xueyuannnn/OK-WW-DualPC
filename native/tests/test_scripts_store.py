@@ -6,7 +6,7 @@ import zipfile
 import json
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT/'native/bridge'), str(ROOT/'vendor/ok-script'), str(ROOT)]
+sys.path[:0] = [str(ROOT/'workshop/bridge'), str(ROOT/'vendor/ok-script'), str(ROOT)]
 from scripts_store import ScriptStore
 
 

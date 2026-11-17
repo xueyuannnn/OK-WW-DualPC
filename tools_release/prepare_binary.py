@@ -97,7 +97,7 @@ def write_manifest(stage: Path, source_exe_hash: str) -> list[Path]:
     files = sorted(p for p in root.rglob("*")
                    if p.is_file() and p.name != "PACKAGE.json" and distributable(p))
     manifest = {
-        "version": "0.2.0", "channel": "preview", "variant": "full",
+        "version": "0.2.0", "channel": "preview", "variant": "full", "edition": "standard",
         "release_version": (ROOT / "native/RELEASE_VERSION").read_text(encoding="utf-8").strip(),
         # Keep the installer identifier accepted by existing versions.
         "runtime": "C++ + Python workshop", "core_language": "Rust", "frontend": "Qt6 Widgets",
@@ -151,7 +151,7 @@ def main() -> None:
         copy_tree(source / name, engine / name)
     for name in ENGINE_FILES:
         shutil.copy2(source / name, engine / name)
-    copy_tree(source / "native/bridge", engine / "native/bridge")
+    copy_tree(source / "workshop/bridge", engine / "workshop/bridge")
     copy_tree(runtime / "workshop-engine/runtime", engine / "runtime")
     (engine / "ok_tasks").mkdir(exist_ok=True)
     for name in ("LICENSE.txt", "THIRD-PARTY-DUALPC.md", "UPSTREAM.lock.json"):
@@ -168,6 +168,7 @@ def main() -> None:
         "- [任务使用](source/docs/usage.md)\n"
         "- [角色代码工坊](source/docs/workshop.md)\n"
         "- [源码构建](source/docs/development.md)\n\n"
+        "此为普通包，不含个人配置。EXE 文件名为更新器的固定入口，个人包也沿用此名称。"
         "配置保存在 `native-full-data/`，首次运行自动生成。"
         "“关于”页可检查 GitHub 新版本，确认后自动下载安装并保留配置。手动更新前建议备份此目录。\n\n"
         "反馈邮箱：[lidada0202@gmail.com](mailto:lidada0202@gmail.com)。"

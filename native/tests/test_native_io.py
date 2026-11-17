@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workshop" / "bridge"))
 from native_io import decode_frame
 
 

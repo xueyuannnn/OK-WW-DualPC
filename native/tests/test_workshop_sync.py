@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bridge'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'workshop' / 'bridge'))
 from workshop_sync import DEFAULT_SOURCE, WorkshopLibrary, archive_manifest, entries, source_url
 
 

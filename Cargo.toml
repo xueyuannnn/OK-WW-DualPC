@@ -1,5 +1,5 @@
 [workspace]
-members = ["native/rust"]
+members = ["crates/okww-core"]
 resolver = "2"
 
 [profile.release]

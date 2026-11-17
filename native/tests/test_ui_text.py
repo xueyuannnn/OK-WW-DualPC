@@ -7,7 +7,7 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT/'native/bridge'), str(ROOT/'vendor/ok-script')]
+sys.path[:0] = [str(ROOT/'workshop/bridge'), str(ROOT/'vendor/ok-script')]
 from ui_text import ACTION_NAMES, PARAM_NAMES, localize_templates, workshop_text
 from ok.core.script_templates import get_script_templates
 

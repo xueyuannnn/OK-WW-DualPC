@@ -4,7 +4,7 @@
 
 双机模式通过采集卡读取画面、KMBox Net 发送键鼠操作；也可使用本机 DXGI / Win32 截图和 SendInput 输入。业务内核使用 Rust，负责内置任务、角色连招、识别策略和设备控制；C++ 保留 Qt 界面及底层 SDK 适配，工坊与通用脚本使用独立 Python 环境。
 
-基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.9**，支持 Windows x64。
+基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.10**，支持 Windows x64。
 
 [下载完整包](https://github.com/xueyuannnn/OK-WW-DualPC/releases) · [使用说明](docs/usage.md) · [问题反馈](https://github.com/xueyuannnn/OK-WW-DualPC/issues)
 
@@ -27,6 +27,8 @@
 ## 运行方法
 
 下载 `OK-WW-DualPC-full.zip`，完整解压后运行 `OKWW-DualPC-Native-Dev.exe`。运行库、识别模型和工坊环境都在包内，不需要另装 Python。
+
+GitHub 提供的是普通包，不含个人配置。EXE 文件名是更新器沿用的固定入口，个人包使用同一名称；首次运行普通包时会创建新的配置目录。
 
 1. 在游戏机打开鸣潮，确认采集卡能收到游戏画面。
 2. 打开「双机设置」，点击「检测设备与参数」，选择采集卡、分辨率和帧率，采集格式固定为 NV12。
@@ -78,7 +80,26 @@ SendInput 默认向当前前台窗口发送输入，运行时将游戏或远程�
 
 ## 开发
 
-业务逻辑位于 `native/rust/`，使用 Rust 1.100.0；界面和 SDK 适配层使用 C++20 / Qt 6，图像识别使用 OpenCV 与 OpenVINO。Python 工坊与通用脚本保留独立执行引擎。完整包已包含运行环境，使用时无需安装 Rust、C++ 开发工具或 Python。构建环境和测试方法见[开发说明](docs/development.md)，代码目录见 [native/README.md](native/README.md)。
+项目以 Cargo 工作区组织，`okww-core` 使用 Rust 1.100.0。Qt 6 桌面界面和 Windows / 图像 SDK 绑定使用 C++20，Python 负责兼容现有工坊和通用脚本。完整包包含运行环境。
+
+| 目录 | 职责 |
+| --- | --- |
+| [`crates/okww-core`](crates/okww-core/) | 业务内核、角色策略、任务流程、设备控制与协议 |
+| [`native/ui`](native/ui/) | Qt 页面与控件 |
+| [`native/platform`](native/platform/) | Windows、采集与输入接口 |
+| [`native/host`](native/host/) | SDK 对象和 Rust 调用边界 |
+| [`workshop`](workshop/) | Python 工坊与通用脚本执行入口 |
+| [`tests/parity`](tests/parity/) | 行为一致性对照数据 |
+
+`src/`、`dualpc/` 与 `vendor/ok-script/` 保留工坊依赖的 Python 导入接口。构建与测试见[开发说明](docs/development.md)。
+
+```powershell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+桌面程序构建：
 
 ```powershell
 .\Build-Native.ps1 -QtRoot C:\Qt\6.8.3\msvc2022_64 `

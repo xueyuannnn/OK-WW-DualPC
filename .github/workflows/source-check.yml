@@ -33,7 +33,7 @@ jobs:
         run: python tools_release/prepare_source.py --check
       - name: Check Python bridge syntax
         shell: pwsh
-        run: python -m compileall -q native/bridge dualpc src
+        run: python -m compileall -q workshop/bridge dualpc src
       - name: Check Windows updater
         shell: pwsh
         run: python -m unittest native.tests.test_app_update -v

@@ -34,7 +34,7 @@ def test_python_character_metadata_and_native_registration_stay_in_sync():
     actual = json.loads((ROOT / 'native/resources/characters.json').read_text(encoding='utf-8'))
     assert actual['characters'] == expected, 'Regenerate native character metadata after changing CharFactory'
     registered = set()
-    for path in (ROOT / 'native/src/runtime').glob('characters_*.cpp'):
+    for path in (ROOT / 'native/host/runtime').glob('characters_*.cpp'):
         registered.update(re.findall(r'\{\s*"(\w+)"\s*,\s*&?createCharacter<', path.read_text(encoding='utf-8')))
     registered.discard('BaseChar')
     assert {entry['class'] for entry in expected} == registered
@@ -42,7 +42,7 @@ def test_python_character_metadata_and_native_registration_stay_in_sync():
 
 def test_every_catalog_task_has_a_native_dispatch_entry():
     catalog = json.loads((ROOT / 'native/resources/catalog.json').read_text(encoding='utf-8'))
-    runtime = ROOT / 'native/src/runtime'
+    runtime = ROOT / 'native/host/runtime'
     business = (runtime / 'task_registry.cpp').read_text(encoding='utf-8').split('bool TaskRunner::dispatch')[0]
     triggers = (runtime / 'task.cpp').read_text(encoding='utf-8').split('QVector<TaskDefinition> builtinTasks()')[1]
     registered = set(re.findall(r'"([A-Za-z]+Task2?)"', business + triggers))

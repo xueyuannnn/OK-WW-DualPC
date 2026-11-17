@@ -12,7 +12,7 @@ if (!$OpenCvRoot) { $OpenCvRoot = Join-Path $projectRoot 'native/deps/opencv/bui
 if (!$OpenVinoRoot) { $OpenVinoRoot = Join-Path $projectRoot '.venv/Lib/site-packages/openvino' }
 if (!$QtRoot) { throw '请传入 -QtRoot，或设置 OKWW_QT_ROOT。详见 docs/development.md。' }
 
-# Keep -Full for existing build commands; the standard target is now the C++ runtime.
+# Keep -Full for existing build commands; the standard target hosts the Rust core.
 $arguments = @{
     QtRoot = $QtRoot
     OpenCvRoot = $OpenCvRoot

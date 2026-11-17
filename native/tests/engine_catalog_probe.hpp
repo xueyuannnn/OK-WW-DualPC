@@ -54,7 +54,7 @@ struct CatalogProbe {
             const bool supported = std::any_of(native.begin(), native.end(), [&](const auto &item) { return item == id; });
             t["native_supported"] = supported;
             if (!supported) t["description"] = t["description"].toString() + "\n此版本不支持该任务。";
-            if (!supported) t["name"] = t["name"].toString() + "（待迁移）";
+            if (!supported) t["name"] = t["name"].toString() + "（暂不支持）";
             rows.append(t);
         }
         for (auto value : scripts) { auto row = value.toObject(); row.remove("source"); rows.append(row); }
@@ -87,7 +87,7 @@ struct CatalogProbe {
         case O::NativeMatches: out[0] = native.at(selectedNative) == entry["id"].toString(); break;
         case O::CatalogSetSupported: entry["native_supported"] = a[0] != 0; break;
         case O::CatalogUnsupportedDescription: entry["description"] = entry["description"].toString() + "\n此版本不支持该任务。"; break;
-        case O::CatalogUnsupportedName: entry["name"] = entry["name"].toString() + "（待迁移）"; break;
+        case O::CatalogUnsupportedName: entry["name"] = entry["name"].toString() + "（暂不支持）"; break;
         case O::CatalogAppendTask: tasks.append(entry); break;
         case O::ScriptsCount: out[0] = double(scripts.size()); break;
         case O::SelectScriptEntry: script = scripts.at(int(a[0])).toObject(); break;

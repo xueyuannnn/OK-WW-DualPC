@@ -31,7 +31,7 @@
     "original_methods_unchanged": 88
   },
   "native_port": {
-    "path": "native/src/runtime/characters_additional.cpp",
+    "path": "native/host/runtime/characters_additional.cpp",
     "sha256": "65ca3063a39c03af4b80e551f70d5b600bb79d5462889e2a36143b40634fe24f"
   },
   "upstream_tests": [

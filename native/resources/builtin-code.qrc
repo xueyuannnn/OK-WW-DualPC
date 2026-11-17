@@ -1,24 +1,24 @@
 <RCC>
   <qresource prefix="/builtin-code">
-    <file alias="character.cpp">../src/runtime/character.cpp</file>
-    <file alias="character.hpp">../src/runtime/character.hpp</file>
-    <file alias="characters_basic.cpp">../src/runtime/characters_basic.cpp</file>
-    <file alias="characters_extended.cpp">../src/runtime/characters_extended.cpp</file>
-    <file alias="characters_stateful.cpp">../src/runtime/characters_stateful.cpp</file>
-    <file alias="characters_advanced.cpp">../src/runtime/characters_advanced.cpp</file>
-    <file alias="characters_gauges.cpp">../src/runtime/characters_gauges.cpp</file>
-    <file alias="characters_forms.cpp">../src/runtime/characters_forms.cpp</file>
-    <file alias="characters_spectro.cpp">../src/runtime/characters_spectro.cpp</file>
-    <file alias="characters_additional.cpp">../src/runtime/characters_additional.cpp</file>
-    <file alias="rust/rotation.rs">../rust/src/rotation.rs</file>
-    <file alias="rust/combat.rs">../rust/src/combat.rs</file>
-    <file alias="rust/rotation/basic.rs">../rust/src/rotation/basic.rs</file>
-    <file alias="rust/rotation/extended.rs">../rust/src/rotation/extended.rs</file>
-    <file alias="rust/rotation/stateful.rs">../rust/src/rotation/stateful.rs</file>
-    <file alias="rust/rotation/advanced.rs">../rust/src/rotation/advanced.rs</file>
-    <file alias="rust/rotation/gauges.rs">../rust/src/rotation/gauges.rs</file>
-    <file alias="rust/rotation/forms.rs">../rust/src/rotation/forms.rs</file>
-    <file alias="rust/rotation/spectro.rs">../rust/src/rotation/spectro.rs</file>
-    <file alias="rust/rotation/additional.rs">../rust/src/rotation/additional.rs</file>
+    <file alias="character.cpp">../host/runtime/character.cpp</file>
+    <file alias="character.hpp">../host/runtime/character.hpp</file>
+    <file alias="characters_basic.cpp">../host/runtime/characters_basic.cpp</file>
+    <file alias="characters_extended.cpp">../host/runtime/characters_extended.cpp</file>
+    <file alias="characters_stateful.cpp">../host/runtime/characters_stateful.cpp</file>
+    <file alias="characters_advanced.cpp">../host/runtime/characters_advanced.cpp</file>
+    <file alias="characters_gauges.cpp">../host/runtime/characters_gauges.cpp</file>
+    <file alias="characters_forms.cpp">../host/runtime/characters_forms.cpp</file>
+    <file alias="characters_spectro.cpp">../host/runtime/characters_spectro.cpp</file>
+    <file alias="characters_additional.cpp">../host/runtime/characters_additional.cpp</file>
+    <file alias="rust/rotation.rs">../../crates/okww-core/src/rotation.rs</file>
+    <file alias="rust/combat.rs">../../crates/okww-core/src/combat.rs</file>
+    <file alias="rust/rotation/basic.rs">../../crates/okww-core/src/rotation/basic.rs</file>
+    <file alias="rust/rotation/extended.rs">../../crates/okww-core/src/rotation/extended.rs</file>
+    <file alias="rust/rotation/stateful.rs">../../crates/okww-core/src/rotation/stateful.rs</file>
+    <file alias="rust/rotation/advanced.rs">../../crates/okww-core/src/rotation/advanced.rs</file>
+    <file alias="rust/rotation/gauges.rs">../../crates/okww-core/src/rotation/gauges.rs</file>
+    <file alias="rust/rotation/forms.rs">../../crates/okww-core/src/rotation/forms.rs</file>
+    <file alias="rust/rotation/spectro.rs">../../crates/okww-core/src/rotation/spectro.rs</file>
+    <file alias="rust/rotation/additional.rs">../../crates/okww-core/src/rotation/additional.rs</file>
   </qresource>
 </RCC>

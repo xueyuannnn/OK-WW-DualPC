@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bridge'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'workshop' / 'bridge'))
 from workshop_protocol import (TIMES, apply_state, export_state, end_current_character,
                                validate_request, switch_priority)
 from workshop_worker import PipeChannel

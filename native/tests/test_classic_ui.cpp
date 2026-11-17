@@ -2005,7 +2005,7 @@ class ClassicUiTests final : public QObject {
         QVERIFY(!QFile::exists(data.path() + "/native-last-run.json"));
     }
     void pythonWorkshopEditorShowsTheSelectedMemberAndSwitchesBackToNativeBuiltin() {
-        if (!QFile::exists(root + "/native/bridge/workshop_worker.py"))
+        if (!QFile::exists(root + "/workshop/bridge/workshop_worker.py"))
             QSKIP("Python SDK absent");
         QTemporaryDir data;
         const auto folder = data.path() + "/configs-dualpc/custom_teams/Baizhi__Mortefi__Verina";

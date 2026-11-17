@@ -32,7 +32,7 @@ else {
         & $cmake --build $build --config Release --parallel 4 --target okww_team_lucy okww_team_cart okww_team_denia okww_team_aemeath okww_team_hsin
     }
 }
-if ($LASTEXITCODE) { throw 'C++ 编译失败。' }
+if ($LASTEXITCODE) { throw '桌面程序构建失败。' }
 if ($Test) {
     $oldPath=$env:PATH
     try {

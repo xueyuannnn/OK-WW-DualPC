@@ -13,26 +13,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CLASSIC_ICONS resources/classic-ui.qrc resources/fluent-icons.qrc resources/classic-emoji.qrc)
-set(CLASSIC_UI src/classic_ui.cpp src/classic_ui.hpp src/classic_calendar.cpp src/classic_window.cpp
-    src/classic_update.cpp resources/updater.qrc
-    src/classic_characters.cpp src/classic_workshop.cpp src/classic_editor.cpp src/classic_editor.hpp src/classic_settings.cpp src/classic_schedule.cpp src/classic_preview.cpp src/classic_task_info.cpp)
+set(CLASSIC_UI ui/classic_ui.cpp ui/classic_ui.hpp ui/classic_calendar.cpp ui/classic_window.cpp
+    ui/classic_update.cpp resources/updater.qrc
+    ui/classic_characters.cpp ui/classic_workshop.cpp ui/classic_editor.cpp ui/classic_editor.hpp ui/classic_settings.cpp ui/classic_schedule.cpp ui/classic_preview.cpp ui/classic_task_info.cpp)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Network Concurrent Test)
 enable_testing()
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../tests/parity/fixtures/cpp")
 include(cmake/RustCore.cmake)
-add_library(okww_native STATIC src/common.cpp src/capture.cpp src/capture_desktop.cpp src/desktop.cpp src/controller.cpp src/backend.cpp src/update.cpp src/update.hpp)
-target_include_directories(okww_native PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_library(okww_native STATIC platform/common.cpp platform/capture.cpp platform/capture_desktop.cpp platform/desktop.cpp platform/controller.cpp platform/backend.cpp platform/update.cpp platform/update.hpp)
+target_include_directories(okww_native PUBLIC
+    include platform ui host
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../crates/okww-core/abi")
 target_compile_definitions(okww_native PUBLIC UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(okww_native PUBLIC /utf-8 /W4 /permissive- /EHsc)
 target_link_libraries(okww_native PUBLIC Qt6::Core Qt6::Gui Qt6::Network ws2_32 ole32 oleaut32 strmiids mfplat mfreadwrite mfuuid mf windowsapp d3d11 dxgi user32 gdi32)
 target_link_libraries(okww_native PUBLIC okww_rust_core ntdll userenv bcrypt advapi32)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../main_dualpc.py")
-    set(OKWW_COMPAT_DEFAULT ON)
-else()
-    set(OKWW_COMPAT_DEFAULT OFF)
-endif()
-option(OKWW_BUILD_COMPAT "Build the retained Python compatibility host" ${OKWW_COMPAT_DEFAULT})
+option(OKWW_BUILD_COMPAT "Build the retained Python compatibility host" OFF)
 if(OKWW_BUILD_COMPAT)
-    add_executable(OKWWDualPC WIN32 src/main.cpp src/window.cpp src/window.hpp ${CLASSIC_UI} ${CLASSIC_ICONS} ${APP_RESOURCES})
+    add_executable(OKWWDualPC WIN32 ui/main.cpp ui/window.cpp ui/window.hpp ${CLASSIC_UI} ${CLASSIC_ICONS} ${APP_RESOURCES})
     target_link_libraries(OKWWDualPC PRIVATE okww_native Qt6::Widgets Qt6::Concurrent)
     set_target_properties(OKWWDualPC PROPERTIES OUTPUT_NAME "OKWW-DualPC-Cpp")
 endif()
@@ -125,7 +124,7 @@ add_executable(backend_serve_contract_tests tests/test_backend_serve_contract.cp
 target_link_libraries(backend_serve_contract_tests PRIVATE okww_native Qt6::Test)
 add_test(NAME backend_serve_contract_tests COMMAND backend_serve_contract_tests -o "${CMAKE_BINARY_DIR}/backend-serve-contract-tests.txt,txt")
 
-option(OKWW_FULL_NATIVE "Build the independent C++ business runtime" OFF)
+option(OKWW_FULL_NATIVE "Build the Rust core desktop host" ON)
 if(OKWW_FULL_NATIVE)
     set(OpenCV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/opencv/build" CACHE PATH "OpenCV SDK")
     find_package(OpenCV 4.12 REQUIRED COMPONENTS core imgproc imgcodecs)
@@ -143,53 +142,53 @@ if(OKWW_FULL_NATIVE)
     add_test(NAME resource_failure_contract_tests COMMAND resource_failure_contract_tests -o "${CMAKE_BINARY_DIR}/resource-failure-contract-tests.txt,txt")
     set(OpenVINO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.venv/Lib/site-packages/openvino/cmake" CACHE PATH "OpenVINO SDK")
     find_package(OpenVINO REQUIRED COMPONENTS Runtime)
-    add_library(okww_runtime STATIC src/runtime/execution.cpp src/runtime/input.cpp src/runtime/vision.cpp src/runtime/ocr.cpp
-        src/runtime/profile.cpp src/runtime/task.cpp src/runtime/task_bridge.cpp src/runtime/task_text_bridge.cpp src/runtime/task_image_bridge.cpp src/runtime/engine.cpp src/runtime/combat_rules.cpp
-        src/runtime/character.cpp src/runtime/character_bridge.cpp src/runtime/characters_basic.cpp src/runtime/characters_extended.cpp
-        src/runtime/characters_stateful.cpp
-        src/runtime/characters_advanced.cpp
-        src/runtime/characters_gauges.cpp
-        src/runtime/characters_forms.cpp
-        src/runtime/characters_spectro.cpp
-        src/runtime/characters_additional.cpp
-        src/runtime/gauge_analysis.cpp
-        src/runtime/navigation.cpp
-        src/runtime/stamina.cpp
-        src/runtime/echo_detector.cpp
-        src/runtime/interaction.cpp
-        src/runtime/domain.cpp
-        src/runtime/instance_flow.cpp
-        src/runtime/nightmare.cpp
-        src/runtime/garden_vision.cpp
-        src/runtime/garden.cpp
-        src/runtime/garden_shop.cpp
-        src/runtime/echo_farm.cpp
-        src/runtime/echo_operations.cpp
-        src/runtime/daily.cpp
-        src/runtime/multi_account.cpp
-        src/runtime/template_store.cpp
-        src/runtime/scripts.cpp
-        src/runtime/task_registry.cpp
-        src/runtime/team_macro.cpp
-        src/runtime/team_store.cpp
-        src/runtime/team_editor.cpp
-        src/runtime/workshop.cpp
+    add_library(okww_runtime STATIC host/runtime/execution.cpp host/runtime/input.cpp host/runtime/vision.cpp host/runtime/ocr.cpp
+        host/runtime/profile.cpp host/runtime/task.cpp host/runtime/task_bridge.cpp host/runtime/task_text_bridge.cpp host/runtime/task_image_bridge.cpp host/runtime/engine.cpp host/runtime/combat_rules.cpp
+        host/runtime/character.cpp host/runtime/character_bridge.cpp host/runtime/characters_basic.cpp host/runtime/characters_extended.cpp
+        host/runtime/characters_stateful.cpp
+        host/runtime/characters_advanced.cpp
+        host/runtime/characters_gauges.cpp
+        host/runtime/characters_forms.cpp
+        host/runtime/characters_spectro.cpp
+        host/runtime/characters_additional.cpp
+        host/runtime/gauge_analysis.cpp
+        host/runtime/navigation.cpp
+        host/runtime/stamina.cpp
+        host/runtime/echo_detector.cpp
+        host/runtime/interaction.cpp
+        host/runtime/domain.cpp
+        host/runtime/instance_flow.cpp
+        host/runtime/nightmare.cpp
+        host/runtime/garden_vision.cpp
+        host/runtime/garden.cpp
+        host/runtime/garden_shop.cpp
+        host/runtime/echo_farm.cpp
+        host/runtime/echo_operations.cpp
+        host/runtime/daily.cpp
+        host/runtime/multi_account.cpp
+        host/runtime/template_store.cpp
+        host/runtime/scripts.cpp
+        host/runtime/task_registry.cpp
+        host/runtime/team_macro.cpp
+        host/runtime/team_store.cpp
+        host/runtime/team_editor.cpp
+        host/runtime/workshop.cpp
         resources/builtin-code.qrc
-        src/runtime/scheduler.cpp
-        src/runtime/notification.cpp
-        src/runtime/notification_desktop.cpp
-        src/runtime/combat_vision.cpp
-        src/runtime/combat_session.cpp
-        src/runtime/session_bridge.cpp
+        host/runtime/scheduler.cpp
+        host/runtime/notification.cpp
+        host/runtime/notification_desktop.cpp
+        host/runtime/combat_vision.cpp
+        host/runtime/combat_session.cpp
+        host/runtime/session_bridge.cpp
         third_party/clipper/clipper.cpp)
     target_include_directories(okww_runtime PUBLIC ${OpenCV_INCLUDE_DIRS} PRIVATE third_party/clipper)
     target_link_libraries(okww_runtime PUBLIC okww_native ${OpenCV_LIBS} openvino::runtime advapi32 Qt6::Concurrent Qt6::Gui)
     set_source_files_properties(third_party/clipper/clipper.cpp PROPERTIES COMPILE_OPTIONS /wd4828)
-    add_executable(native_runtime_check src/runtime/check_main.cpp)
+    add_executable(native_runtime_check host/runtime/check_main.cpp)
     target_link_libraries(native_runtime_check PRIVATE okww_runtime)
     add_executable(latency_bench tests/latency_bench.cpp)
     target_link_libraries(latency_bench PRIVATE okww_runtime)
-    add_executable(OKWWNativeDev WIN32 src/runtime/main.cpp src/window.cpp src/window.hpp ${CLASSIC_UI} src/schedule_ui.cpp src/classic_templates.cpp src/classic_scripts.cpp src/classic_recorder.cpp ${CLASSIC_ICONS} ${APP_RESOURCES})
+    add_executable(OKWWNativeDev WIN32 host/runtime/main.cpp ui/window.cpp ui/window.hpp ${CLASSIC_UI} ui/schedule_ui.cpp ui/classic_templates.cpp ui/classic_scripts.cpp ui/classic_recorder.cpp ${CLASSIC_ICONS} ${APP_RESOURCES})
     target_compile_definitions(OKWWNativeDev PRIVATE OKWW_NATIVE_ONLY)
     target_link_libraries(OKWWNativeDev PRIVATE okww_runtime Qt6::Widgets Qt6::Concurrent)
     set_target_properties(OKWWNativeDev PROPERTIES OUTPUT_NAME "OKWW-DualPC-Native-Dev")
@@ -355,12 +354,7 @@ if(OKWW_FULL_NATIVE)
     add_executable(geometry_check tests/geometry_check.cpp)
     target_link_libraries(geometry_check PRIVATE okww_runtime)
     # Personal code is a separate target; ordinary executables do not embed it.
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/personal/teams.hpp")
-        set(OKWW_PERSONAL_DEFAULT ON)
-    else()
-        set(OKWW_PERSONAL_DEFAULT OFF)
-    endif()
-    option(OKWW_BUILD_PERSONAL "Build the current migrated personal teams" ${OKWW_PERSONAL_DEFAULT})
+    option(OKWW_BUILD_PERSONAL "Build local team modules" OFF)
     if(OKWW_BUILD_PERSONAL)
     include(personal/RustPersonal.cmake)
     add_library(okww_personal STATIC personal/lucy.cpp personal/cartethyia.cpp personal/denia.cpp personal/aemeath.cpp
@@ -404,7 +398,7 @@ if(OKWW_FULL_NATIVE)
     target_link_libraries(workshop_tests PRIVATE okww_runtime Qt6::Test)
     target_compile_definitions(workshop_tests PRIVATE OKWW_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
     add_test(NAME workshop_tests COMMAND workshop_tests -o "${CMAKE_BINARY_DIR}/workshop-tests.txt,txt")
-    add_executable(classic_ui_tests tests/test_classic_ui.cpp src/window.cpp src/window.hpp ${CLASSIC_UI} src/schedule_ui.cpp src/classic_templates.cpp src/classic_scripts.cpp src/classic_recorder.cpp ${CLASSIC_ICONS})
+    add_executable(classic_ui_tests tests/test_classic_ui.cpp ui/window.cpp ui/window.hpp ${CLASSIC_UI} ui/schedule_ui.cpp ui/classic_templates.cpp ui/classic_scripts.cpp ui/classic_recorder.cpp ${CLASSIC_ICONS})
     target_compile_definitions(classic_ui_tests PRIVATE OKWW_NATIVE_ONLY OKWW_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
     target_link_libraries(classic_ui_tests PRIVATE okww_runtime Qt6::Widgets Qt6::Concurrent Qt6::Test)
     add_test(NAME classic_ui_tests COMMAND classic_ui_tests -o "${CMAKE_BINARY_DIR}/classic-ui-tests.txt,txt")

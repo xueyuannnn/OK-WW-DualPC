@@ -3,6 +3,33 @@
 #include <QtTest>
 using namespace okww;
 using namespace okww::runtime;
+// Only these three UI messages changed. Keep the frozen reference and compare
+// every decision, file hash and other error verbatim.
+static QJsonValue currentErrorMessages(QJsonValue value) {
+    if (value.isArray()) {
+        QJsonArray result;
+        for (auto item : value.toArray()) result.append(currentErrorMessages(item));
+        return result;
+    }
+    if (!value.isObject()) return value;
+    auto result = value.toObject();
+    for (auto it = result.begin(); it != result.end(); ++it) {
+        if (it.key() != "error") {
+            it.value() = currentErrorMessages(it.value());
+            continue;
+        }
+        auto text = it.value().toString();
+        const QString prefix = "个人队伍源文件已修改，需要重新迁移后使用：";
+        if (text.startsWith(prefix))
+            text = "队伍源文件已修改，需要重新编译后使用：" + text.mid(prefix.size());
+        else if (text == "此队伍还没有匹配的原生迁移记录，请导入原生队伍包")
+            text = "此队伍缺少源码校验记录，请重新导入原生队伍包";
+        else if (text == "原生队伍与迁移记录不匹配")
+            text = "原生队伍与源码校验记录不匹配";
+        it.value() = text;
+    }
+    return result;
+}
 namespace okww::runtime {
 struct TeamStoreContractAccess {
     template <class T> static QStringList members(QJsonValue value) { return T::members(value); }
@@ -467,7 +494,7 @@ class TeamStoreContracts final : public QObject {
     void verify() {
         QFETCH(int, scene);
         QCOMPARE(verification<TeamStore>(scene),
-                 verification<team_store_reference::OriginalTeamStore>(scene));
+                 currentErrorMessages(verification<team_store_reference::OriginalTeamStore>(scene)).toObject());
     }
     void modules_data() {
         QTest::addColumn<QString>("file");
@@ -520,7 +547,7 @@ class TeamStoreContracts final : public QObject {
     void mutations() {
         QFETCH(int, scene);
         QCOMPARE(mutationReplay<TeamStore>(scene),
-                 mutationReplay<team_store_reference::OriginalTeamStore>(scene));
+                 currentErrorMessages(mutationReplay<team_store_reference::OriginalTeamStore>(scene)).toObject());
     }
     void imports_data() { mutations_data(); }
     void imports() {

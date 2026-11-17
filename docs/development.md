@@ -24,7 +24,9 @@ py -3.12 -m venv .venv
 
 ## 原生构建
 
-界面使用 Qt Widgets，业务执行位于 `native/rust/`。任务调度、角色连招、识别策略、采集与输入控制、设备恢复、配置、定时任务、工坊通信、通知和更新流程由 Rust 执行。Python 工坊与通用脚本保留独立执行引擎。
+仓库根目录的 `Cargo.toml` 是业务内核的构建入口。`crates/okww-core/src/services/` 按任务、队伍、采集、输入、识别、工坊和更新等职责分组。Qt 页面在 `native/ui/`，平台接口在 `native/platform/`，对象宿主在 `native/host/`。新增规则写在 Rust 中，再由宿主提供所需的 SDK 操作。
+
+界面使用 Qt Widgets，业务执行位于 `crates/okww-core/`。任务调度、角色连招、识别策略、采集与输入控制、设备恢复、配置、定时任务、工坊通信、通知和更新流程由 Rust 执行。Python 工坊与通用脚本保留独立执行引擎。
 
 C++ 层保留 Qt 界面、Windows／COM、OpenCV 和 OpenVINO 对象及 SDK 调用。Rust 通过同步 C ABI 借用这些对象，不持有 Qt 指针；原生异常由宿主捕获并保存，返回 Rust 后决定恢复或收尾，再在原生调用边界抛出。图像像素运算使用有长度与步长校验的缓冲区接口。整数时间戳、帧序号和系统句柄不通过浮点参数传递。
 
@@ -73,7 +75,7 @@ CTest 覆盖设备协议、运行时、任务流程、通知、工坊和 Qt 界�
 
 ## 发布文件
 
-`native/RELEASE_VERSION` 是完整版本号（例如 `0.2.0-beta.8`）。发布新版本前修改此文件并重新配置、编译，Git 标签使用相同版本加 `v` 前缀。界面、更新比较和完整包清单均读取此版本；预览版按语义版本顺序比较，不按发布日期排序。
+`native/RELEASE_VERSION` 是完整版本号（例如 `0.2.0-beta.10`）。发布新版本前修改此文件并重新配置、编译，Git 标签使用相同版本加 `v` 前缀。界面、更新比较和完整包清单均读取此版本；预览版按语义版本顺序比较，不按发布日期排序。
 
 ```powershell
 .\.venv\Scripts\python.exe tools_release/prepare_source.py --output release-review

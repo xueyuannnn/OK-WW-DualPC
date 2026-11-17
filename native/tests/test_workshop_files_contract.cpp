@@ -35,7 +35,7 @@ class WorkshopFileContracts final : public QObject {
             QVERIFY(file.open(QIODevice::WriteOnly));
         };
         if (scene & 1)
-            touch(root.path() + "/workshop-engine/native/bridge/workshop_worker.py");
+            touch(root.path() + "/workshop-engine/workshop/bridge/workshop_worker.py");
         if (scene & 2)
             touch(root.path() + "/workshop-engine/runtime/python.exe");
         if (scene & 4)

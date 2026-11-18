@@ -37,6 +37,12 @@ QJsonValue normalized(QJsonValue value, const QString &root) {
         auto out = value.toString();
         out.replace(root, "<fixture>");
         out.replace(QDir::toNativeSeparators(root), "<fixture>");
+        // The endpoint moved from the old slug to the fixed repository ID;
+        // callback order, pagination, errors and download state stay identical.
+        const QString oldEndpoint = "https://api.github.com/repos/xueyuannnn/OK-WW-DualPC/releases?";
+        if (out.startsWith(oldEndpoint))
+            out = "https://api.github.com/repositories/" + QString::number(product::githubRepositoryId) +
+                  "/releases?" + out.mid(oldEndpoint.size());
         return out;
     }
     if (value.isArray()) {
@@ -223,7 +229,7 @@ template <class T> QJsonObject clientReplay(int scene, int operation) {
     // trace sink is destroyed. No network access is performed by this fixture.
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     result["trace"] = trace;
-    return result;
+    return normalized(result, fixture.path()).toObject();
 }
 } // namespace
 class UpdateClientContracts final : public QObject {

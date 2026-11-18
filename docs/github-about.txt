@@ -1,3 +1,3 @@
-OK-WW 双机版 · Rust 内核 / Qt 界面 / Python 工坊 · 采集卡、DXGI、Win32 · KMBox Net、SendInput
+OKWW双机版 · 鸣潮自动战斗、每日任务、声骸副本循环与角色工坊 · Rust 内核 / Qt 界面 / Python 工坊
 
-Topics: wuthering-waves, dual-pc, rust, qt6, computer-vision, python, automation, kmbox, capture-card, dxgi, sendinput
+Topics: okww, okww-dualpc, ok-ww, wuthering-waves, dual-pc, rust, qt6, computer-vision, python, automation, kmbox, capture-card, dxgi, sendinput

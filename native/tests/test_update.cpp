@@ -87,6 +87,32 @@ class UpdateTests final : public QObject {
         client.cancel();
         QVERIFY(!client.busy());
     }
+    void renamedRepositoryAndLegacyAssetUrlsRemainInstallable() {
+        for (const auto &project : {product::github, product::legacyGithub}) {
+            auto item = release("v0.2.1",false,false);
+            auto assets = item["assets"].toArray();
+            for (int i=0;i<assets.size();++i) {
+                auto file = assets[i].toObject();
+                file["browser_download_url"] = project + "/releases/download/v0.2.1/" + file["name"].toString();
+                assets[i] = file;
+            }
+            item["assets"] = assets;
+            const auto selected = update::newerReleases({item},"0.2.0",true);
+            QCOMPARE(selected.size(),1);
+            QVERIFY(selected.first().installable());
+            QCOMPARE(selected.first().page,QUrl(product::github + "/releases/tag/v0.2.1"));
+        }
+        for (const auto &project : {QString("https://github.com/xueyuannnn/other-project"),
+                                    product::github + "-other", QString("http://github.com/xueyuannnn/okww-dualpc")}) {
+            auto item = release("v0.2.1",false,false);
+            auto assets = item["assets"].toArray();
+            auto file = assets[0].toObject();
+            file["browser_download_url"] = project + "/releases/download/v0.2.1/" + file["name"].toString();
+            assets[0] = file;
+            item["assets"] = assets;
+            QVERIFY(!update::newerReleases({item},"0.2.0",true).first().installable());
+        }
+    }
     void checkAndDownloadThroughTheNetworkStateMachine() {
         QTemporaryDir job;
         const QByteArray package="fixture package bytes";
@@ -103,6 +129,8 @@ class UpdateTests final : public QObject {
         QSignalSpy checked(&client,&update::Client::checked),failed(&client,&update::Client::failed);
         client.check("0.2.0-beta.8");
         QTRY_COMPARE(checked.size(),1); QCOMPARE(failed.size(),0);
+        QVERIFY(requested.first().startsWith("https://api.github.com/repositories/" +
+                QString::number(product::githubRepositoryId) + "/releases?"));
         auto selected=update::newerReleases({release("v0.2.0-beta.10")},"0.2.0-beta.8",true).first();
         selected.size=package.size(); selected.digest=sha;
         QSignalSpy downloaded(&client,&update::Client::downloaded);

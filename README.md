@@ -1,12 +1,12 @@
-# OK-WW-DualPC · OK-WW双机版
+# OKWW双机版 · OKWW-DualPC
 
 鸣潮双机自动化工具，支持自动战斗、一键日常、声骸副本循环和角色代码工坊。
 
 双机模式通过采集卡读取画面、KMBox Net 发送键鼠操作；也可使用本机 DXGI / Win32 截图和 SendInput 输入。业务内核使用 Rust，负责内置任务、角色连招、识别策略和设备控制；C++ 保留 Qt 界面及底层 SDK 适配，工坊与通用脚本使用独立 Python 环境。
 
-基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.10**，支持 Windows x64。
+基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.11**，支持 Windows x64。
 
-[下载完整包](https://github.com/xueyuannnn/OK-WW-DualPC/releases) · [使用说明](docs/usage.md) · [问题反馈](https://github.com/xueyuannnn/OK-WW-DualPC/issues)
+[下载完整包](https://github.com/xueyuannnn/okww-dualpc/releases) · [使用说明](docs/usage.md) · [问题反馈](https://github.com/xueyuannnn/okww-dualpc/issues)
 
 ![任务界面](docs/images/tasks.png)
 

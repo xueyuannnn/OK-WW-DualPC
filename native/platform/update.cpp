@@ -165,7 +165,8 @@ QList<Release> newerReleases(const QJsonArray &json, const QString &current, boo
                 url = QUrl(std::as_const(item)["browser_download_url"].toString());
                 break;
             case rust::WorkflowOp::UpdateAssetUrlMatches:
-                out[0] = url == QUrl(base + name);
+                out[0] = url == QUrl(base + name) ||
+                         url == QUrl(product::legacyGithub + "/releases/download/" + tag + '/' + name);
                 break;
             case rust::WorkflowOp::UpdateAssetPackageName:
                 out[0] = name == "OK-WW-DualPC-full.zip";
@@ -509,8 +510,8 @@ void Client::runUpdate(int method, UpdateCall call) {
                 getPage();
                 break;
             case rust::WorkflowOp::UpdateClientRequestPage:
-                get(QUrl("https://api.github.com/repos/xueyuannnn/OK-WW-DualPC/releases?per_page=100&page=" +
-                         QString::number(page_)),
+                get(QUrl("https://api.github.com/repositories/" + QString::number(product::githubRepositoryId) +
+                         "/releases?per_page=100&page=" + QString::number(page_)),
                     8 * 1024 * 1024,
                     [this] { runUpdate(int(rust::WorkflowMethod::UpdateClientPageReply), {}); });
                 break;

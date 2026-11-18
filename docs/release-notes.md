@@ -1,12 +1,11 @@
-# 0.2.0-beta.10
+# 0.2.0-beta.11
 
-整理 Rust 工作区和构建目录，界面、任务流程及操作方式保持不变。
+项目更名为 **OKWW双机版**，仓库地址：[xueyuannnn/okww-dualpc](https://github.com/xueyuannnn/okww-dualpc)。
 
-- 业务模块按采集、输入、任务、队伍和工坊等职责分组。
-- Qt 界面、平台适配及行为对照测试独立整理。
-- 保留 Python 工坊接口，更新源码构建说明。
+- 同步软件内项目链接和更新入口。
+- 更新器使用固定仓库 ID 检查版本，并兼容新旧下载地址。
 
-已通过离线回归测试。真实设备和游戏内表现仍需实测。
+旧版若未显示可下载的更新，请从本页下载完整包覆盖升级，保留原有配置。
 
 下载 `OK-WW-DualPC-full.zip`，完整解压后运行 `OKWW-DualPC-Native-Dev.exe`，无需另装 Rust 或 Python。更新前备份旧目录中的 `native-full-data`，再复制到新版目录。
 

@@ -158,7 +158,7 @@ def main() -> None:
         shutil.copy2(source / name, stage / name)
     shutil.copy2(source / "docs/release-notes.md", stage / "ReleaseNotes.md")
     (stage / "README.md").write_text(
-        "# OK-WW-DualPC · OK-WW双机版 0.2.0 预览版\n\n"
+        "# OKWW双机版 · OKWW-DualPC 0.2.0 预览版\n\n"
         "鸣潮自动化工具，支持采集卡、DXGI、Win32 采集和 KMBox Net、SendInput 输入。"
         "Rust 内核执行内置任务、角色和设备控制，Qt 提供界面，独立 Python 引擎运行工坊连招。\n\n"
         "解压整个目录，运行 `OKWW-DualPC-Native-Dev.exe`。"

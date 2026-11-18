@@ -1,4 +1,4 @@
-# OK-WW-DualPC · OK-WW双机版
+# OKWW双机版 · OKWW-DualPC
 
 - [功能与快速开始](../README.md)
 - [设备连接与预览](devices.md)

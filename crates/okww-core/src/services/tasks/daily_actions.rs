@@ -251,6 +251,39 @@ impl Host {
         }
         Ok(())
     }
+    fn daily_stamina_observation(&self, previous: Option<i32>, claim: bool) -> Result<Progress> {
+        let mut value = Progress {
+            points: -1,
+            stamina: None,
+            echo: None,
+        };
+        for sample in 0..4 {
+            if sample > 0 {
+                self.action(Op::Sleep, &[0.7])?;
+            }
+            self.action(Op::OpenDailyProgress, &[0.])?;
+            value = self.daily_load()?;
+            if claim
+                && value.points > 0
+                && value.points > self.scalar(Op::DailyClaimedPoints, &[])? as i32
+            {
+                self.action(Op::ClaimDailyProgress, &[])?;
+                // Claiming objectives can change both the displayed points and
+                // the visible rows. Use the newly observed page, not the one
+                // that initiated the claim.
+                value = self.daily_load()?;
+            }
+            if value.ready()
+                || (value.points >= 0
+                    && value
+                        .stamina
+                        .is_some_and(|v| previous.is_none_or(|old| v > old)))
+            {
+                break;
+            }
+        }
+        Ok(value)
+    }
     fn daily_complete_stamina(&self) -> Result {
         if self.flag(Op::DailyNoProgress, &[])? {
             return Ok(());
@@ -279,11 +312,10 @@ impl Host {
         if self.flag(Op::HasInfo, &[])? && self.flag(Op::HasDailyCubeBudget, &[])? {
             self.action(Op::DailyCubeUsageInfo, &[])?;
         }
-        self.action(Op::ReadDailyDomainKind, &[])?;
+        let kind = self.scalar(Op::ReadDailyDomainKind, &[])?;
         let cost = self.scalar(Op::ReadDailyDomainCost, &[])? as i32;
         for _ in 0..6 {
-            self.action(Op::OpenDailyProgress, &[0.])?;
-            let before = self.daily_load()?;
+            let before = self.daily_stamina_observation(None, false)?;
             if before.ready() {
                 return Ok(());
             }
@@ -294,7 +326,21 @@ impl Host {
             if progress >= 180 {
                 return Ok(());
             }
-            self.action(Op::DailyEnsureMainDefault, &[])?;
+            self.action(Op::ReadDailyDomainQuota, &[kind])?;
+            let remaining = if self.flag(Op::DailyDomainQuotaNumber, &[])? {
+                let quota = self.scalar(Op::DailyDomainQuota, &[])?;
+                if quota != quota.floor() || !(0. ..=100000.).contains(&quota) {
+                    self.action(Op::DailyActionFailure, &[11.])?;
+                    return Err(HOST_ERROR);
+                }
+                let spent = self.scalar(Op::DailyDomainSpent, &[kind])? as i32;
+                (quota > 0.).then_some((quota as i32 - spent / cost).max(0))
+            } else {
+                None
+            };
+            if remaining == Some(0) {
+                return Ok(());
+            }
             self.action(Op::DailyOpenBossBook, &[])?;
             let [current, reserve, mut total] = self.call(Op::ReadDailyStamina, &[])?;
             if current < 0. || reserve < 0. || total < 0. {
@@ -313,16 +359,21 @@ impl Host {
                     self.action(Op::DailyActionFailure, &[9.])?;
                 }
             }
-            self.action(Op::DailyEnsureMainDefault, &[])?;
             self.action(Op::CreateDailyStaminaFarm, &[])?;
             let prefer = self.flag(Op::DailyPreferDouble, &[])?;
-            let batch = self.daily_stamina_batch(progress, cost, total as i32, prefer)?;
+            let batch = if let Some(remaining) = remaining {
+                // The configured quota covers both daily objectives and the
+                // later farming phase; do not force a single claim at 120/180.
+                cost * (if prefer { 2 } else { 1 })
+                    .min(remaining)
+                    .min(total as i32 / cost)
+            } else {
+                self.daily_stamina_batch(progress, cost, total as i32, prefer)?
+            };
             self.action(Op::FarmDailyStamina, &[batch as f64])?;
-            self.action(Op::OpenDailyProgress, &[0.])?;
-            let after = self.daily_load()?;
-            if after.points > self.scalar(Op::DailyClaimedPoints, &[])? as i32 && after.points > 0 {
-                self.action(Op::ClaimDailyProgress, &[])?;
-            }
+            // Re-read without consuming more stamina while the remote page
+            // settles. A missing counter alone is not proof of no progress.
+            let after = self.daily_stamina_observation(Some(progress), true)?;
             if after.ready() {
                 return Ok(());
             }
@@ -370,7 +421,6 @@ impl Host {
         if requested == 0 {
             return Ok(());
         }
-        self.action(Op::DailyEnsureMainDefault, &[])?;
         self.action(Op::DailyOpenBossBook, &[])?;
         let total = self.call(Op::ReadDailyStamina, &[])?[2];
         let limit = self.scalar(
@@ -378,7 +428,6 @@ impl Host {
             &[requested as f64, total, cost as f64],
         )?;
         self.action(Op::StoreDailyRemainingQuota, &[limit * cost as f64])?;
-        self.action(Op::DailyEnsureMainDefault, &[])?;
         self.action(Op::CreateDailyQuotaFarm, &[])?;
         self.action(Op::RunDailyQuotaStage, &[kind])
     }

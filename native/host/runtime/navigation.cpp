@@ -546,10 +546,10 @@ void Navigation::ensureMain(double timeout, bool back) {
     NavigationBridge b{c_};
     b.run(rust::WorkflowMethod::EnsureMain, {timeout, double(back)});
 }
-Match Navigation::openBook(const QString &feature) {
+Match Navigation::openBook(const QString &feature, bool reuseExisting) {
     NavigationBridge b{c_};
     b.name = feature;
-    b.run(rust::WorkflowMethod::OpenBook);
+    b.run(rust::WorkflowMethod::OpenBook, {double(reuseExisting)});
     return *b.tab;
 }
 TextLine Navigation::selectMonster(const QString &name, int maxPages) {

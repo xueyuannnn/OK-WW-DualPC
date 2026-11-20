@@ -74,7 +74,7 @@ impl Host {
             if requested <= 0 {
                 return Ok(());
             }
-            self.action(Op::OpenBossBook, &[])?;
+            self.action(Op::OpenBossBook, &[0.])?;
             let stamina = self.call(Op::ReadStamina, &[])?;
             let cost = Self::domain_cost(kind);
             must_use = self.domain_limit(requested, stamina[2] as i32, cost)? * cost;
@@ -86,7 +86,7 @@ impl Host {
         }
         self.action(Op::CallFarm, &[kind, must_use as f64, counted as u8 as f64])
     }
-    fn domain_farm(&self, kind: f64, mut must_use: i32, exact: bool) -> Result {
+    fn domain_farm(&self, kind: f64, mut must_use: i32, exact: bool, reuse_book: bool) -> Result {
         self.action(Op::DomainTaskScope, &[kind, exact as u8 as f64, 1.])?;
         if !(0..=24000000).contains(&must_use) {
             self.fail(102.)?;
@@ -103,7 +103,7 @@ impl Host {
         let mut entry_at_heal = false;
         loop {
             self.action(Op::Checkpoint, &[])?;
-            self.action(Op::OpenBossBook, &[])?;
+            self.action(Op::OpenBossBook, &[reuse_book as u8 as f64])?;
             let mut stamina = self.call(Op::ReadStamina, &[])?;
             if stamina[0] < 0. && kind == 0. {
                 self.action(Op::ClickRelative, &[0.04, 0.4, 1.])?;
@@ -227,7 +227,12 @@ impl Host {
             Method::DomainNext => self.domain_next(a[0])?,
             Method::DomainLeave => self.domain_leave(a[0])?,
             Method::DomainRun => self.domain_run(a[0], a[1] != 0.)?,
-            Method::DomainFarm => self.domain_farm(a[0], a[1] as i32, a[2] != 0.)?,
+            Method::DomainFarm => self.domain_farm(
+                a[0],
+                a[1] as i32,
+                a[2] != 0.,
+                a.get(3).is_some_and(|v| *v != 0.),
+            )?,
             _ => return Err(INVALID_ACTION),
         }
         Ok([0.; 3])

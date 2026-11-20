@@ -166,7 +166,7 @@ FarmResult DomainFarm::rustRun(int method, std::initializer_list<double> args, Q
                 break;
             }
             case rust::WorkflowOp::OpenBossBook: {
-                navigation_.openBook("gray_book_boss");
+                navigation_.openBook("gray_book_boss", a[0] != 0);
                 break;
             }
             case rust::WorkflowOp::ReadStamina: {
@@ -265,8 +265,9 @@ void DomainFarm::leave(DomainKind kind) {
 FarmResult DomainFarm::run(DomainKind kind, bool counted) {
     return rustRun(int(rust::WorkflowMethod::DomainRun), {double(int(kind)), double(counted)});
 }
-FarmResult DomainFarm::farm(DomainKind kind, int mustUse, bool exact, const QJsonObject &config) {
-    return rustRun(int(rust::WorkflowMethod::DomainFarm), {double(int(kind)), double(mustUse), double(exact)},
+FarmResult DomainFarm::farm(DomainKind kind, int mustUse, bool exact, const QJsonObject &config, bool reuseBook) {
+    return rustRun(int(rust::WorkflowMethod::DomainFarm),
+                   {double(int(kind)), double(mustUse), double(exact), double(reuseBook)},
                    config);
 }
 } // namespace okww::runtime

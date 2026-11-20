@@ -642,6 +642,7 @@ DailyProgress Daily::rustActions(int method, std::initializer_list<double> args)
         }
         case rust::WorkflowOp::ReadDailyDomainKind: {
             kind = dailyDomain(config_);
+            out[0] = int(kind);
             break;
         }
         case rust::WorkflowOp::ReadDailyDomainCost: {
@@ -649,7 +650,7 @@ DailyProgress Daily::rustActions(int method, std::initializer_list<double> args)
             break;
         }
         case rust::WorkflowOp::DailyOpenBossBook: {
-            navigation_.openBook("gray_book_boss");
+            navigation_.openBook("gray_book_boss", true);
             break;
         }
         case rust::WorkflowOp::ReadDailyStamina: {
@@ -677,19 +678,21 @@ DailyProgress Daily::rustActions(int method, std::initializer_list<double> args)
             break;
         }
         case rust::WorkflowOp::FarmDailyStamina: {
-            farm->farm(kind, int(a[0]), true, config_);
+            farm->farm(kind, int(a[0]), true, config_, true);
             break;
         }
         case rust::WorkflowOp::ClaimDailyProgress: {
-            claim();
+            progress = claim();
             break;
         }
         case rust::WorkflowOp::DailyStaminaNoProgressInfo: {
-            c_.info("每日体力进度", "补做后未确认进度增加，停止进一步消耗");
+            c_.info("每日体力进度", progress.stamina
+                ? QString("多次复核后进度仍为 %1/180，未追加体力消耗").arg(*progress.stamina)
+                : QString("多次复核后仍未识别到体力进度，未追加体力消耗"));
             break;
         }
         case rust::WorkflowOp::DailyStaminaNoProgressNotify: {
-            c_.notify("每日体力进度待检查", "补做后未确认进度增加，停止进一步消耗", true);
+            c_.notify("每日体力进度待检查", "已等待页面更新并多次复核，仍未确认进度增加，未追加体力消耗", true);
             break;
         }
         case rust::WorkflowOp::ReadDailyDomainQuota: {
@@ -740,7 +743,7 @@ DailyProgress Daily::rustActions(int method, std::initializer_list<double> args)
             break;
         }
         case rust::WorkflowOp::FarmDailyQuota: {
-            farm->farm(kind, remaining, true, config_);
+            farm->farm(kind, remaining, true, config_, true);
             break;
         }
         case rust::WorkflowOp::DailyActionFailure: {

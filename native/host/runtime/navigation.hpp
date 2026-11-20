@@ -24,7 +24,7 @@ class Navigation {
     void ensureMain(double timeout = 30, bool back = true);
     void confirmDialog(bool right = true);
     void exitRealm(double timeout = 120);
-    Match openBook(const QString &feature = "gray_book_all_monsters");
+    Match openBook(const QString &feature = "gray_book_all_monsters", bool reuseExisting = false);
     void bookCategory(const QString &category, double after = 2);
     TextLine selectMonster(const QString &name, int maxPages = 40);
     void teleportNearest();

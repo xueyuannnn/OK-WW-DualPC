@@ -24,7 +24,8 @@ class DomainFarm {
         : c_(context), combat_(combat), navigation_(context),
           world_(context, [&combat] { return combat.active(); }) {}
     FarmResult run(DomainKind kind, bool counted = false);
-    FarmResult farm(DomainKind kind, int mustUse, bool exactCount, const QJsonObject &config);
+    FarmResult farm(DomainKind kind, int mustUse, bool exactCount, const QJsonObject &config,
+                    bool reuseBook = false);
 };
 int domainCost(DomainKind kind);
 int domainCountLimit(int requested, int totalStamina, int cost);

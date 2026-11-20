@@ -95,6 +95,112 @@ QJsonObject observation(int scene, bool rust) {
 class DailyContracts : public QObject {
     Q_OBJECT
   private slots:
+    void staminaRechecksThePageBeforeSpendingAgain_data() {
+        QTest::addColumn<QString>("scenario");
+        for (const auto &name : {"claim-refresh", "delayed-page", "complete-on-claim", "unchanged", "unreadable", "cancel",
+                                 "configured-double", "configured-odd", "configured-one"})
+            QTest::newRow(name) << QString(name);
+    }
+    void staminaRechecksThePageBeforeSpendingAgain() {
+        QFETCH(QString, scenario);
+        DailyProgress observed;
+        int spent = 0, postReads = 0, claimed = -1, waits = 0;
+        bool noProgress = false;
+        QJsonArray batches;
+        const auto run = [&] {
+            rust::workflowRun(rust::WorkflowMethod::DailyCompleteStamina, {},
+                [&](rust::WorkflowOp op, const double *a, double *out) {
+                    switch (op) {
+                    case rust::WorkflowOp::DailyNoProgress: out[0] = noProgress; break;
+                    case rust::WorkflowOp::DailyUseCubes:
+                    case rust::WorkflowOp::HasInfo:
+                    case rust::WorkflowOp::HasNotify:
+                    case rust::WorkflowOp::HasDailyCubeBudget: out[0] = 0; break;
+                    case rust::WorkflowOp::ReadDailyDomainKind:
+                    case rust::WorkflowOp::ReadDailyDomainQuota:
+                    case rust::WorkflowOp::DailyEnsureMainDefault:
+                    case rust::WorkflowOp::DailyOpenBossBook:
+                    case rust::WorkflowOp::CreateDailyStaminaFarm: break;
+                    case rust::WorkflowOp::ReadDailyDomainCost: out[0] = 60; break;
+                    case rust::WorkflowOp::DailyDomainQuotaNumber:
+                        out[0] = scenario.startsWith("configured-"); break;
+                    case rust::WorkflowOp::DailyDomainQuota:
+                        out[0] = scenario == "configured-odd" ? 3 : scenario == "configured-one" ? 1 : 20; break;
+                    case rust::WorkflowOp::DailyDomainSpent: out[0] = spent; break;
+                    case rust::WorkflowOp::ReadDailyStamina:
+                        out[0] = out[2] = 240 - spent; out[1] = 0; break;
+                    case rust::WorkflowOp::DailyPreferDouble: out[0] = 1; break;
+                    case rust::WorkflowOp::OpenDailyProgress:
+                        if (!spent) observed = {0, 0, false};
+                        else if (spent >= 180) observed = {180, 100, false};
+                        else {
+                            ++postReads;
+                            observed = {std::nullopt, 20, false};
+                            if (scenario == "unchanged") observed.stamina = 0;
+                            if ((scenario == "claim-refresh" && claimed >= 60) ||
+                                (scenario == "delayed-page" && postReads >= 3))
+                                observed = {120, 60, false};
+                            if (scenario.startsWith("configured-")) observed = {spent, 60, false};
+                        }
+                        break;
+                    case rust::WorkflowOp::LoadDailyProgress:
+                        out[0] = observed.points; out[1] = observed.stamina.value_or(-1); out[2] = 0;
+                        break;
+                    case rust::WorkflowOp::FarmDailyStamina:
+                        batches.append(int(a[0])); spent += int(a[0]); break;
+                    case rust::WorkflowOp::DailyClaimedPoints: out[0] = claimed; break;
+                    case rust::WorkflowOp::ClaimDailyProgress:
+                        if (scenario == "claim-refresh" && spent == 120) observed = {120, 60, false};
+                        if (scenario == "complete-on-claim") observed = {120, 100, false};
+                        claimed = observed.points;
+                        break;
+                    case rust::WorkflowOp::Sleep:
+                        ++waits;
+                        if (scenario == "cancel") throw Cancelled();
+                        break;
+                    case rust::WorkflowOp::SetDailyNoProgress: noProgress = true; break;
+                    default: fail("Unexpected daily recovery operation: " + QString::number(int(op)));
+                    }
+                });
+        };
+        if (scenario == "cancel") QVERIFY_THROWS_EXCEPTION(Cancelled, run());
+        else run();
+        const bool recovered = scenario == "claim-refresh" || scenario == "delayed-page" || scenario == "configured-odd";
+        const auto expected = scenario == "configured-double" ? QJsonArray({120,120}) :
+            scenario == "configured-one" ? QJsonArray({60}) : recovered ? QJsonArray({120,60}) : QJsonArray({120});
+        QCOMPARE(batches, expected);
+        QCOMPARE(noProgress, scenario == "unchanged" || scenario == "unreadable");
+        if (scenario == "delayed-page" || scenario == "unchanged" || scenario == "unreadable")
+            QVERIFY(waits > 0 && waits <= 4);
+    }
+    void remainingConfiguredQuotaUsesCurrentAndReserveWithoutCubes() {
+        int remaining = -1, farmed = 0;
+        std::function<void(rust::WorkflowOp,const double *,double *)> host;
+        host = [&](rust::WorkflowOp op,const double *a,double *out) {
+            switch(op) {
+            case rust::WorkflowOp::ReadDailyDomainQuota:
+            case rust::WorkflowOp::DailyOpenBossBook:
+            case rust::WorkflowOp::CreateDailyQuotaFarm: break;
+            case rust::WorkflowOp::DailyDomainQuotaNumber: out[0]=1; break;
+            case rust::WorkflowOp::DailyDomainQuota: out[0]=20; break;
+            case rust::WorkflowOp::DailyDomainSpent: out[0]=240; break;
+            case rust::WorkflowOp::DailyKindCost: out[0]=60; break;
+            case rust::WorkflowOp::ReadDailyStamina: out[0]=60; out[1]=120; out[2]=180; break;
+            case rust::WorkflowOp::DailyDomainCountLimit:
+                out[0]=domainCountLimit(int(a[0]),int(a[1]),int(a[2])); break;
+            case rust::WorkflowOp::StoreDailyRemainingQuota: remaining=int(a[0]); break;
+            case rust::WorkflowOp::DailyRemainingQuota: out[0]=remaining; break;
+            case rust::WorkflowOp::RunDailyQuotaStage:
+                rust::workflowRun(rust::WorkflowMethod::DailyQuotaOperation,{},host); break;
+            case rust::WorkflowOp::FarmDailyQuota: farmed=remaining; break;
+            default: fail("Configured farming must not close the guidebook or consume cubes");
+            }
+        };
+        const std::array args{0.};
+        rust::workflowRun(rust::WorkflowMethod::DailyFarmCount,args,host);
+        QCOMPARE(farmed,180);
+        QCOMPARE(farmed/60+4,7); // Four daily claims plus three affordable claims, below the cap of 20.
+    }
     void progress_data() {
         QTest::addColumn<int>("scene");
         for (int i = 0; i < 4096; ++i)

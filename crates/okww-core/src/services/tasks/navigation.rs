@@ -153,8 +153,29 @@ impl Host {
             }
         }
     }
-    fn open_book(&self) -> Result {
+    fn open_book(&self, reuse_existing: bool) -> Result {
         self.retry(2., || {
+            if reuse_existing {
+                self.action(Op::Refresh, &[])?;
+                self.action(Op::ClearTab, &[])?;
+                if !self.flag(Op::InTeam, &[])?
+                    && self.flag(Op::FindBookTab, &[0.6])?
+                    && self.observe(
+                        || {
+                            self.action(Op::ClearTab, &[])?;
+                            Ok(!self.flag(Op::InTeam, &[])?
+                                && self.flag(Op::FindBookTab, &[0.6])?)
+                        },
+                        0.8,
+                        0.15,
+                    )?
+                {
+                    self.action(Op::ClickTab, &[1.5])?;
+                    if !self.flag(Op::InTeam, &[])? {
+                        return Ok(());
+                    }
+                }
+            }
             self.ensure_main(30., true)?;
             if self.flag(Op::InTeam, &[])? {
                 self.action(Op::Key, &[5., 4.])?;
@@ -290,7 +311,7 @@ impl Host {
     fn heal(&self) -> Result {
         self.ensure_main(120., true)?;
         self.action(Op::DefaultBookName, &[])?;
-        self.open_book()?;
+        self.open_book(false)?;
         self.action(Op::CrownlessName, &[self.scalar(Op::LanguageKind, &[])?])?;
         self.select_monster(40.)?;
         self.action(Op::ClickRelative, &[0.89, 0.92, 1.])?;
@@ -455,7 +476,7 @@ impl Host {
             Method::Confirm => self.confirm(a[0] != 0.)?,
             Method::ExitRealm => self.exit_realm(a[0])?,
             Method::EnsureMain => self.ensure_main(a[0], a[1] != 0.)?,
-            Method::OpenBook => self.open_book()?,
+            Method::OpenBook => self.open_book(a.first().is_some_and(|v| *v != 0.))?,
             Method::SelectMonster => self.select_monster(a[0])?,
             Method::Category => self.category(a[0])?,
             Method::Waypoint => value = self.waypoint()? as u8 as f64,

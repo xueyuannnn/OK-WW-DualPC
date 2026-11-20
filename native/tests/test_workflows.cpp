@@ -360,7 +360,13 @@ class WorkflowTests : public QObject {
         QVERIFY(!popover);
         QVERIFY(!QFile::exists(s.directory.path() + "/configs-dualpc/DailyStaminaUsage.json"));
     }
+    void guidebookRejectsWorldHudEvenIfASidebarIconMatches_data() {
+        QTest::addColumn<bool>("reuse");
+        QTest::newRow("normal") << false;
+        QTest::newRow("reuse") << true;
+    }
     void guidebookRejectsWorldHudEvenIfASidebarIconMatches() {
+        QFETCH(bool,reuse);
         Scenes s;
         s.frame("world", {"world_earth_icon", "char_2_text", "char_3_text", "gray_book_quest"});
         s.profile.set("Task Recovery", "Resume Interrupted Tasks", false);
@@ -369,10 +375,27 @@ class WorkflowTests : public QObject {
             if (s.leftUp(event) && s.pointer.x() < s.size.width() * .1) ++sidebarClicks;
         };
         s.show("world");
-        QVERIFY_THROWS_EXCEPTION(NavigationFailure, Navigation(s.c).openBook("gray_book_quest"));
+        QVERIFY_THROWS_EXCEPTION(NavigationFailure, Navigation(s.c).openBook("gray_book_quest",reuse));
         QCOMPARE(sidebarClicks, 0);
         QCOMPARE(s.scene, QString("world"));
         QVERIFY(s.clock.time < 15);
+    }
+    void dailyFarmReusesTheOpenGuidebookWithoutEscapeOrF2() {
+        Scenes s;
+        s.frame("book", {"gray_book_boss"});
+        int escapes = 0, opens = 0, tabs = 0;
+        s.action = [&](auto event) {
+            if (s.keyUp(event,Input::keyCode("esc"))) {++escapes; s.scene="world";}
+            if (s.keyUp(event,Input::keyCode("f2"))) {++opens; s.scene="book";}
+            if (s.leftUp(event)) ++tabs;
+        };
+        s.show("book");
+        Navigation(s.c).openBook("gray_book_boss",true);
+        QCOMPARE(escapes,0);
+        QCOMPARE(opens,0);
+        QCOMPARE(tabs,1);
+        QCOMPARE(s.scene,QString("book"));
+        QVERIFY(s.clock.time < 3);
     }
     void dailyReusesItsPageAndRecoversDelayedOrClosedMenus_data() {
         QTest::addColumn<int>("missingFrames");

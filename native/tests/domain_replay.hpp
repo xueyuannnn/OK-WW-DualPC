@@ -233,7 +233,7 @@ struct Probe {
                     result = {int(a[0]), int(a[1]), int(a[2]), a[3] != 0};
                     break;
                 case O::CallFarm:
-                    result = rustRun(rust::WorkflowMethod::DomainFarm, {a[0], a[1], a[2]}, data);
+                    result = rustRun(rust::WorkflowMethod::DomainFarm, {a[0], a[1], a[2], 0.}, data);
                     break;
                 case O::FarmProgress: {
                     const auto label =
@@ -438,7 +438,7 @@ inline QJsonObject trace(int scene, bool rust) {
             outcome = p.rustRun(
                 scene & 128 ? rust::WorkflowMethod::DomainRun : rust::WorkflowMethod::DomainFarm,
                 scene & 128 ? std::initializer_list<double>{double(int(kind)), double(exact)}
-                            : std::initializer_list<double>{double(int(kind)), double(must), double(exact)},
+                            : std::initializer_list<double>{double(int(kind)), double(must), double(exact), 0.},
                 scene & 128 ? QJsonObject{} : p.config);
         else {
             DomainFarm farm(p.c, p.combat);

@@ -41,6 +41,7 @@ FarmResult DomainFarm::rustRun(int method, std::initializer_list<double> args, Q
     FarmResult result;
     std::optional<TaskScope> scope;
     std::optional<Match> confirm;
+    std::optional<TextLine> rechallenge;
     rust::workflowRun(
         rust::WorkflowMethod(method), std::span<const double>(args.begin(), args.size()),
         [&](rust::WorkflowOp op, const double *a, double *out) {
@@ -209,6 +210,17 @@ FarmResult DomainFarm::rustRun(int method, std::initializer_list<double> args, Q
                 combat_.combatOnce(options);
                 break;
             }
+            case rust::WorkflowOp::FarmRechallengeButton:
+                rechallenge = matchingText(c_.text(.54, .81, .72, .90),
+                    "^\\s*(重新挑战|重新挑戰|再次挑战|再次挑戰|Rechallenge)\\s*$");
+                out[0] = rechallenge.has_value();
+                break;
+            case rust::WorkflowOp::ClickFarmRechallenge:
+                c_.click(*rechallenge, a[0]);
+                break;
+            case rust::WorkflowOp::FarmStillInCombat:
+                out[0] = navigation_.inRealm() && combat_.active();
+                break;
             case rust::WorkflowOp::WalkToTreasure: {
                 world_.walkToTreasure();
                 break;

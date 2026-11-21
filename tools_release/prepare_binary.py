@@ -36,6 +36,20 @@ def copy_tree(source: Path, target: Path) -> None:
     shutil.copytree(windows_path(source), windows_path(target), dirs_exist_ok=True, ignore=COPY_IGNORE)
 
 
+def copy_runtime(source: Path, target: Path, link_libraries: bool) -> None:
+    """Optionally share immutable DLL/PYD dependencies in local build staging."""
+    def copy_file(src, dst):
+        if link_libraries and Path(src).suffix.lower() in {'.dll', '.pyd'} and not Path(dst).exists():
+            os.link(src, dst)
+            return dst
+        return shutil.copy2(src, dst)
+    if source.is_dir():
+        shutil.copytree(windows_path(source), windows_path(target), dirs_exist_ok=True,
+                        ignore=COPY_IGNORE, copy_function=copy_file)
+    else:
+        copy_file(windows_path(source), windows_path(target))
+
+
 def source_snapshot(review: Path) -> Path:
     source = review / SOURCE_NAME
     manifest = json.loads((source / "SOURCE-MANIFEST.json").read_text(encoding="utf-8"))
@@ -116,6 +130,8 @@ def main() -> None:
     parser.add_argument("--native-build", type=Path, required=True,
                         help="Release directory containing the rebuilt application and native_runtime_check")
     parser.add_argument("--review", type=Path, default=ROOT / "release-review")
+    parser.add_argument("--link-runtime", action="store_true",
+                        help="Hard-link immutable DLL/PYD dependencies in staging to reduce disk use")
     args = parser.parse_args()
     runtime, review = args.runtime.resolve(), args.review.resolve()
     native_build = args.native_build.resolve()
@@ -133,9 +149,9 @@ def main() -> None:
     # deliberately outside this list, even if the source directory gains them.
     for item in runtime.iterdir():
         if item.is_file() and item.suffix.lower() == ".dll":
-            shutil.copy2(item, stage / item.name)
+            copy_runtime(item, stage / item.name, args.link_runtime)
         elif item.name in RUNTIME_FOLDERS and item.is_dir():
-            copy_tree(item, stage / item.name)
+            copy_runtime(item, stage / item.name, args.link_runtime)
     for name in APPLICATIONS:
         shutil.copy2(native_build / name, stage / name)
     executable_hash = digest(stage / "OKWW-DualPC-Native-Dev.exe")
@@ -144,6 +160,7 @@ def main() -> None:
     copy_tree(runtime / "assets/ocr", stage / "assets/ocr")
     copy_tree(source / "native/resources", stage / "native/resources")
     copy_tree(source / "native/licenses/rust", stage / "licenses/rust")
+    copy_tree(source / "native/licenses/ocr6", stage / "licenses/ocr6")
     copy_tree(source, stage / "source")
 
     engine = stage / "workshop-engine"
@@ -152,7 +169,7 @@ def main() -> None:
     for name in ENGINE_FILES:
         shutil.copy2(source / name, engine / name)
     copy_tree(source / "workshop/bridge", engine / "workshop/bridge")
-    copy_tree(runtime / "workshop-engine/runtime", engine / "runtime")
+    copy_runtime(runtime / "workshop-engine/runtime", engine / "runtime", args.link_runtime)
     (engine / "ok_tasks").mkdir(exist_ok=True)
     for name in ("LICENSE.txt", "THIRD-PARTY-DUALPC.md", "UPSTREAM.lock.json"):
         shutil.copy2(source / name, stage / name)

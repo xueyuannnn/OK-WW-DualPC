@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "repository": "ok-oldking/ok-wuthering-waves",
+  "release": "v3.8.9",
+  "commit": "46a334c5a8d782596ed17026843df5b81d87010c",
+  "files": [
+    {
+      "path": "src/char/Lily.py",
+      "sha256": "592dc19a4ed16052ada662b293b6aae069b7e75e4dcb2307ad103900e162555b"
+    },
+    {
+      "path": "src/char/CharFactory.py",
+      "sha256": "d25ba5e522c7103944a807ea055a41cb4d39748faf270ef5d0523816bb740cfe"
+    },
+    {
+      "path": "src/task/GalGameTask.py",
+      "sha256": "f7a3a8e2b1a77c31afc010892b2a4b5a21e747d3c9b79546942c0a8c7b41feb8"
+    },
+    {
+      "path": "src/task/RahaiBlocksTask.py",
+      "sha256": "1bab55cb348db9eb5214679b762572ecf06608d95c2f1453d7ba9e20b61f0e16"
+    },
+    {
+      "path": "src/task/rahai_blocks.py",
+      "sha256": "80be72df8594354495d959be47f1f3753a22da24afdece34395ab217e5d7947e"
+    },
+    {
+      "path": "src/task/BaseWWTask.py",
+      "sha256": "2c9383b1d623e80d3c84da2447e3d853047524b1fb1ed57c3ce412d1a056979d"
+    },
+    {
+      "path": "src/task/BaseCombatTask.py",
+      "sha256": "58ff3aa0d04cfd13a1e0fb3311c895fec2879de7e7d70af27e1fb9fc9c6febe6"
+    },
+    {
+      "path": "src/task/TacetTask.py",
+      "sha256": "a3f67edebb650bd8022e0f5a831faa93ab7ef469369614c6be0f0af9b4e487b2"
+    },
+    {
+      "path": "src/task/MultiAccountDailyTask.py",
+      "sha256": "5988e1bbc0c5f6762dda16391cd55c1cb4a13cfcdda284a7a2cc88a068bd49f4"
+    },
+    {
+      "path": ".github/scripts/extract_issue_log.py",
+      "sha256": "ed91f72fd5ac3d498f1181843f94b09c3199e6a3fe08579f1e0fe44226877d1d"
+    }
+  ],
+  "features": [
+    "Lily",
+    "Hiyuki alternate skin",
+    "Zani target correction",
+    "cloud/compressed combat recognition",
+    "cloud disconnect recovery",
+    "Tacet reward re-entry",
+    "waypoint alternatives",
+    "Abyss intro dismissal",
+    "account-specific daily configuration",
+    "PP-OCRv6 small",
+    "Rahai Blocks",
+    "GalGame"
+  ],
+  "activity_adapters": "Unified native capture, OCR, cancellation and input; no additional input backend",
+  "templates": "assets/upstream-20261121/manifest.json",
+  "ocr": "assets/ocr/ppocrv6-small/manifest.json"
+}

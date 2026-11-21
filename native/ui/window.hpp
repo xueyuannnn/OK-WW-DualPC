@@ -231,6 +231,8 @@ class Window final : public QMainWindow {
     void buildFields(QWidget *target, const QJsonArray &fields,
                      std::function<void(QString, QJsonValue)> changed);
     void flushFieldSaves();
+    void editAccountProfiles(QJsonArray profiles, std::function<void(QJsonValue)> changed);
+    void openCloudGame();
     void send(QJsonObject cmd, std::function<void(QJsonObject)> callback = {},
               std::function<void(QString)> failed = {});
     void runAsync(std::function<QJsonObject()> work, std::function<void(QJsonObject)> done = {});

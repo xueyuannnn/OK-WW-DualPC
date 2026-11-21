@@ -172,6 +172,7 @@ def main():
             if key in task.config:
                 dict.__setitem__(task.config, key, value)
         task.use_liberation = q.get('use_liberation', True)
+        task._native_vision = q.get('vision', {})
         task._in_combat = q.get('in_combat', False)
         task.has_lavitator = q.get('has_levitator', False)
         if op == 'load':

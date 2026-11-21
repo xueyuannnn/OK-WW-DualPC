@@ -296,6 +296,24 @@ impl Host {
     }
     pub(in crate::services) fn run_stamina(&self, method: Method, a: &[f64]) -> Result<[f64; 3]> {
         match method {
+            Method::AccountCubeJournal => {
+                if !self.flag(Op::CubeAccountKnown, &[])? {
+                    self.action(Op::CubeSelectLegacyPath, &[])?;
+                    return Ok([0.; 3]);
+                }
+                self.action(Op::CubeSelectAccountPath, &[])?;
+                if !self.flag(Op::CubeAccountFileExists, &[])?
+                    && self.flag(Op::CubeLegacyFileExists, &[])?
+                {
+                    self.action(Op::CubeReadLegacyJournal, &[])?;
+                    if !self.flag(Op::CubeLegacyAssigned, &[])?
+                        || self.flag(Op::CubeLegacyAssignedHere, &[])?
+                    {
+                        self.action(Op::CubeCopyLegacyJournal, &[])?;
+                        self.action(Op::CubeAssignLegacyJournal, &[])?;
+                    }
+                }
+            }
             Method::ClaimStamina => return self.claim_stamina(a[0], a[1], a[2] != 0.),
             Method::UseDailyCube => {
                 return Ok([self.use_daily_cube(a[0] != 0.)? as u8 as f64, 0., 0.])

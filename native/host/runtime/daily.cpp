@@ -612,7 +612,7 @@ DailyProgress Daily::rustActions(int method, std::initializer_list<double> args)
             break;
         }
         case rust::WorkflowOp::CreateDailyCubeBudget: {
-            budget = std::make_unique<CubeBudget>(data_ + "/configs-dualpc/DailyStaminaUsage.json",
+            budget = std::make_unique<CubeBudget>(dailyCubeJournal(data_ + "/configs-dualpc",cubeAccount_),
                                                   config_["Daily Stamina Cube Limit"].toInt(4));
             break;
         }
@@ -802,7 +802,8 @@ DailyProgress Daily::claim() { return rustActions(int(rust::WorkflowMethod::Dail
 void Daily::mail() { rustActions(int(rust::WorkflowMethod::DailyMail), {}); }
 void Daily::battlePass() { rustActions(int(rust::WorkflowMethod::DailyBattlePass), {}); }
 void Daily::validate() { rustActions(int(rust::WorkflowMethod::DailyValidate), {}); }
-void Daily::run(bool enhanced) {
+void Daily::run(bool enhanced, const QJsonObject &overrides, const QString &account) {
+    cubeAccount_ = account;
     std::optional<TaskScope> scope;
     QJsonArray selected, steps;
     QVector<QPair<QString, std::function<void()>>> extras;
@@ -826,10 +827,13 @@ void Daily::run(bool enhanced) {
             switch (op) {
             case rust::WorkflowOp::CreateDailyTaskScope: {
                 scope.emplace(c_, a[0] != 0 ? "DailyTask2" : "DailyTask");
+                c_.taskOverrides = overrides;
                 break;
             }
             case rust::WorkflowOp::InitializeDailyRun: {
                 config_ = c_.profile.group(c_.task);
+                for (auto it = overrides.begin(); it != overrides.end(); ++it)
+                    config_[it.key()] = it.value();
                 noProgress_ = false;
                 failed_.clear();
                 dailySpent_.clear();

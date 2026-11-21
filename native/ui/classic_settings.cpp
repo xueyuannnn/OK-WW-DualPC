@@ -1,6 +1,91 @@
 #include "window.hpp"
 #include <QDesktopServices>
+#include <QSettings>
 namespace okww {
+void Window::openCloudGame() {
+    QStringList candidates;
+    QSettings user("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe", QSettings::NativeFormat);
+    QSettings machine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe", QSettings::NativeFormat);
+    candidates << user.value(".").toString() << machine.value(".").toString();
+    for (const auto &variable : {"ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"})
+        candidates << qEnvironmentVariable(variable) + "/Microsoft/Edge/Application/msedge.exe";
+    const QStringList arguments{"--app=https://mc.kurogames.com/cloud/#/", "--window-size=1920,1080",
+        "--start-fullscreen", "--force-color-profile=srgb", "--disable-direct-composition",
+        "--webrtc-ip-handling-policy=default"};
+    for (const auto &path : candidates)
+        if (QFile::exists(path) && QProcess::startDetached(path, arguments)) return;
+    // Other default browsers can open the page; colour/compositor flags require Edge.
+    QDesktopServices::openUrl(QUrl("https://mc.kurogames.com/cloud/#/"));
+    QMessageBox::information(this, "云·鸣潮", "未找到 Microsoft Edge，已用默认浏览器打开网页。请手动开启 16:9 全屏，并关闭浏览器 HDR。登录后再启动任务。");
+}
+
+void Window::editAccountProfiles(QJsonArray profiles, std::function<void(QJsonValue)> changed) {
+    auto dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle("多账号日常 · 独立配置");
+    dialog->resize(960, 720);
+    auto layout = new QVBoxLayout(dialog);
+    auto hint = new QLabel("账号填写登录框中显示的名称（包括星号）。匹配到的账号使用自己的每日参数，其他账号沿用全局每日参数。开启独立配置后，会先重新登录一次以确认当前账号。更改自动保存。", dialog);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    auto body = new QHBoxLayout;
+    auto left = new QVBoxLayout;
+    auto accounts = new QListWidget;
+    accounts->setFixedWidth(220);
+    left->addWidget(accounts);
+    auto controls = new QHBoxLayout;
+    auto add = new QPushButton("添加账号"), remove = new QPushButton("移除");
+    controls->addWidget(add); controls->addWidget(remove);
+    left->addLayout(controls); body->addLayout(left);
+    auto area = new QScrollArea;
+    area->setWidgetResizable(true); area->setFrameShape(QFrame::NoFrame);
+    auto form = new QWidget; area->setWidget(form); body->addWidget(area, 1);
+    layout->addLayout(body, 1);
+    auto close = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(close, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+    layout->addWidget(close);
+    auto entries = std::make_shared<QJsonArray>(profiles);
+    QJsonArray schema;
+    for (const auto &value : catalog_["tasks"].toArray())
+        if (value.toObject()["id"] == "DailyTask") schema = value.toObject()["fields"].toArray();
+    for (const auto &entry : *entries) accounts->addItem(entry.toObject()["account"].toString());
+    connect(accounts, &QListWidget::currentRowChanged, dialog,
+        [this, form, entries, schema, changed](int index) {
+            QJsonArray fields;
+            if (index >= 0 && index < entries->size()) {
+                const auto values = entries->at(index).toObject()["values"].toObject();
+                for (const auto &value : schema) {
+                    auto field = value.toObject();
+                    if (field["key"] == "Exit After Task") continue;
+                    if (values.contains(field["key"].toString())) field["value"] = values[field["key"].toString()];
+                    fields.append(field);
+                }
+            }
+            buildFields(form, fields, [entries, changed, index](QString key, QJsonValue value) {
+                if (index < 0 || index >= entries->size()) return;
+                auto entry = entries->at(index).toObject();
+                auto values = entry["values"].toObject(); values[key] = value; entry["values"] = values;
+                (*entries)[index] = entry; changed(*entries);
+            });
+        });
+    connect(add, &QPushButton::clicked, dialog, [dialog, accounts, entries, changed] {
+        bool ok = false;
+        const auto name = QInputDialog::getText(dialog, "添加账号", "登录框中显示的完整账号名", QLineEdit::Normal, {}, &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        for (const auto &entry : *entries)
+            if (entry.toObject()["account"].toString().compare(name, Qt::CaseInsensitive) == 0) {
+                QMessageBox::information(dialog, "账号已存在", "请在左侧选择该账号修改配置。"); return;
+            }
+        entries->append(QJsonObject{{"account", name}, {"values", QJsonObject{}}});
+        accounts->addItem(name); accounts->setCurrentRow(accounts->count() - 1); changed(*entries);
+    });
+    connect(remove, &QPushButton::clicked, dialog, [accounts, entries, changed] {
+        const int index = accounts->currentRow(); if (index < 0) return;
+        entries->removeAt(index); delete accounts->takeItem(index); changed(*entries);
+    });
+    if (accounts->count()) accounts->setCurrentRow(0);
+    dialog->show();
+}
 namespace {
 QLabel *caption(QString text) {
     auto label = new QLabel(text);

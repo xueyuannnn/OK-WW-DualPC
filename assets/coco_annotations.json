@@ -1277,6 +1277,48 @@
       "width": 3840,
       "height": 2160,
       "file_name": "upstream-characters/images/suoming_forte_e.png"
+    },
+    {
+      "id": 299,
+      "file_name": "upstream-20261121/images/char_lily.png",
+      "width": 3840,
+      "height": 2160
+    },
+    {
+      "id": 300,
+      "file_name": "upstream-20261121/images/char_hiyuki2.png",
+      "width": 3840,
+      "height": 2160
+    },
+    {
+      "id": 301,
+      "file_name": "upstream-20261121/images/lily_heavy.png",
+      "width": 3840,
+      "height": 2160
+    },
+    {
+      "id": 302,
+      "file_name": "upstream-20261121/images/lily_liberation.png",
+      "width": 3840,
+      "height": 2160
+    },
+    {
+      "id": 303,
+      "file_name": "upstream-20261121/images/lily_slumberland.png",
+      "width": 3840,
+      "height": 2160
+    },
+    {
+      "id": 304,
+      "file_name": "upstream-20261121/images/has_target_cloud.png",
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "id": 305,
+      "file_name": "upstream-20261121/images/no_target_cloud.png",
+      "width": 1920,
+      "height": 1080
     }
   ],
   "annotations": [
@@ -4564,36 +4606,6 @@
       "segmentation": []
     },
     {
-      "id": 324,
-      "image_id": 154,
-      "category_id": 161,
-      "bbox": [
-        1198,
-        799,
-        21,
-        22
-      ],
-      "area": 462,
-      "iscrowd": 0,
-      "ignore": 0,
-      "segmentation": []
-    },
-    {
-      "id": 326,
-      "image_id": 156,
-      "category_id": 192,
-      "bbox": [
-        1198,
-        799,
-        21,
-        22
-      ],
-      "area": 462,
-      "iscrowd": 0,
-      "ignore": 0,
-      "segmentation": []
-    },
-    {
       "id": 328,
       "image_id": 158,
       "category_id": 185,
@@ -5393,6 +5405,104 @@
         74
       ],
       "area": 5772,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 443,
+      "image_id": 299,
+      "category_id": 290,
+      "bbox": [
+        3560,
+        476,
+        56,
+        65
+      ],
+      "area": 3640,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 444,
+      "image_id": 300,
+      "category_id": 291,
+      "bbox": [
+        3558,
+        482,
+        64,
+        62
+      ],
+      "area": 3968,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 445,
+      "image_id": 301,
+      "category_id": 292,
+      "bbox": [
+        2839,
+        1900,
+        54,
+        60
+      ],
+      "area": 3240,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 446,
+      "image_id": 302,
+      "category_id": 293,
+      "bbox": [
+        3603,
+        1904,
+        59,
+        67
+      ],
+      "area": 3953,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 447,
+      "image_id": 303,
+      "category_id": 294,
+      "bbox": [
+        3584,
+        1937,
+        44,
+        44
+      ],
+      "area": 1936,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 448,
+      "image_id": 304,
+      "category_id": 161,
+      "bbox": [
+        1434,
+        959,
+        31,
+        29
+      ],
+      "area": 899,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 449,
+      "image_id": 305,
+      "category_id": 192,
+      "bbox": [
+        1434,
+        959,
+        31,
+        29
+      ],
+      "area": 899,
       "iscrowd": 0,
       "segmentation": []
     }
@@ -6841,6 +6951,31 @@
     {
       "id": 289,
       "name": "suoming_forte_e",
+      "supercategory": ""
+    },
+    {
+      "id": 290,
+      "name": "char_lily",
+      "supercategory": ""
+    },
+    {
+      "id": 291,
+      "name": "char_hiyuki2",
+      "supercategory": ""
+    },
+    {
+      "id": 292,
+      "name": "lily_heavy",
+      "supercategory": ""
+    },
+    {
+      "id": 293,
+      "name": "lily_liberation",
+      "supercategory": ""
+    },
+    {
+      "id": 294,
+      "name": "lily_slumberland",
       "supercategory": ""
     }
   ]

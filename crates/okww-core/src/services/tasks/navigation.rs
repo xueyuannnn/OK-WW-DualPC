@@ -290,16 +290,33 @@ impl Host {
     }
     fn teleport(&self) -> Result {
         self.action(Op::Sleep, &[2.])?;
-        if !self.waypoint()? {
+        let count = self.scalar(Op::WaypointCandidates, &[])? as usize;
+        let frame = self.call(Op::WaypointFrameSize, &[])?;
+        let mut candidates: Vec<(usize, f64, f64)> = Vec::new();
+        let dedupe = (frame[0] / 1920. * 30.).max(1.);
+        for index in 0..count.min(256) {
+            let point = self.call(Op::WaypointGeometry, &[index as f64])?;
+            if !candidates
+                .iter()
+                .any(|(_, x, y)| (point[0] - x).abs() <= dedupe && (point[1] - y).abs() <= dedupe)
+            {
+                candidates.push((index, point[0], point[1]));
+            }
+        }
+        let distance = |x: f64, y: f64| (x - frame[0] / 2.).powi(2) + (y - frame[1] / 2.).powi(2);
+        candidates.sort_by(|a, b| distance(a.1, a.2).total_cmp(&distance(b.1, b.2)));
+        if candidates.is_empty() {
             return self.fail(9.);
         }
-        self.action(Op::ClickWaypoint, &[1.])?;
-        let mut travel = self.observe(|| self.flag(Op::FindTravel, &[]), 3., 0.)?;
-        if !travel {
-            if self.flag(Op::FindWaypointPopup, &[])? {
-                self.action(Op::ClickFound, &[1.])?;
+        let mut travel = false;
+        for (index, _, _) in candidates {
+            self.action(Op::SelectWaypointCandidate, &[index as f64])?;
+            self.action(Op::ClickWaypoint, &[1.])?;
+            if self.observe(|| self.flag(Op::FindTravel, &[]), 3., 0.)? {
+                travel = true;
+                break;
             }
-            travel = self.observe(|| self.flag(Op::FindTravel, &[]), 3., 0.)?;
+            self.action(Op::CloseWaypointSelection, &[])?;
         }
         if !travel {
             return self.fail(10.);

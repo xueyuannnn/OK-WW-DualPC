@@ -258,8 +258,13 @@ impl Host {
             return Ok(true);
         }
         let start = self.now()?;
+        let interval = if self.flag(Op::CloudMode, &[])? {
+            self.call(Op::CloudRetargetInterval, &[])?.clamp(0.2, 2.)
+        } else {
+            0.2
+        };
         while self.now()? - start < self.time(Time::TargetEnemyTimeout)? {
-            self.action(Op::ClickMiddle, &[0.2])?;
+            self.action(Op::ClickMiddle, &[interval])?;
             if self.flag(Op::InTeam, &[])? && self.flag(Op::SessionHealthBar, &[])? {
                 return Ok(true);
             }

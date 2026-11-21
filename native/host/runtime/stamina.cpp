@@ -1,8 +1,36 @@
 #include "stamina.hpp"
 #include "navigation.hpp"
 #include "workflow_abi.hpp"
+#include "multi_account.hpp"
+#include <QCryptographicHash>
 #include <QLockFile>
 namespace okww::runtime {
+QString dailyCubeJournal(const QString &directory, const QString &account) {
+    const auto normalized=normalizeAccount(account);
+    const auto legacy=directory+"/DailyStaminaUsage.json";
+    const auto identity=QString::fromLatin1(QCryptographicHash::hash(normalized.toUtf8(),QCryptographicHash::Sha256).toHex());
+    QString path;
+    QJsonObject journal;
+    QDir().mkpath(directory);
+    QLockFile lock(legacy+".accounts.lock");
+    if(!lock.tryLock(1000)) fail("体力魔方计数正在更新，请稍后重试");
+    rust::workflowRun(rust::WorkflowMethod::AccountCubeJournal,{},[&](rust::WorkflowOp op,const double *,double *out){
+        switch(op){
+        case rust::WorkflowOp::CubeAccountKnown:out[0]=!normalized.isEmpty();break;
+        case rust::WorkflowOp::CubeSelectLegacyPath:path=legacy;break;
+        case rust::WorkflowOp::CubeSelectAccountPath:path=directory+"/DailyStaminaUsage-"+identity+".json";break;
+        case rust::WorkflowOp::CubeAccountFileExists:out[0]=QFile::exists(path);break;
+        case rust::WorkflowOp::CubeLegacyFileExists:out[0]=QFile::exists(legacy);break;
+        case rust::WorkflowOp::CubeReadLegacyJournal:journal=readJson(legacy);break;
+        case rust::WorkflowOp::CubeLegacyAssigned:out[0]=!journal["migrated_to"].toString().isEmpty();break;
+        case rust::WorkflowOp::CubeLegacyAssignedHere:out[0]=journal["migrated_to"].toString()==identity;break;
+        case rust::WorkflowOp::CubeCopyLegacyJournal:writeJson(path,journal);break;
+        case rust::WorkflowOp::CubeAssignLegacyJournal:journal["migrated_to"]=identity;writeJson(legacy,journal);break;
+        default:fail("Rust 账号体力计数宿主无效");
+        }
+    });
+    return path;
+}
 namespace {
 [[noreturn]] void cubeError(int reason) {
     switch (reason) {

@@ -31,4 +31,5 @@ class CubeBudget {
 };
 // This is an explicit material action, never wrapped in navigation retries.
 bool useOneDailyCube(TaskContext &context, CubeBudget &budget, bool consume = true);
+QString dailyCubeJournal(const QString &directory, const QString &account = {});
 } // namespace okww::runtime

@@ -37,6 +37,11 @@ class TaskContext {
     uint64_t frameVersion = 0;
     QString task;
     QString gameLanguage = "zh_CN";
+    bool streamedCapture = false;
+    bool cloudGame() const { return profile.value("Cloud Game", "Enabled", false).toBool(); }
+    bool streamedImage() const {
+        return (streamedCapture || cloudGame()) && profile.value("Cloud Game", "Compressed Image Tolerance", true).toBool();
+    }
     QJsonObject taskOverrides;
     std::function<void(QString, QString)> info;
     std::function<void(QJsonObject)> progress;

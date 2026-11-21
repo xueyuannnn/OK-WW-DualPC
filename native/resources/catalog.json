@@ -227,6 +227,10 @@
         {
             "id": "Suoming",
             "name": "锁瞑"
+        },
+        {
+            "id": "Lily",
+            "name": "莉莉"
         }
     ],
     "globals": [
@@ -2482,6 +2486,50 @@
             ],
             "id": "Task Recovery",
             "name": "中断恢复"
+        },
+        {
+            "id": "Cloud Game",
+            "name": "云游戏与远程画面",
+            "description": "浏览器云游戏使用 DXGI / Win32 与 SendInput，保持 16:9 全屏。远程画面容错也适用于远程软件。",
+            "fields": [
+                {
+                    "key": "Enabled",
+                    "label": "浏览器云游戏模式",
+                    "value": false,
+                    "kind": "boolean",
+                    "description": "云·鸣潮专用目标识别与断线处理；采集卡和远程游戏客户端无需开启。"
+                },
+                {
+                    "key": "Open Browser",
+                    "label": "云·鸣潮网页",
+                    "value": false,
+                    "kind": "cloud_launch",
+                    "description": "优先使用 Edge，以 1080p 全屏和 SDR 色彩打开；需自行登录。"
+                },
+                {
+                    "key": "Compressed Image Tolerance",
+                    "label": "压缩画面识别容错",
+                    "value": true,
+                    "kind": "boolean",
+                    "description": "仅对 DXGI / Win32 和云游戏启用低血量条补充识别，采集卡保留原规则。"
+                },
+                {
+                    "key": "Health Lost Grace",
+                    "label": "云游戏血条丢失宽限（秒）",
+                    "value": 3.0,
+                    "kind": "number",
+                    "minimum": 0,
+                    "maximum": 5
+                },
+                {
+                    "key": "Retarget Interval",
+                    "label": "云游戏重新锁敌间隔（秒）",
+                    "value": 0.8,
+                    "kind": "number",
+                    "minimum": 0.2,
+                    "maximum": 2.0
+                }
+            ]
         }
     ],
     "native_preferences": {
@@ -3957,6 +4005,12 @@
                     "options": null,
                     "sub_config": false,
                     "value": true
+                },
+                {
+                    "key": "Auto Close Abyss Character Intro",
+                    "label": "自动关闭深塔角色特性介绍",
+                    "value": true,
+                    "kind": "boolean"
                 }
             ],
             "id": "AutoCombatTask",
@@ -4098,8 +4152,39 @@
                     "value": false,
                     "kind": "boolean",
                     "description": "任务成功完成后退出软件。"
+                },
+                {
+                    "key": "Independent Account Config",
+                    "label": "启用账号独立每日配置",
+                    "value": false,
+                    "kind": "boolean",
+                    "description": "开启后先退出至登录框确认账号，再使用对应每日参数。不保存密码。未配置的账号沿用每日任务参数。"
+                },
+                {
+                    "key": "Account Profiles",
+                    "label": "账号与每日参数",
+                    "value": [],
+                    "kind": "account_profiles"
                 }
             ]
+        },
+        {
+            "id": "GalGameTask",
+            "name": "第二索拉：未名之梦",
+            "description": "从活动页开始，推进学期并领取可用活动奖励。仅支持简体中文和 16:9 画面。",
+            "trigger": false,
+            "enabled": false,
+            "support_schedule": false,
+            "fields": []
+        },
+        {
+            "id": "RahaiBlocksTask",
+            "name": "拉海洛方块·逆转",
+            "description": "从活动关卡列表开始，挑战已解锁且未通关的关卡。仅支持简体中文和 16:9 画面。",
+            "trigger": false,
+            "enabled": false,
+            "support_schedule": false,
+            "fields": []
         }
     ],
     "teams": []

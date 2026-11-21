@@ -17,6 +17,7 @@
 #include "runtime/daily.hpp"
 #include "runtime/team_macro.hpp"
 #include "runtime/task_registry.hpp"
+#include "runtime/multi_account.hpp"
 #include "runtime/scheduler.hpp"
 #include <QXmlStreamReader>
 #include <opencv2/imgproc.hpp>
@@ -61,6 +62,104 @@ class MacroProbe final : public TeamMacro {
 class RuntimeTests : public QObject {
     Q_OBJECT
   private slots:
+    void cloudDisconnectRequiresTheCloudModeAndAnExplicitErrorWithButton() {
+        for(int scenario=0;scenario<4;++scenario) {
+            Harness h;QTemporaryDir directory;
+            const auto root=QString(OKWW_SOURCE_ROOT);
+            Templates templates(root+"/assets/coco_annotations.json");
+            Profile profile(directory.path(),root+"/native/resources/catalog.json");
+            profile.set("Monthly Card Config","Check Monthly Card",false);
+            profile.set("Cloud Game","Enabled",scenario!=0);
+            Input input(h.config,{1920,1080},true,h.transport,h.execution);
+            auto image=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(0,0,0));
+            TaskContext c(h.execution,input,templates,profile,[&]{return image;},
+                [&](const cv::Mat &,QRect area,double) {
+                    QVector<TextLine> lines;
+                    if(scenario!=1)lines.append({scenario==3?"云服务错误：4012":"云服务错误：1020",{500,450,300,30},.99});
+                    lines.append({scenario==3?"确定":"退出游戏",{900,650,100,30},.99});
+                    lines.erase(std::remove_if(lines.begin(),lines.end(),[&](const auto &line){return !area.contains(line.center().toPoint());}),lines.end());
+                    return lines;
+                });
+            c.frame=image;c.state->loggedIn=true;
+            QCOMPARE(c.login(),scenario>=2);
+            QCOMPARE(c.state->loggedIn,scenario<2);
+            if(scenario<2)QVERIFY(h.events.isEmpty());
+            else {
+                bool clicked=false;
+                for(const auto &event:h.events)clicked|=event["op"]=="button";
+                QVERIFY(clicked);
+            }
+        }
+    }
+    void accountCubeBudgetsAreSeparateAndMigrateTheLegacyJournalOnlyOnce() {
+        QTemporaryDir directory;
+        const auto now=QDateTime::currentDateTime();
+        const auto day=now.addSecs(-4*3600).date().toString(Qt::ISODate);
+        writeJson(directory.path()+"/DailyStaminaUsage.json",{{"day",day},{"reserved",3},{"verified",3},{"pending",false}});
+        const auto a=dailyCubeJournal(directory.path(),"user***@example.com");
+        const auto b=dailyCubeJournal(directory.path(),"other***@example.com");
+        QVERIFY(a!=b);QVERIFY(!a.contains("user***"));
+        CubeBudget first(a,4,now),second(b,4,now);
+        QCOMPARE(first.remaining(),1);QCOMPARE(second.remaining(),4);
+        second.reserve();second.verify();
+        QCOMPARE(second.remaining(),3);
+        QCOMPARE(CubeBudget(a,4,now).remaining(),1);
+        QCOMPARE(dailyCubeJournal(directory.path(),"USER***@EXAMPLE.COM"),a);
+        QCOMPARE(CubeBudget(a,4,now).remaining(),1);
+    }
+    void cloudTargetUsesGoldAndCompressedHealthKeepsTheCardRulesSeparate() {
+        Harness h; QTemporaryDir directory;
+        const auto root=QString(OKWW_SOURCE_ROOT);
+        Templates templates(root+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),root+"/native/resources/catalog.json");
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        TaskContext c(h.execution,input,templates,profile,[] { return cv::Mat{}; },
+            [](const cv::Mat &,QRect,double){return QVector<TextLine>{};});
+        CombatVision vision(c,root+"/native/resources/characters.json");
+        profile.set("Cloud Game","Enabled",true);
+        for(const auto &name:QStringList{"has_target_cloud","no_target_cloud"}) {
+            c.frame=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(0,0,0));
+            auto pattern=templates.pattern(name,{1920,1080});
+            const auto area=templates.box(name,{1920,1080});
+            pattern.copyTo(c.frame(cv::Rect(area.x(),area.y(),pattern.cols,pattern.rows)));
+            QCOMPARE(vision.hasTarget(),name=="has_target_cloud");
+        }
+        profile.set("Cloud Game","Enabled",false);
+        c.frame=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(0,0,0));
+        cv::rectangle(c.frame,{500,300,120,8},cv::Scalar(60,65,190),-1);
+        for(int y=301;y<307;++y)for(int x=501;x<619;x+=2)c.frame.at<cv::Vec3b>(y,x)=cv::Vec3b(0,0,0);
+        QVERIFY(!vision.healthBar(true));
+        c.streamedCapture=true;QVERIFY(vision.healthBar(true));
+        profile.set("Cloud Game","Compressed Image Tolerance",false);QVERIFY(!vision.healthBar(true));
+    }
+    void lilyReleasesHeavyOnTimeoutAndCancellation() {
+        for (bool cancel : {false, true}) {
+            test::RotationReplay host({{"forte", true}, {"con", 1.}, {"ready", QJsonArray{false,false,false}},
+                {"fast", true}, {"cancel_at", cancel ? 100.5 : 200.}, {"stop_at", 110.}});
+            CharacterState state; state.name="char_lily"; state.className="Lily"; state.current=true;
+            auto lily=makeCharacter("Lily",host,state); host.character=lily.get();
+            try { lily->perform(); } catch (const Cancelled &) {} catch (const CombatEnded &) {}
+            bool pressed=false,released=false;
+            for(const auto &value:host.events){pressed|=value.toObject()["kind"]=="down";released|=value.toObject()["kind"]=="up";}
+            QVERIFY(pressed);QVERIFY(released);
+            QVERIFY(!host.held); QVERIFY(host.heldKeys.isEmpty());
+        }
+    }
+    void accountDailyProfilesAreScopedAndUnknownAccountsUseGlobalDefaults() {
+        QTemporaryDir directory;
+        const auto root=QString(OKWW_SOURCE_ROOT);
+        Profile profile(directory.path(),root+"/native/resources/catalog.json");
+        const auto before=profile.group("DailyTask");
+        profile.set("MultiAccountDailyTask","Account Profiles",QJsonArray{
+            QJsonObject{{"account","user***@example.com"},{"values",QJsonObject{{"Task Retry",2}}}},
+            QJsonObject{{"account","other***@example.com"},{"values",QJsonObject{{"Task Retry",6}}}}});
+        QVERIFY(accountDailyOverrides(profile,"user***@example.com").isEmpty());
+        profile.set("MultiAccountDailyTask","Independent Account Config",true);
+        QCOMPARE(accountDailyOverrides(profile," USER***@EXAMPLE.COM ")["Task Retry"].toInt(),2);
+        QCOMPARE(accountDailyOverrides(profile,"other***@example.com")["Task Retry"].toInt(),6);
+        QVERIFY(accountDailyOverrides(profile,"unknown").isEmpty());
+        QCOMPARE(profile.group("DailyTask"),before);
+    }
     void captureRecoveryStatusRaceRechecksTheArrivingFrame_data() {
         QTest::addColumn<bool>("duringWait");
         QTest::newRow("first-read") << false;
@@ -939,7 +1038,7 @@ class RuntimeTests : public QObject {
             const auto name = entry.toObject()["class"].toString();
             QVERIFY2(registered.contains(name), qPrintable(name));
         }
-        QCOMPARE(registered.size(), 58); // 57 roles plus BaseChar.
+        QCOMPARE(registered.size(), 59); // 58 roles plus BaseChar.
     }
     void addedCharacterRotationsFinishWithoutStuckInputs() {
         for (const auto &name : QStringList{"Aalto", "Lingyang", "Lumi", "Yangyang", "Suoming"}) {

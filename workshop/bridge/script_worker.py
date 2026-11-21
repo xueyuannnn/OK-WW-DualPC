@@ -34,7 +34,7 @@ def progress_payload(key, value):
                 unit=str(value.get('unit', ''))[:16], detail=str(value.get('detail', ''))[:500])
 
 
-def create_runtime(root, data, channel):
+def create_runtime(root, data, channel, activity_only=False):
     sys.path[:0] = [str(root / 'vendor/ok-script'), str(root)]
     sys.argv = [str(root / 'main_dualpc.py'), '--headless']
     from native_io import install_native_io
@@ -56,6 +56,10 @@ def create_runtime(root, data, channel):
                       log_file=str(data / 'logs/scripts.log'), error_log_file=str(data / 'logs/scripts-error.log'),
                       screenshots_folder=str(data / 'screenshots'))
         config['windows']['start_exe'] = False
+        if activity_only:
+            # These two workflows read the host's OCRv6 result. Do not start a
+            # second model loader; generic scripts retain their original OCR.
+            config['ocr'] = None
         config['template_matching'] = dict(config['template_matching'],
                                            coco_feature_json=str(root / 'assets/coco_annotations.json'))
         return config
@@ -115,12 +119,19 @@ class InspectionChannel:
 def run_script(runtime, data, request, channel):
     from scripts_store import ScriptStore
     from ok.task.exceptions import FinishedException
-    entry = ScriptStore(data).get(request['script'])
-    target = (data / entry['path']).resolve()
     from ok import og
     task_manager = og.task_manager
-    task = next((task for task, value in task_manager.task_map.items()
-                 if Path(value[0]).resolve() == target), None)
+    builtin = {'activity:GalGameTask': 'GalGameTask', 'activity:RahaiBlocksTask': 'RahaiBlocksTask'}
+    if request['script'] in builtin:
+        class_name = builtin[request['script']]
+        task = next((task for task in runtime.task_executor.get_all_tasks()
+                     if type(task).__name__ == class_name), None)
+        target = None
+    else:
+        entry = ScriptStore(data).get(request['script'])
+        target = (data / entry['path']).resolve()
+        task = next((task for task, value in task_manager.task_map.items()
+                     if Path(value[0]).resolve() == target), None)
     if task is None:
         error = next((error for path, error in task_manager.task_errors.items()
                       if Path(path).resolve() == target), '脚本没有可运行的 BaseTask/TriggerTask 子类')
@@ -183,6 +194,7 @@ def main():
     p.add_argument('--data', type=Path, required=True)
     p.add_argument('--mapping')
     p.add_argument('--inspect', action='store_true')
+    p.add_argument('--activities', action='store_true')
     a = p.parse_args()
     root, data = a.root.absolute(), a.data.absolute()
     output, incoming = sys.stdout, sys.stdin
@@ -199,7 +211,7 @@ def main():
         raise ValueError('缺少原生共享图像通道')
     from workshop_worker import PipeChannel
     channel = PipeChannel(output, incoming, a.mapping)
-    runtime = create_runtime(root, data, channel)
+    runtime = create_runtime(root, data, channel, activity_only=a.activities)
     output.write(json.dumps(dict(event='ready')) + '\n')
     output.flush()
     for line in incoming:

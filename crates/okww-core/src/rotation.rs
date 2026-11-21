@@ -7,6 +7,7 @@ mod basic;
 mod extended;
 mod forms;
 mod gauges;
+mod lily;
 mod spectro;
 mod stateful;
 
@@ -884,6 +885,12 @@ impl Host {
                     200.
                 }
             }
+            Method::LilyPerform => {
+                self.lily_perform()?;
+                0.
+            }
+            Method::LilySkipCheck => self.feature("lily_slumberland", 0.8, "")? as u8 as f64,
+            Method::LilyLiberationReady => self.lily_liberation_ready()? as u8 as f64,
             Method::AdditionalPerform => {
                 self.additional_perform(args[0] as i32)?;
                 0.

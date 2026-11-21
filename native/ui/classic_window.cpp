@@ -637,7 +637,7 @@ void Window::renderGlobalCards() {
         auto group = value.toObject();
         const auto id = group["id"].toString();
         auto host =
-            (id == "Basic Options" || id == "Monthly Card Config") ? globalForm_ : globalPages_.value(id);
+            (id == "Basic Options" || id == "Monthly Card Config" || id == "Cloud Game") ? globalForm_ : globalPages_.value(id);
         if (!host)
             continue;
         auto card = globalCards_.value(id);
@@ -650,7 +650,7 @@ void Window::renderGlobalCards() {
             card->setExpanded(true);
             if (id == "Monthly Card Config")
                 card->setExpanded(false);
-            if (id != "Basic Options" && id != "Monthly Card Config") {
+            if (id != "Basic Options" && id != "Monthly Card Config" && id != "Cloud Game") {
                 card->findChild<QWidget *>("cardHeader")->hide();
                 card->setObjectName("configContentFrame");
             }

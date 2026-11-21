@@ -1,3 +1,6 @@
+case rust::WorkflowOp::TaskAutoCloseIntro:
+out[0] = false; // Legacy parity scenarios do not enable the new intro handler.
+break;
 case rust::WorkflowOp::RunAutomaticCombat:
 out[0] = combat_.runAutoCombat();
 break;

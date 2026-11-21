@@ -83,6 +83,18 @@ impl Host {
     fn run_accounts(&self) -> Result {
         self.action(Op::CreateAccountCycle, &[])?;
         let maximum = (self.scalar(Op::MaximumAccountCount, &[])? as i32).clamp(1, 100);
+        // Identify the saved account before applying its profile. The legacy
+        // path still starts in the world when independent profiles are disabled.
+        if self.flag(Op::IndependentAccountConfig, &[])? {
+            self.action(Op::LogoutAccount, &[])?;
+            self.action(Op::ReadAccountLogin, &[])?;
+            if !self.flag(Op::HasAccountLogin, &[])? {
+                self.action(Op::AccountFailure, &[7.])?;
+            }
+            self.action(Op::ClickAccountLogin, &[])?;
+            self.action(Op::ResetAccountLoggedIn, &[])?;
+            self.action(Op::NavEnsureMain, &[180.])?;
+        }
         self.action(Op::RunAccountDaily, &[])?;
         self.action(Op::LogoutAccount, &[])?;
         self.action(Op::CompleteCurrentAccount, &[])?;

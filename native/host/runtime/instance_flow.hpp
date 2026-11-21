@@ -7,6 +7,7 @@ struct RestartDialog {
     std::optional<TextLine> button;
 };
 RestartDialog restartDialog(const QVector<TextLine> &lines);
+bool combatIntroVisible(TaskContext &context);
 std::optional<TextLine> nestExitConfirmation(const QVector<TextLine> &lines, int width);
 bool nestExitContext(const QVector<TextLine> &lines);
 bool isNestExitText(QString text);

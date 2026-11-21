@@ -47,6 +47,10 @@ impl Host {
         let mut tracker = crate::farming::RestartState::default();
         for _ in 0..120 {
             self.action(Op::Refresh, &[])?;
+            if self.flag(Op::CombatIntroVisible, &[])? {
+                self.action(Op::CloseCombatIntro, &[])?;
+                continue;
+            }
             let kind = self.scalar(Op::ReadRestartDialog, &[])? as i32;
             let hud = self.flag(Op::InTeam, &[])?;
             let action = tracker.step(kind, hud, hud && self.flag(Op::NavInRealm, &[])?);

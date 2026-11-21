@@ -291,3 +291,8 @@ class Labels(str, Enum):
     char_lingyang = 'char_lingyang'
     char_suoming = 'char_suoming'
     suoming_forte_e = 'suoming_forte_e'
+    char_lily = 'char_lily'
+    char_hiyuki2 = 'char_hiyuki2'
+    lily_heavy = 'lily_heavy'
+    lily_liberation = 'lily_liberation'
+    lily_slumberland = 'lily_slumberland'

@@ -119,6 +119,9 @@ std::array<double, 3> TaskContext::rustRun(int method, std::initializer_list<dou
                 case rust::TaskOp::LoggedIn:
                     out[0] = c.state->loggedIn;
                     break;
+                case rust::TaskOp::CloudMode:
+                    out[0] = c.cloudGame();
+                    break;
                 case rust::TaskOp::SetLoggedIn:
                     c.state->loggedIn = a[0] != 0;
                     break;

@@ -155,6 +155,29 @@ QString recordingOutcome(const QJsonArray &events, const QString &name, bool ori
 class ScriptContracts final : public QObject {
     Q_OBJECT
   private slots:
+    void activityOcrUsesPublishedFrameWithoutRecapturingOrSendingInput() {
+        QTemporaryDir directory;
+        writeJson(directory.filePath("coco.json"), {{"images", QJsonArray{}}, {"annotations", QJsonArray{}}, {"categories", QJsonArray{}}});
+        writeJson(directory.filePath("catalog.json"), {{"tasks", QJsonArray{}}, {"globals", QJsonArray{}}});
+        Templates templates(directory.filePath("coco.json"));
+        Profile profile(directory.path(),directory.filePath("catalog.json"));
+        ScriptClock clock; ExecutionGate gate; Execution execution(gate,gate.start(),clock);
+        int inputs=0, captures=0, reads=0;
+        Input input(Config::defaults(),{1920,1080},true,[&](QJsonObject){++inputs;return QJsonObject{};},execution);
+        TaskContext context(execution,input,templates,profile,[&]{++captures;return cv::Mat{};},
+            [&](const cv::Mat &image,QRect area,double threshold){
+                ++reads;
+                if(image.at<cv::Vec3b>(0,0)!=cv::Vec3b(1,2,3) || area!=QRect(192,216,384,216) || threshold!=.7)
+                    throw std::runtime_error("OCR did not use the published frame/region");
+                return QVector<TextLine>{{"开始挑战",{200,220,100,30},.99}};
+            });
+        context.frame=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(1,2,3));context.frameVersion=42;
+        ScriptRuntime runtime(context,directory.path(),directory.path());
+        const auto reply=ScriptContractAccess::rpc(runtime,{{"op","activity_ocr"},{"x",.1},{"y",.2},{"to_x",.3},{"to_y",.4},{"threshold",.7}});
+        QCOMPARE(reads,1);QCOMPARE(captures,0);QCOMPARE(inputs,0);
+        QCOMPARE(reply["sequence"].toInt(),42);
+        QCOMPARE(reply["lines"].toArray()[0].toObject()["text"].toString(),QString("开始挑战"));
+    }
     void recording_data() {
         QTest::addColumn<int>("scene");
         for (int i = 0; i < 2048; ++i)

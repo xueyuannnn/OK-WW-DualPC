@@ -45,6 +45,33 @@ class ClassicUiTests final : public QObject {
         return runtime::Profile(data.path() + "/configs-dualpc", root + "/native/resources/catalog.json");
     }
   private slots:
+    void accountProfilesUseGraphicalDailyFieldsWithoutChangingGlobalValues() {
+        QTemporaryDir data;
+        auto settings=profile(data);
+        settings.set("DailyTask","Daily Stamina Cube Limit",4);
+        settings.set("MultiAccountDailyTask","Account Profiles",QJsonArray{QJsonObject{
+            {"account","user***@example.com"},{"values",QJsonObject{{"Daily Stamina Cube Limit",2}}}}});
+        auto window=create(data);
+        QTRY_VERIFY(card(*window,"MultiAccountDailyTask"));
+        auto taskCard=card(*window,"MultiAccountDailyTask");taskCard->setExpanded(true);
+        QPushButton *edit=nullptr;
+        for(auto button:taskCard->body()->findChildren<QPushButton *>())
+            if(button->text().startsWith("配置账号"))edit=button;
+        QVERIFY(edit);edit->click();
+        QDialog *dialog=nullptr;
+        for(auto candidate:window->findChildren<QDialog *>())
+            if(candidate->windowTitle().contains("独立配置"))dialog=candidate;
+        QVERIFY(dialog);
+        auto retry=dialog->findChild<QSpinBox *>("field-Daily Stamina Cube Limit");
+        QVERIFY(retry);QCOMPARE(retry->value(),2);retry->setValue(3);
+        QVERIFY(QMetaObject::invokeMethod(retry,"editingFinished"));
+        QTRY_COMPARE(profile(data).value("MultiAccountDailyTask","Account Profiles").toArray()[0].toObject()["values"].toObject()["Daily Stamina Cube Limit"].toInt(),3);
+        QCOMPARE(profile(data).value("DailyTask","Daily Stamina Cube Limit").toInt(),4);
+        if(const auto output=qEnvironmentVariable("OKWW_UI_ARTIFACTS");!output.isEmpty()) {
+            QDir().mkpath(output);dialog->grab().save(output+"/account-profiles.png");
+        }
+        dialog->close();
+    }
     void fullWorkflowShowsCountsEstimatesFailuresAndKeepsTheFinishedPlan() {
         QTemporaryDir data;
         auto window = create(data);

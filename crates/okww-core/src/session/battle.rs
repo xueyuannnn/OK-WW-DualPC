@@ -50,8 +50,24 @@ impl Host {
                 return Ok(false);
             }
             if self.flag(Op::TargetLocked, &[])? {
+                if self.flag(Op::CloudMode, &[])? {
+                    self.action(Op::SetLastHealthSeen, &[self.now()?])?;
+                }
                 self.action(Op::SetCheckedVersionFrame, &[])?;
                 return Ok(true);
+            }
+            if self.flag(Op::StreamedImage, &[])? && self.flag(Op::SessionHealthBar, &[])? {
+                self.action(Op::SetLastHealthSeen, &[self.now()?])?;
+                self.action(Op::SetCheckedVersionFrame, &[])?;
+                return Ok(true);
+            }
+            if self.flag(Op::CloudMode, &[])? {
+                let last = self.call(Op::LastHealthSeen, &[])?;
+                let grace = self.call(Op::CloudHealthGrace, &[])?.clamp(0., 5.);
+                if last >= 0. && self.now()? - last < grace {
+                    self.action(Op::SetCheckedVersionFrame, &[])?;
+                    return Ok(true);
+                }
             }
             if self.flag(Op::HasEndCondition, &[])? && self.flag(Op::EndCondition, &[])? {
                 self.action(Op::ResetCombat, &[])?;

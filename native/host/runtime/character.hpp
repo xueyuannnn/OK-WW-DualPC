@@ -93,6 +93,7 @@ class CombatHost {
     virtual void workshopTelemetry(QJsonObject) {}
     virtual void workshopCheckpoint() { preciseWait(0); }
     virtual QJsonObject workshopTaskConfig() const { return {}; }
+    virtual QJsonObject workshopVisionConfig() const { return {}; }
     virtual bool combatEngaged() const { return true; }
     bool wait(const std::function<bool()> &condition, double timeout, const std::function<void()> &post = {},
               double settle = 0, const std::function<void()> &pre = {});

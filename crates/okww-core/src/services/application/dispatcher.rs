@@ -18,6 +18,20 @@ impl Host {
                 }
             }
             Method::DispatchBusinessTask => {
+                if a[0] == 1.
+                    && self.flag(Op::TaskAutoCloseIntro, &[])?
+                    && !self.flag(Op::TaskPartyVisible, &[])?
+                {
+                    let now = self.scalar(Op::Now, &[])?;
+                    if now - self.scalar(Op::TaskIntroScanAt, &[])? >= 2. {
+                        self.action(Op::TaskSetIntroScanAt, &[now])?;
+                        if self.flag(Op::TaskCombatIntroVisible, &[])? {
+                            self.action(Op::TaskCloseCombatIntro, &[])?;
+                            result[0] = 1.;
+                            return Ok(result);
+                        }
+                    }
+                }
                 match a[0] as i32 {
                     0 => return Ok(result),
                     1 => match self.scalar(Op::RunAutomaticCombat, &[]) {
@@ -74,6 +88,7 @@ impl Host {
                     10 => self.action(Op::DispatchMergeEcho, &[])?,
                     11 => self.action(Op::DispatchEnhanceEcho, &[])?,
                     12 => self.action(Op::DispatchChangeEcho, &[])?,
+                    13..=14 => self.action(Op::DispatchPythonActivity, &[])?,
                     _ => {
                         self.action(Op::UnknownBusinessTask, &[])?;
                         return Err(HOST_ERROR);

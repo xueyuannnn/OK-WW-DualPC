@@ -173,8 +173,22 @@ struct Ocr::Impl {
         inferWithCheckpoint(request, checkpoint, "OCR ");
     }
     explicit Impl(const QString &path) : models(path) {
-
-        QFile dictionary(path + "/ppocrv5_dict.txt");
+        const bool version6 = QFile::exists(path + "/ppocrv6_dict.txt");
+        if (version6) {
+            const auto manifest = readJson(path + "/manifest.json");
+            const auto assets = manifest["assets"].toObject();
+            const QMap<QString, QString> expected{{"ppocrv6_dict.txt", manifest["dictionary_sha256"].toString()},
+                {"det/det.onnx", assets["det"].toObject()["sha256"].toString()},
+                {"rec/rec.onnx", assets["rec"].toObject()["sha256"].toString()}};
+            for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
+                QFile file(path + '/' + it.key());
+                QCryptographicHash hash(QCryptographicHash::Sha256);
+                if (it.value().size() != 64 || !file.open(QIODevice::ReadOnly) || !hash.addData(&file) ||
+                    QString::fromLatin1(hash.result().toHex()) != it.value())
+                    fail("OCRv6 配套文件校验失败，请完整解压新版程序：" + file.fileName());
+            }
+        }
+        QFile dictionary(path + (version6 ? "/ppocrv6_dict.txt" : "/ppocrv5_dict.txt"));
         QByteArray line;
         rust::workflowRun(rust::WorkflowMethod::OcrInitialize, {},
                           [&](rust::WorkflowOp op, const double *, double *out) {

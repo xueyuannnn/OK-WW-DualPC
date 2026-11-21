@@ -25,6 +25,7 @@ from src.char.Encore import Encore
 from src.char.Galbrena import Galbrena
 from src.char.Rover import Rover
 from src.char.Hiyuki import Hiyuki
+from src.char.Lily import Lily
 from src.char.Hsin import Hsin
 from src.char.Iuno import Iuno
 from src.char.Jianxin import Jianxin
@@ -132,7 +133,7 @@ _char_dict_raw = {
     Labels.char_aemeath: {'cls': Aemeath, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.FIRE},
     Labels.char_xigelika: {'cls': Xigelika, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.WIND},
     Labels.char_luhesi: {'cls': Luhesi, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.SPECTRO},
-    Labels.char_hiyuki: {'cls': Hiyuki, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.ICE},
+    (Labels.char_hiyuki, Labels.char_hiyuki2): {'cls': Hiyuki, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.ICE},
     Labels.char_lucilla: {'cls': Lucilla, 'char_type': CharType.SUB_DPS, 'ring_index': Elements.ICE,
                           'target_box_short_combat_check': True},
     Labels.char_lucy: {'cls': Lucy, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.SPECTRO},
@@ -144,6 +145,7 @@ _char_dict_raw = {
     Labels.char_lingyang: {'cls': Lingyang, 'char_type': CharType.MAIN_DPS, 'ring_index': Elements.ICE},
     Labels.char_lumi: {'cls': Lumi, 'char_type': CharType.SUB_DPS, 'ring_index': Elements.ELECTRIC},
     Labels.char_yangyang: {'cls': Yangyang, 'char_type': CharType.SUB_DPS, 'ring_index': Elements.WIND},
+    Labels.char_lily: {'cls': Lily, 'char_type': CharType.HEALER, 'buff_time': 30, 'ring_index': Elements.SPECTRO},
     Labels.char_suoming: {'cls': Suoming, 'char_type': CharType.SUB_DPS, 'ring_index': Elements.ELECTRIC, 'buff_time': 8},
 }
 

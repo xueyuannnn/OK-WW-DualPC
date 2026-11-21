@@ -1,6 +1,7 @@
 #include "runtime/workshop.hpp"
 #include "runtime/team_store.hpp"
 #include "runtime/diagnostics.hpp"
+#include "runtime/scripts.hpp"
 #include "team_replay.hpp"
 #include <QtTest>
 using namespace okww;
@@ -109,6 +110,31 @@ class WorkshopTests final : public QObject {
             }
     }
   private slots:
+    void builtinActivitiesShareNativeOcrAndCancelWithoutDeviceInput() {
+        if(workshopPython(root).isEmpty()) QSKIP("Python compatibility runtime unavailable");
+        for(const auto &id:QStringList{"GalGameTask","RahaiBlocksTask"}) {
+            QTemporaryDir data;
+            auto config=Config::defaults();config.set("kmbox.dry_run",true);config.save(data.path()+"/dualpc.json");
+            Profile profile(data.path()+"/configs-dualpc",root+"/native/resources/catalog.json");
+            profile.set("Monthly Card Config","Check Monthly Card",false);
+            Templates templates(root+"/assets/coco_annotations.json");
+            SteadyClock clock;ExecutionGate gate;int reads=0,captures=0,actions=0;
+            Execution execution(gate,gate.start(),clock,[&] {if(reads)throw Cancelled();});
+            Input input(config,{1920,1080},true,[&](QJsonObject q) {
+                const auto op=q["op"].toString();
+                if(op!="state" && op!="heartbeat" && op!="connect" && op!="probe" && op!="release")++actions;
+                return QJsonObject{{"capture_connected",true},{"armed",true},{"running",true},
+                    {"box",QJsonObject{{"connected",true},{"keyboard",true},{"keys",QJsonArray{}},{"buttons",0}}}};
+            },execution);
+            TaskContext c(execution,input,templates,profile,[&] {
+                ++captures;return cv::Mat(1080,1920,CV_8UC3,cv::Scalar(0,0,0));
+            },[&](const cv::Mat &,QRect,double){++reads;return QVector<TextLine>{};});
+            c.task=id;
+            ScriptRuntime activity(c,root,data.path(),true);
+            QVERIFY_THROWS_EXCEPTION(Cancelled,activity.run({{"id","activity:"+id},{"fields",QJsonArray{}}}));
+            QVERIFY2(reads>0,qPrintable(id));QVERIFY(captures>0);QCOMPARE(actions,0);
+        }
+    }
     void requestPreparationInterruptionRestoresBusyStateAndCanRunAgain() {
         QTemporaryDir data;
         seed(data.path());

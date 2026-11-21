@@ -39,7 +39,11 @@ impl Host {
     }
     fn domain_next(&self, kind: f64) -> Result {
         if kind == 0. {
-            self.action(Op::ClickDomainAnchor, &[0., 0.2])?;
+            if self.flag(Op::FarmRechallengeButton, &[])? {
+                self.action(Op::ClickFarmRechallenge, &[0.2])?;
+            } else {
+                self.action(Op::ClickDomainAnchor, &[0., 0.2])?;
+            }
             self.wait_for(|| self.flag(Op::SkipConfirm, &[]), 3.)?;
         } else {
             self.action(Op::ClickRelative, &[0.68, 0.84, 1.])?;
@@ -139,7 +143,18 @@ impl Host {
                     if kind != 0. {
                         self.action(Op::Sleep, &[3.])?;
                     }
-                    self.action(Op::WalkToTreasure, &[])?;
+                    if self.action(Op::WalkToTreasure, &[]).is_err() {
+                        if kind != 0. || self.scalar(Op::ExceptionKind, &[])? != 2. {
+                            return Err(HOST_ERROR);
+                        }
+                        self.action(Op::ClearException, &[])?;
+                        if !self.wait_for(|| self.flag(Op::FarmStillInCombat, &[]), 5.)? {
+                            self.action(Op::RethrowHandled, &[])?;
+                            return Err(HOST_ERROR);
+                        }
+                        self.action(Op::CombatFarmRound, &[1., entry_at_heal as u8 as f64])?;
+                        self.action(Op::WalkToTreasure, &[])?;
+                    }
                     self.action(Op::FarmPick, &[0.])?;
                     if kind == 0. {
                         self.action(Op::Sleep, &[2.])?;

@@ -217,7 +217,8 @@ Profile::RustResult Profile::rustProfile(int method, RustRequest request) {
             case rust::WorkflowOp::ProfileSpecKind: {
                 const QHash<QString, int> kinds{{"boolean", 1},   {"integer", 2}, {"number", 3},
                                                 {"select", 4},    {"text", 5},    {"string", 5},
-                                                {"multiline", 5}, {"list", 6},    {"multiselect", 6}};
+                                                {"multiline", 5}, {"list", 6},    {"multiselect", 6},
+                                                {"account_profiles", 6}};
                 out[0] = kinds.value(spec["kind"].toString(), 0);
                 break;
             }

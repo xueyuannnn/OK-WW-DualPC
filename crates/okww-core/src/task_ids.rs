@@ -13,6 +13,8 @@ pub fn kind(id: &[u8]) -> i32 {
         b"MergeEchoTask" => 10,
         b"EnhanceEchoTask" => 11,
         b"ChangeEchoTask" => 12,
+        b"GalGameTask" => 13,
+        b"RahaiBlocksTask" => 14,
         _ => -1,
     }
 }

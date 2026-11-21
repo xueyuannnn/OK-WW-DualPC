@@ -145,6 +145,12 @@ impl Host {
         self.flag(Op::RawExists, &[])
     }
     pub(super) fn target(&self, short: bool, extended: bool) -> Result<[f64; 3]> {
+        if self.flag(Op::CloudMode, &[])? {
+            self.action(Op::CloudTargetPrepare, &[])?;
+            let matched = self.flag(Op::RawExists, &[])?;
+            let locked = matched && self.scalar(Op::CloudTargetGold, &[])? >= 0.02;
+            return Ok([matched as u8 as f64, locked as u8 as f64, 0.]);
+        }
         let w = self.scalar(Op::ImageSize, &[])?;
         self.action(Op::TargetNames, &[(w == 1600.) as u8 as f64])?;
         self.action(Op::LoadTargetRing, &[])?;
@@ -179,7 +185,19 @@ impl Host {
         )? {
             return Ok(true);
         }
-        Ok(self.scalar(Op::BossHealth, &[min_width as f64, min_height as f64 * 1.3])? == 1.)
+        if self.scalar(Op::BossHealth, &[min_width as f64, min_height as f64 * 1.3])? == 1. {
+            return Ok(true);
+        }
+        Ok(self.flag(Op::StreamedMode, &[])?
+            && self.flag(
+                Op::StreamedHealth,
+                &[
+                    min_width as f64,
+                    min_height as f64,
+                    (min_height * 3) as f64,
+                    0.6,
+                ],
+            )?)
     }
     pub(super) fn death(&self) -> Result<bool> {
         Ok(self.flag(Op::DeathAnchor, &[0.])? && self.flag(Op::DeathAnchor, &[1.])?)

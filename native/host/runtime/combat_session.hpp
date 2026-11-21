@@ -42,6 +42,7 @@ class CombatSession final : public CombatHost {
     uint64_t checkedVersion_ = UINT64_MAX;
     double lastInterval_ = 0, lastDeathCheck_ = 0, lastBreakCheck_ = 0, lastHealthCheck_ = -1;
     double lastWorkshopObservation_ = -1;
+    double lastHealthSeen_ = -1;
     uint64_t partyScanVersion_ = UINT64_MAX;
     QJsonObject bridgeInfo_, lastPartyReport_;
     QByteArray lastPartyKey_;
@@ -101,6 +102,11 @@ class CombatSession final : public CombatHost {
     void preciseWait(double seconds) override { context_.execution.wait(seconds); }
     void workshopCheckpoint() override;
     QJsonObject workshopTaskConfig() const override;
+    QJsonObject workshopVisionConfig() const override {
+        return {{"cloud", context_.cloudGame()}, {"streamed", context_.streamedImage()},
+                {"grace", context_.profile.value("Cloud Game", "Health Lost Grace", 3.)},
+                {"retarget_interval", context_.profile.value("Cloud Game", "Retarget Interval", .8)}};
+    }
     bool combatEngaged() const override { return engaged_; }
     void rawTap(const QString &key, double hold) override { context_.input.key(key, hold); }
     void rawClick(const QString &button, double hold) override { context_.input.click({}, hold, button); }

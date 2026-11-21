@@ -25,6 +25,8 @@ int main(int argc, char **argv) {
          {"garden-scan", "Profile saved Garden template scan without issuing input"},
          {"echo", "Run original echo model on saved image"},
          {"combat", "Analyze saved combat HUD without issuing input"},
+         {"cloud", "Use browser-cloud visual rules for offline combat analysis"},
+         {"streamed", "Use compressed desktop visual rules for offline combat analysis"},
          {"garden", "Analyze saved weekly overview without issuing input"},
          {"daily", "Analyze saved daily overview without issuing input"}});
     parser.process(app);
@@ -204,6 +206,7 @@ int main(int argc, char **argv) {
                 Templates templates(root + "/assets/coco_annotations.json");
                 QTemporaryDir directory;
                 Profile profile(directory.path(), root + "/native/resources/catalog.json");
+                if (parser.isSet("cloud")) profile.set("Cloud Game", "Enabled", true);
                 SteadyClock clock;
                 ExecutionGate gate;
                 Execution execution(gate, gate.start(), clock);
@@ -222,6 +225,7 @@ int main(int argc, char **argv) {
                     });
                 context.refresh();
                 CombatVision vision(context, root + "/native/resources/characters.json");
+                context.streamedCapture = parser.isSet("streamed");
                 auto hud = vision.party();
                 QJsonArray chars;
                 Concerto concerto;
@@ -250,6 +254,7 @@ int main(int argc, char **argv) {
                 combat["characters"] = chars;
                 combat["target"] = vision.hasTarget();
                 combat["health"] = vision.healthBar(false);
+                combat["health_in_combat"] = vision.healthBar(true);
                 combat["shifted_health"] = vision.shiftedHealthBar();
                 combat["death_dialog"] = vision.deathDialog();
                 combat["system_run_dialog"] = systemRunDialogConfirmed(context.text(0,.7,.35,1,.65));

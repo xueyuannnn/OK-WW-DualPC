@@ -145,7 +145,9 @@ impl Host {
             | Method::CubeRead
             | Method::CubeReserve
             | Method::CubeVerify => self.run_stamina(method, args),
-            Method::ClaimStamina | Method::UseDailyCube => self.run_stamina(method, args),
+            Method::ClaimStamina | Method::UseDailyCube | Method::AccountCubeJournal => {
+                self.run_stamina(method, args)
+            }
             Method::PreferredGardenStyle
             | Method::GardenPointsComplete
             | Method::GardenRarity

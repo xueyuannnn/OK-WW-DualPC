@@ -43,7 +43,7 @@ impl Host {
     fn zani_not_lib(&self) -> ActionResult<bool> {
         Ok(self.observe(
             16,
-            "box_target_enemy_inner",
+            "target_enemy_long_inner",
             "",
             &[2560., 1440., 1909., 1274., 48., 48., 0.75],
         )? != 0.)
@@ -56,7 +56,7 @@ impl Host {
             self.s_set(8, 0.)?;
         } else if self.observe(
             16,
-            "box_target_enemy_inner",
+            "target_enemy_long_inner",
             "",
             &[2560., 1440., 1779., 1273., 51., 49., 0.75],
         )? != 0.

@@ -23,6 +23,7 @@ class Daily {
     Navigation navigation_;
     QString root_, data_;
     QJsonObject config_;
+    QString cubeAccount_;
     bool noProgress_ = false;
     int retries_ = 1;
     QStringList failed_;
@@ -46,6 +47,6 @@ class Daily {
     Daily(TaskContext &context, CombatSession &combat, EchoDetector &detector, QString root, QString data)
         : c_(context), combat_(combat), detector_(detector), navigation_(context), root_(std::move(root)),
           data_(std::move(data)) {}
-    void run(bool enhanced = false);
+    void run(bool enhanced = false, const QJsonObject &overrides = {}, const QString &account = {});
 };
 } // namespace okww::runtime

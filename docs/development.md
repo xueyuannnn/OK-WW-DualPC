@@ -26,7 +26,7 @@ py -3.12 -m venv .venv
 
 仓库根目录的 `Cargo.toml` 是业务内核的构建入口。`crates/okww-core/src/services/` 按任务、队伍、采集、输入、识别、工坊和更新等职责分组。Qt 页面在 `native/ui/`，平台接口在 `native/platform/`，对象宿主在 `native/host/`。新增规则写在 Rust 中，再由宿主提供所需的 SDK 操作。
 
-界面使用 Qt Widgets，业务执行位于 `crates/okww-core/`。任务调度、角色连招、识别策略、采集与输入控制、设备恢复、配置、定时任务、工坊通信、通知和更新流程由 Rust 执行。Python 工坊与通用脚本保留独立执行引擎。
+界面使用 Qt Widgets，业务执行位于 `crates/okww-core/`。任务调度、角色连招、识别策略、采集与输入控制、设备恢复、配置、定时任务、工坊通信、通知和更新流程由 Rust 执行。Python 工坊、通用脚本及两项活动流程保留独立执行引擎。
 
 C++ 层保留 Qt 界面、Windows／COM、OpenCV 和 OpenVINO 对象及 SDK 调用。Rust 通过同步 C ABI 借用这些对象，不持有 Qt 指针；原生异常由宿主捕获并保存，返回 Rust 后决定恢复或收尾，再在原生调用边界抛出。图像像素运算使用有长度与步长校验的缓冲区接口。整数时间戳、帧序号和系统句柄不通过浮点参数传递。
 
@@ -86,3 +86,10 @@ CTest 覆盖设备协议、运行时、任务流程、通知、工坊和 Qt 界�
 已有完整运行目录时，可用 `tools_release/prepare_binary.py --runtime <完整包目录> --native-build build-native/Release --review release-review` 整理普通完整包。此工具复用已校验的可再分发运行库，采用重新编译的原生程序和当前公开源码，排除配置、队伍和构建残留；不会从系统下载或构建 Python 运行环境。首次制作完整运行目录时，需按第三方组件的许可部署动态库和 Python 依赖。
 
 工具只生成本地文件，不创建提交、标签、远程仓库或 GitHub Release。
+
+
+## 活动与 OCR
+
+拉海洛方块和第二索拉活动保留上游 Python 流程，通过 `ScriptRuntime` 运行。它们的 OCR 请求使用宿主刚发布的同一帧，由原生 PP-OCRv6 small 识别；活动进程不另加载 Python OCR 模型。拖动、键盘和文本输入统一通过当前 KMBox / SendInput 通道，取消时由宿主终止子进程并释放按键。通用脚本和工坊的 Python 依赖版本保持独立。
+
+`assets/ocr/ppocrv6-small/manifest.json` 记录模型、字典、来源和 SHA-256。运行时先校验三者，再加载识别模型；不混用 v5 字典。选取的上游更新见 `UPSTREAM-UPDATES.json`，原始基线仍由 `UPSTREAM.lock.json` 记录。

@@ -33,6 +33,12 @@ std::array<double, 3> Character::rustRun(rust::RotationMethod method, std::initi
                 case rust::RotationOp::Now:
                     out[0] = h.now();
                     break;
+                case rust::RotationOp::LilyNotice: {
+                    const QStringList messages{"Lily 共鸣回路蓄积超时，继续后续连招", "Lily 协奏补充超时，继续切人",
+                        "Lily 重击未开始", "Lily 重击引导未完成"};
+                    h.log(messages.at(int(a[0])));
+                    break;
+                }
                 case rust::RotationOp::NextFrame:
                     h.nextFrame();
                     break;

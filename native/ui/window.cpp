@@ -2008,7 +2008,17 @@ void Window::buildFields(QWidget *target, const QJsonArray &fields,
         label->setWordWrap(true);
         labelLayout->addWidget(label);
         QWidget *editor = nullptr;
-        if (kind == "boolean") {
+        if (kind == "account_profiles") {
+            auto w = new QPushButton(QString("配置账号 · %1 个").arg(val.toArray().size()));
+            connect(w, &QPushButton::clicked, this, [this, val, changed, key] {
+                editAccountProfiles(val.toArray(), [changed, key](QJsonValue values) { changed(key, values); });
+            });
+            editor = w;
+        } else if (kind == "cloud_launch") {
+            auto w = new QPushButton("打开云·鸣潮");
+            connect(w, &QPushButton::clicked, this, &Window::openCloudGame);
+            editor = w;
+        } else if (kind == "boolean") {
             auto w = new classic::Switch;
             w->setChecked(val.toBool());
             connect(w, &QAbstractButton::toggled, this, [changed, key](bool b) { changed(key, b); });

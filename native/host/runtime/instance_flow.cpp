@@ -1,6 +1,10 @@
 #include "instance_flow.hpp"
 #include "workflow_abi.hpp"
 namespace okww::runtime {
+bool combatIntroVisible(TaskContext &c) {
+    return matchingText(c.text(.38, .16, .85, .25),
+        "^\\s*(战斗特色|戰鬥特色|Combat\\s+(Features|Characteristics|Style))\\s*$").has_value();
+}
 namespace {
 QString clean(QString text) { return text.remove(QRegularExpression("\\s+")); }
 bool matches(const QString &pattern, const QString &text) {
@@ -229,6 +233,12 @@ void restartBossDomain(TaskContext &c) {
                               out[0] = int(dialog.kind);
                               break;
                           }
+                          case rust::WorkflowOp::CombatIntroVisible:
+                              out[0] = combatIntroVisible(c);
+                              break;
+                          case rust::WorkflowOp::CloseCombatIntro:
+                              c.clickRelative(.942, .058, .5);
+                              break;
                           case rust::WorkflowOp::InTeam: {
                               out[0] = c.inTeam();
                               break;

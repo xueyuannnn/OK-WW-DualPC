@@ -481,6 +481,24 @@ bool CombatSession::rustAccess(rust::SessionOp op, const double *a, double *out,
     case O::SessionHealthBar:
         out[0] = healthBar();
         return true;
+    case O::CloudMode:
+        out[0] = context_.cloudGame();
+        return true;
+    case O::StreamedImage:
+        out[0] = context_.streamedImage();
+        return true;
+    case O::LastHealthSeen:
+        out[0] = lastHealthSeen_;
+        return true;
+    case O::SetLastHealthSeen:
+        lastHealthSeen_ = a[0];
+        return true;
+    case O::CloudHealthGrace:
+        out[0] = context_.profile.value("Cloud Game", "Health Lost Grace", 3.).toDouble();
+        return true;
+    case O::CloudRetargetInterval:
+        out[0] = context_.profile.value("Cloud Game", "Retarget Interval", .8).toDouble();
+        return true;
     case O::TargetLocked:
         out[0] = targetLocked();
         return true;

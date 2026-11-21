@@ -272,10 +272,23 @@ impl Host {
         self.flag(Op::TravelButton, &[])
     }
     pub(super) fn login(&self) -> Result<bool> {
+        if self.flag(Op::CloudMode, &[])? && !self.flag(Op::InTeam, &[])? {
+            self.m_area(0, [0.2, 0.25, 0.8, 0.75], false, false)?;
+            self.m_text(0, 0)?;
+            if self.m_match("云服务错误|雲服務錯誤|(?:^|[^0-9])(?:1020|4012)(?:[^0-9]|$)|已和服务器断开连接|cloud.*disconnect", 0, 0)?
+                && self.m_match("^(?:退出游戏|退出遊戲|确定|確定|Exit Game|OK|Confirm)$", 0, 0)? {
+                self.action(Op::ReleaseInput, &[])?;
+                self.action(Op::SetLoggedIn, &[0.])?;
+                self.action(Op::ClickText, &[0., 3.])?;
+                return Ok(true);
+            }
+        }
         if self.flag(Op::MonthlyCard, &[])? {
             return Ok(true);
         }
-        if self.flag(Op::LoggedIn, &[])? || self.flag(Op::InTeam, &[])? {
+        if (!self.flag(Op::CloudMode, &[])? && self.flag(Op::LoggedIn, &[])?)
+            || self.flag(Op::InTeam, &[])?
+        {
             return Ok(false);
         }
         if self.m_find("login_close", 0, 0.8, 0.15, 0.1)? {

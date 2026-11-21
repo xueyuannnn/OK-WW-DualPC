@@ -1,0 +1,42 @@
+{
+  "repository": "ok-oldking/ok-wuthering-waves",
+  "commit": "46a334c5a8d782596ed17026843df5b81d87010c",
+  "templates": [
+    {
+      "label": "char_lily",
+      "source": "assets/templates/char_lily_3840x2160_3560_476.png",
+      "sha256": "5fff1ca7f5c0058e897df974cdfb8c0f07288ece02d428beab1aee543d24b97f"
+    },
+    {
+      "label": "char_hiyuki2",
+      "source": "assets/templates/char_hiyuki2_3840x2160_3558_482.png",
+      "sha256": "120a00d0a3965098aebb2658156d848f8f8f804978f399bee768152a2190b855"
+    },
+    {
+      "label": "lily_heavy",
+      "source": "assets/templates/lily_heavy_3840x2160_2839_1900.png",
+      "sha256": "a36cf8a07b8ac65dad15eae5ecd8a44ec52c6134f72fc5d65f8f86fa00c3c259"
+    },
+    {
+      "label": "lily_liberation",
+      "source": "assets/templates/lily_liberation_3840x2160_3603_1904.png",
+      "sha256": "9aa78d7c3b7a6892b54fb681de7aed1db726da74b9fd267fe1ecf5ac08426243"
+    },
+    {
+      "label": "lily_slumberland",
+      "source": "assets/templates/lily_slumberland_3840x2160_3584_1937.png",
+      "sha256": "810dfaabddc4ec8ef6c43943a2deb5caf5125cff33d3352557c555bf5c67d6c9"
+    },
+    {
+      "label": "has_target_cloud",
+      "source": "assets/templates/has_target_cloud_1920x1080_1434_959.png",
+      "sha256": "9647fd7c788919db5313304017dcba48b54a3863f8c21e0c1a4e9e91d865f413"
+    },
+    {
+      "label": "no_target_cloud",
+      "source": "assets/templates/no_target_cloud_1920x1080_1434_959.png",
+      "sha256": "c1dc3609d18cce29da3bb1f9ae44850d155b28c5670003802b1c8c71631cf86e"
+    }
+  ],
+  "conversion": "Original upstream template pixels placed losslessly at upstream-encoded coordinates"
+}

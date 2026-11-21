@@ -212,12 +212,12 @@ std::array<double, 3> NightmareFarm::rustRun(int method, std::initializer_list<d
                 break;
             }
             case rust::WorkflowOp::FindNestInterface: {
-                feature = c_.findAny({"fast_travel_custom", "gray_teleport", "remove_custom", "team_close"});
+                feature = c_.findAny({"fast_travel_custom", "gray_teleport", "remove_custom", "team_start_challenge", "team_close"});
                 out[0] = feature.has_value();
                 break;
             }
             case rust::WorkflowOp::NestInterfaceTeam: {
-                out[0] = feature->name == "team_close";
+                out[0] = feature->name == "team_close" || feature->name == "team_start_challenge";
                 break;
             }
             case rust::WorkflowOp::NavStartChallenge: {

@@ -671,7 +671,7 @@ bool CombatSession::breakF(bool force) {
 }
 bool CombatSession::combatActive() { return rustRun(rust::SessionMethod::CombatActive) != 0; }
 void CombatSession::checkCombat() { rustRun(rust::SessionMethod::CheckCombat); }
-void CombatSession::resetCombat() { rustRun(rust::SessionMethod::ResetCombat); }
+void CombatSession::resetCombat() { lastHealthSeen_ = -1; rustRun(rust::SessionMethod::ResetCombat); }
 void CombatSession::updatePortraits() { rustRun(rust::SessionMethod::UpdatePortraits); }
 void CombatSession::switchNext(Character &previous, bool freeIntro, bool targetLowCon,
                                const SwitchAction &post) {

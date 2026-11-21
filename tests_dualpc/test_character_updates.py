@@ -4,7 +4,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-NAMES = ['Aalto', 'Lingyang', 'Lumi', 'Yangyang', 'Suoming']
+NAMES = ['Aalto', 'Lingyang', 'Lumi', 'Yangyang', 'Suoming', 'Lily']
 
 
 def test_python_registry_and_native_recognition_agree():
@@ -14,7 +14,7 @@ def test_python_registry_and_native_recognition_agree():
     native_classes = {item['class'] for item in definitions['characters']}
     assert python_classes == native_classes
     assert set(NAMES) <= native_classes
-    assert len(native_classes) == 57
+    assert len(native_classes) == 58
 
 
 def test_new_characters_pass_original_zip_import_and_mode_switch(tmp_path, monkeypatch):

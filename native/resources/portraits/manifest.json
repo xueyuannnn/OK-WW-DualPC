@@ -628,6 +628,23 @@
       "width": 256,
       "height": 256,
       "crop": "none"
+    },
+    {
+      "class": "Lily",
+      "file": "Lily.png",
+      "source_page": "https://github.com/ok-oldking/ok-wuthering-waves",
+      "source_url": "https://raw.githubusercontent.com/ok-oldking/ok-wuthering-waves/46a334c5a8d782596ed17026843df5b81d87010c/ok_templates/lily-start.png",
+      "source_sha256": "09B6179D236487DD6033D8D5EA427C8AD4370439CE2A23DD39852B672768DC50",
+      "source_region": [
+        3490,
+        400,
+        205,
+        188
+      ],
+      "sha256": "3D2F54CFDF17EE9AA715CC1C4278A91B8015D2FB8A8CD2ECB7E8A10265D871B9",
+      "width": 205,
+      "height": 188,
+      "crop": "none"
     }
   ]
 }

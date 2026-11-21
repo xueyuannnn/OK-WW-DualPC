@@ -17,6 +17,7 @@ class ScriptRuntime {
     HANDLE mapping_ = nullptr;
     void *mapped_ = nullptr;
     std::function<bool()> enabled_;
+    bool activityOnly_ = false;
     friend struct ScriptContractAccess;
     QJsonObject rustScript(int method, QJsonObject message = {}, QJsonObject script = {});
     void write(QJsonObject message);
@@ -27,8 +28,8 @@ class ScriptRuntime {
 
   public:
     std::function<bool(const QString &)> builtin;
-    ScriptRuntime(TaskContext &context, QString root, QString data)
-        : c_(context), root_(std::move(root)), data_(std::move(data)) {}
+    ScriptRuntime(TaskContext &context, QString root, QString data, bool activityOnly = false)
+        : c_(context), root_(std::move(root)), data_(std::move(data)), activityOnly_(activityOnly) {}
     ~ScriptRuntime() { stop(); }
     QJsonObject run(const QJsonObject &script, std::function<bool()> enabled = {});
 };

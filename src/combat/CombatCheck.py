@@ -1,5 +1,7 @@
 import re
 import time
+import cv2
+import numpy as np
 
 import win32api
 
@@ -42,6 +44,7 @@ class CombatCheck(BaseWWTask):
         }
         self.esc_count = 0
         self.can_break = False
+        self._cloud_last_health_seen = None
 
     @property
     def in_liberation(self):
@@ -62,6 +65,7 @@ class CombatCheck(BaseWWTask):
         return False
 
     def do_reset_to_false(self):
+        self._cloud_last_health_seen = None
         self.cds = {}
         self._in_combat = False
         self.boss_lv_mask = None
@@ -151,8 +155,17 @@ class CombatCheck(BaseWWTask):
                 self.log_info('on_combat_check failed')
                 return self.reset_to_false(reason='on_combat_check failed')
             if self.has_target():
+                if self.is_cloud_game():
+                    self._cloud_last_health_seen = time.monotonic()
                 self.last_in_realm_not_combat = 0
                 return self.scene.set_in_combat()
+            if self.is_streamed_image() and self.check_health_bar():
+                self._cloud_last_health_seen = time.monotonic()
+                return self.scene.set_in_combat()
+            if self.is_cloud_game() and self._cloud_last_health_seen is not None:
+                grace = max(0, min(5, getattr(self, '_native_vision', {}).get('grace', 3)))
+                if time.monotonic() - self._cloud_last_health_seen < grace:
+                    return self.scene.set_in_combat()
             if self.combat_end_condition is not None and self.combat_end_condition():
                 return self.reset_to_false(reason='end condition reached')
             if self.target_enemy(wait=True):
@@ -256,7 +269,7 @@ class CombatCheck(BaseWWTask):
     def get_target_names(self):
         has_name = 'has_target'
         no_name = 'no_target'
-        if self.is_browser():
+        if self.is_cloud_game():
             has_name += '_cloud'
             no_name += '_cloud'
         elif self.width == 1600:
@@ -270,6 +283,16 @@ class CombatCheck(BaseWWTask):
         return False
 
     def has_target(self, double_check=False):
+        if self.is_cloud_game():
+            icon = self.find_best_match_in_box(self.box_of_screen(.62, .85, .84, .95),
+                                               list(self.get_target_names()), threshold=.6)
+            if not icon or self.frame is None:
+                return False
+            crop = icon.crop_frame(self.frame)
+            if crop.size == 0:
+                return False
+            gold = cv2.inRange(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV), (15, 90, 150), (35, 255, 255))
+            return np.count_nonzero(gold) / gold.size >= .02
         threshold = 0.6
         has_name, no_name = self.get_target_names()
         scale = 1.2 if self.is_browser() else 1.1
@@ -306,16 +329,23 @@ class CombatCheck(BaseWWTask):
         if not wait:
             self.middle_click()
         else:
-            if self.has_target():
+            if self.has_target() or (self.is_cloud_game() and self.check_health_bar()):
                 return True
             else:
                 logger.info(f'target lost try retarget {self.target_enemy_time_out}')
                 start = time.time()
                 while time.time() - start < self.target_enemy_time_out:
-                    self.middle_click(interval=0.2)
-                    if self.has_target():
+                    interval = max(.2, min(2, getattr(self, '_native_vision', {}).get('retarget_interval', .8))) if self.is_cloud_game() else .2
+                    self.middle_click(interval=interval)
+                    if self.has_target() or (self.is_cloud_game() and self.check_health_bar()):
                         return True
                     self.next_frame()
+
+    def is_cloud_game(self):
+        return bool(getattr(self, '_native_vision', {}).get('cloud', False)) or self.is_browser()
+
+    def is_streamed_image(self):
+        return bool(getattr(self, '_native_vision', {}).get('streamed', False)) or self.is_cloud_game()
 
     def has_health_bar(self):
         if self._in_combat:
@@ -343,6 +373,15 @@ class CombatCheck(BaseWWTask):
                 self.boss_health = self.boss_health_box.crop_frame(self.frame)
                 self.draw_boxes('boss_health', boxes, color='blue')
                 return True
+        if self.is_streamed_image():
+            boxes = find_color_rectangles(self.frame, enemy_health_color_red, min_width, min_height,
+                                           max_height=max_height, threshold=.6)
+            if any(box.width >= box.height * 3 for box in boxes):
+                return True
+            boxes = find_color_rectangles(self.frame, boss_health_color, min_width, min_height * 1.3,
+                box=self.box_of_screen(1269 / 3840, 58 / 2160, 2533 / 3840, 200 / 2160,
+                                       hcenter=True, vcenter=True), threshold=.85)
+            return len(boxes) == 1
         return False
 
     def check_health_bar(self):

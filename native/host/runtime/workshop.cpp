@@ -1066,6 +1066,7 @@ PythonTeamMacro::WorkshopResult PythonTeamMacro::runWorkshop(int method, std::sp
                 break;
             case rust::WorkflowOp::WorkshopFillTaskConfig:
                 request["task_config"] = h_.workshopTaskConfig();
+                request["vision"] = h_.workshopVisionConfig();
                 break;
             case rust::WorkflowOp::WorkshopFillHostState:
                 request["host_state"] = workshopCombatState(h_);

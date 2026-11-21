@@ -1,6 +1,17 @@
 #include "multi_account.hpp"
 #include "workflow_abi.hpp"
 namespace okww::runtime {
+QJsonObject accountDailyOverrides(const Profile &profile, const QString &account) {
+    if (!profile.value("MultiAccountDailyTask", "Independent Account Config", false).toBool())
+        return {};
+    const auto normalized = normalizeAccount(account);
+    for (const auto &entry : profile.value("MultiAccountDailyTask", "Account Profiles", QJsonArray{}).toArray()) {
+        const auto config = entry.toObject();
+        if (!normalized.isEmpty() && normalizeAccount(config["account"].toString()) == normalized)
+            return config["values"].toObject();
+    }
+    return {};
+}
 QString normalizeAccount(QString value) {
     rust::workflowRun(rust::WorkflowMethod::NormalizeAccount, {},
                       [&](rust::WorkflowOp op, const double *a, double *out) {
@@ -196,6 +207,7 @@ std::optional<TextLine> MultiAccountDaily::rustRun(int method, AccountCycle *cyc
             }
             case rust::WorkflowOp::ReadCurrentAccount: {
                 displayed = currentAccount();
+                activeAccount_ = displayed.text;
                 break;
             }
             case rust::WorkflowOp::ClickAccountLine: {
@@ -252,6 +264,7 @@ std::optional<TextLine> MultiAccountDaily::rustRun(int method, AccountCycle *cyc
             }
             case rust::WorkflowOp::ReadExpectedAccount: {
                 expected = normalizeAccount(selected->text);
+                activeAccount_ = selected->text;
                 break;
             }
             case rust::WorkflowOp::AccountSelectionMatches: {
@@ -265,6 +278,11 @@ std::optional<TextLine> MultiAccountDaily::rustRun(int method, AccountCycle *cyc
             }
             case rust::WorkflowOp::MaximumAccountCount: {
                 out[0] = c_.setting("Maximum Accounts", 20).toInt();
+                break;
+            }
+            case rust::WorkflowOp::IndependentAccountConfig: {
+                out[0] = c_.profile.value("MultiAccountDailyTask", "Independent Account Config", false).toBool()
+                    || c_.profile.value("DailyTask", "Use Stamina Cubes for Daily", false).toBool();
                 break;
             }
             case rust::WorkflowOp::RunAccountDaily: {

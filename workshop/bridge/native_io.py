@@ -224,6 +224,8 @@ def install_native_io(channel, direct_input=False):
     dualpc.interaction.create_controller = NativeController
     if direct_input:
         class NativeInteraction(dualpc.interaction.KMBoxInteraction):
+            native_channel = channel
+
             def _native_input(self, operation, **values):
                 self._require_active()
                 state = channel.request('script_input', operation=operation, **values)

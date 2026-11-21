@@ -602,7 +602,9 @@ void Engine::preloadModels() {
                         templates_ = std::make_unique<Templates>(root_ + "/assets/coco_annotations.json");
                         break;
                     case rust::EngineOp::DefaultModelPath:
-                        models = root_ + "/assets/ocr/ppocrv5";
+                        models = root_ + "/assets/ocr/ppocrv6-small";
+                        if (!QFile::exists(models + "/det/det.onnx"))
+                            models = root_ + "/assets/ocr/ppocrv5";
                         break;
                     case rust::EngineOp::ModelExists:
                         out[0] = QFile::exists(models + "/det/det.onnx");
@@ -911,6 +913,7 @@ void Engine::run(QString selected, uint64_t epoch, QJsonObject options) {
                 });
             });
         QJsonObject progressState;
+        context.streamedCapture = config.s("capture.source") == "desktop";
         double lastProgress = -1;
         const auto publishProgress = [&](QJsonObject patch) {
             QString task;

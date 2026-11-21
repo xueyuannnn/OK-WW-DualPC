@@ -3,6 +3,13 @@
 // Recognition assets and upstream attribution remain in character-updates.json.
 namespace okww::runtime {
 namespace {
+class Lily final : public Character {
+    void doPerform() override { rustRun(rust::RotationMethod::LilyPerform); }
+  public:
+    using Character::Character;
+    bool skipCombatCheck() override { return rustRun(rust::RotationMethod::LilySkipCheck)[0] != 0; }
+    bool liberationAvailable() override { return rustRun(rust::RotationMethod::LilyLiberationReady)[0] != 0; }
+};
 class Aalto final : public Character {
     void doPerform() override { rustRun(rust::RotationMethod::AdditionalPerform, {0.}); }
 
@@ -45,7 +52,8 @@ class Suoming final : public Character {
 };
 } // namespace
 std::span<const CharacterRegistration> additionalCharacters() {
-    static const CharacterRegistration entries[] = {{"Aalto", createCharacter<Aalto>},
+    static const CharacterRegistration entries[] = {{"Lily", createCharacter<Lily>},
+                                                    {"Aalto", createCharacter<Aalto>},
                                                     {"Lingyang", createCharacter<Lingyang>},
                                                     {"Lumi", createCharacter<Lumi>},
                                                     {"Yangyang", createCharacter<Yangyang>},

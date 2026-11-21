@@ -291,7 +291,8 @@ QJsonObject ScriptRuntime::rustScript(int method, QJsonObject request, QJsonObje
                                                        {"script_progress", 1},
                                                        {"script_info", 2},
                                                        {"script_input", 3},
-                                                       {"script_builtin", 4}};
+                                                       {"script_builtin", 4},
+                                                       {"activity_ocr", 6}};
                 out[0] = kinds.value(request["op"].toString(), 5);
                 break;
             }
@@ -299,6 +300,16 @@ QJsonObject ScriptRuntime::rustScript(int method, QJsonObject request, QJsonObje
                 c_.refresh();
                 frame = c_.frame;
                 break;
+            case rust::WorkflowOp::ScriptActivityOcr: {
+                // Reuse the image just published to Python; never capture a different frame here.
+                QJsonArray lines;
+                for (const auto &line : c_.text(request["x"].toDouble(), request["y"].toDouble(),
+                                               request["to_x"].toDouble(1), request["to_y"].toDouble(1),
+                                               request["threshold"].toDouble(.5)))
+                    lines.append(line.json());
+                result = {{"lines", lines}, {"sequence", double(c_.frameVersion)}};
+                break;
+            }
             case rust::WorkflowOp::ScriptFrameEmpty:
                 out[0] = frame.empty();
                 break;
@@ -510,10 +521,13 @@ QJsonObject ScriptRuntime::rustScript(int method, QJsonObject request, QJsonObje
             case rust::WorkflowOp::ScriptSetWorkingDirectory:
                 process_.setWorkingDirectory(data_);
                 break;
-            case rust::WorkflowOp::ScriptStartWorker:
-                process_.start(python, {engine + "/workshop/bridge/script_worker.py", "--root", engine,
-                                        "--data", data_, "--mapping", name});
+            case rust::WorkflowOp::ScriptStartWorker: {
+                QStringList arguments{engine + "/workshop/bridge/script_worker.py", "--root", engine,
+                                      "--data", data_, "--mapping", name};
+                if (activityOnly_) arguments.append("--activities");
+                process_.start(python, arguments);
                 break;
+            }
             case rust::WorkflowOp::ScriptWaitStarted:
                 out[0] = process_.waitForStarted(int(a[0]));
                 break;

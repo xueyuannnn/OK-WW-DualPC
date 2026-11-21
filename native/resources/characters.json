@@ -1,5 +1,5 @@
 {
-  "source_sha256": "30833428707acc25fc631600d5aeae57089cc0e5c5d87bf19aada90842b38380",
+  "source_sha256": "144b92286663b14f34654ea0f75af596027af74e5de6772d58f9dbc15c4cc4c9",
   "characters": [
     {
       "templates": [
@@ -462,7 +462,8 @@
     },
     {
       "templates": [
-        "char_hiyuki"
+        "char_hiyuki",
+        "char_hiyuki2"
       ],
       "canonical": "char_hiyuki",
       "class": "Hiyuki",
@@ -570,6 +571,16 @@
       "role": 1,
       "element": 4,
       "buff_time": 14
+    },
+    {
+      "templates": [
+        "char_lily"
+      ],
+      "canonical": "char_lily",
+      "class": "Lily",
+      "role": 2,
+      "element": 0,
+      "buff_time": 30
     },
     {
       "templates": [

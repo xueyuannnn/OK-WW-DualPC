@@ -14,6 +14,7 @@ class AccountCycle {
 class MultiAccountDaily {
     TaskContext &c_;
     Navigation navigation_;
+    QString activeAccount_;
     std::optional<TextLine> rustRun(int method, AccountCycle *cycle = nullptr,
                                     const std::function<void()> &daily = {},
                                     QVector<TextLine> *result = nullptr);
@@ -25,5 +26,7 @@ class MultiAccountDaily {
   public:
     explicit MultiAccountDaily(TaskContext &context) : c_(context), navigation_(context) {}
     void run(const std::function<void()> &daily);
+    QString activeAccount() const { return activeAccount_; }
 };
+QJsonObject accountDailyOverrides(const Profile &profile, const QString &account);
 } // namespace okww::runtime

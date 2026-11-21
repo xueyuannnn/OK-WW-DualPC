@@ -29,3 +29,10 @@ The application code follows `LICENSE.txt`. Third-party components retain their 
 Character artwork is not licensed as application code. Source URLs and hashes are recorded in `native/resources/portraits/manifest.json`. Task symbols are rendered with the installed Segoe UI Emoji font; the font itself is not distributed. These resources retain the rights of their respective owners.
 
 The original license and attribution files remain in the source snapshot. Reference downloads and local migration records are not runtime dependencies.
+
+
+## Selected upstream updates
+
+Character, activity, combat and navigation updates are based on [OK-WW v3.8.9](https://github.com/ok-oldking/ok-wuthering-waves/releases/tag/v3.8.9), commit `46a334c5a8d782596ed17026843df5b81d87010c`. Original Python activity code and the Rahai solver retain their upstream license; their input and OCR adapters use this application's native host. Imported file hashes are recorded in `UPSTREAM-UPDATES.json` and template provenance in `assets/upstream-20261121/manifest.json`.
+
+PP-OCRv6 small detector and recognizer are from the official PaddlePaddle ONNX model repositories. Their pinned revisions, hashes and matching dictionary are in `assets/ocr/ppocrv6-small/manifest.json`; Apache-2.0 terms are in `native/licenses/ocr6/LICENSE.txt` (full package: `licenses/ocr6/LICENSE.txt`). The dictionary was obtained from `onnxocr-ppocrv6 0.0.1`; the existing portable Python dependencies are not upgraded by this native OCR update.

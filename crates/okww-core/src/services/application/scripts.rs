@@ -73,6 +73,7 @@ impl Host {
                 self.action(Op::ScriptCreateBuiltinScope, &[])?;
                 self.action(Op::ScriptInvokeBuiltin, &[])?;
             }
+            6 => self.action(Op::ScriptActivityOcr, &[])?,
             _ => self.action(Op::ScriptForwardInputRequest, &[])?,
         }
         Ok(())

@@ -9,6 +9,7 @@ class TaskRunner {
     QString root_, data_;
     int deathRecoveries_ = 0;
     double recoveredAt_ = -1e12;
+    double introScanAt_ = -1e12;
 
   public:
     TaskRunner(TaskContext &context, EchoDetector &detector, QString root, QString data,

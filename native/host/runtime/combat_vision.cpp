@@ -633,6 +633,21 @@ TargetObservation CombatVision::targetObservation(bool allowShort, bool extended
     const auto result = rust::visionRun(
         rust::VisionMethod::Target, args, [&](rust::VisionOp op, const double *a, double *out) {
             switch (op) {
+            case rust::VisionOp::CloudMode:
+                out[0] = context_.cloudGame();
+                break;
+            case rust::VisionOp::CloudTargetPrepare:
+                area = gameBox(context_.frame, .62, .85, .84, .95);
+                raw = best(area, {"has_target_cloud", "no_target_cloud"}, .6);
+                break;
+            case rust::VisionOp::CloudTargetGold: {
+                const auto b = raw->box & QRect(0, 0, context_.frame.cols, context_.frame.rows);
+                cv::Mat hsv, gold;
+                cv::cvtColor(context_.frame(cv::Rect(b.x(), b.y(), b.width(), b.height())), hsv, cv::COLOR_BGR2HSV);
+                cv::inRange(hsv, cv::Scalar(15, 90, 150), cv::Scalar(35, 255, 255), gold);
+                out[0] = double(cv::countNonZero(gold)) / (b.width()*b.height());
+                break;
+            }
             case rust::VisionOp::ImageSize: {
                 out[0] = context_.frame.cols;
                 out[1] = context_.frame.rows;
@@ -759,6 +774,18 @@ bool CombatVision::healthBar(bool inCombat) {
     return rust::visionRun(
                rust::VisionMethod::Health, args, [&](rust::VisionOp op, const double *a, double *out) {
                    switch (op) {
+                   case rust::VisionOp::StreamedMode:
+                       out[0] = context_.streamedImage();
+                       break;
+                   case rust::VisionOp::StreamedHealth: {
+                       const auto bars = colorRectangles(image, {{55,55,174},{76,85,225}},a[0],a[1],a[2],{},a[3]);
+                       out[0] = std::any_of(bars.begin(),bars.end(),[](const auto &b){return b.box.width()>=b.box.height()*3;});
+                       if(out[0]==0) {
+                           const auto area=Templates::anchored({1269,58,1264,142},{3840,2160},{image.cols,image.rows},true,true);
+                           out[0]=colorRectangles(image,{{4,30,245},{75,185,255}},a[0],a[1]*1.3,-1,area,.85).size()==1;
+                       }
+                       break;
+                   }
                    case rust::VisionOp::ImageSize: {
                        out[0] = image.cols;
                        out[1] = image.rows;

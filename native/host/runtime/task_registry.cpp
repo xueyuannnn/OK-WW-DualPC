@@ -1,14 +1,16 @@
 #include "task_registry.hpp"
 #include "multi_account.hpp"
+#include "instance_flow.hpp"
 #include "task_registry_abi.hpp"
 #include "workflow_abi.hpp"
+#include "scripts.hpp"
 namespace okww::runtime {
 QVector<TaskDefinition> businessTasks(const std::function<bool(const QString &)> &dispatch) {
     const QStringList names{"AutoCombatTask",  "RemoteMouseResetTask", "DailyTask",         "DailyTask2",
                             "FarmEchoTask",    "FarmEchoTask2",        "NightmareNestTask", "TacetTask",
                             "TacetTask2",      "ForgeryTask",          "ForgeryTask2",      "SimulationTask",
                             "SimulationTask2", "MergeEchoTask",        "EnhanceEchoTask",   "ChangeEchoTask",
-                            "GardenTask",      "MultiAccountDailyTask"};
+                            "GardenTask",      "MultiAccountDailyTask", "GalGameTask", "RahaiBlocksTask"};
     QString current;
     QVector<TaskDefinition> result;
     rust::workflowRun(
@@ -38,6 +40,24 @@ bool TaskRunner::dispatch(const QString &id) {
         rust::WorkflowMethod::DispatchBusinessTask, args,
         [&](rust::WorkflowOp op, const double *a, double *out, const std::exception_ptr &error) {
             switch (op) {
+            case rust::WorkflowOp::TaskAutoCloseIntro:
+                out[0] = c_.profile.value("AutoCombatTask", "Auto Close Abyss Character Intro", true).toBool();
+                break;
+            case rust::WorkflowOp::TaskPartyVisible:
+                out[0] = c_.inTeam();
+                break;
+            case rust::WorkflowOp::TaskIntroScanAt:
+                out[0] = introScanAt_;
+                break;
+            case rust::WorkflowOp::TaskSetIntroScanAt:
+                introScanAt_ = a[0];
+                break;
+            case rust::WorkflowOp::TaskCombatIntroVisible:
+                out[0] = combatIntroVisible(c_);
+                break;
+            case rust::WorkflowOp::TaskCloseCombatIntro:
+                c_.clickRelative(.942, .058, .5);
+                break;
             case rust::WorkflowOp::RunAutomaticCombat:
                 out[0] = combat_.runAutoCombat();
                 break;
@@ -85,9 +105,13 @@ bool TaskRunner::dispatch(const QString &id) {
             case rust::WorkflowOp::TaskEnhancedSuffix:
                 out[0] = id.endsWith('2');
                 break;
-            case rust::WorkflowOp::DispatchMultiAccountDaily:
-                MultiAccountDaily(c_).run([&] { Daily(c_, combat_, detector_, root_, data_).run(); });
+            case rust::WorkflowOp::DispatchMultiAccountDaily: {
+                MultiAccountDaily accounts(c_);
+                accounts.run([&] {
+                    Daily(c_, combat_, detector_, root_, data_).run(false, accountDailyOverrides(c_.profile, accounts.activeAccount()), accounts.activeAccount());
+                });
                 break;
+            }
             case rust::WorkflowOp::DispatchDaily:
                 Daily(c_, combat_, detector_, root_, data_).run(bool(a[0]));
                 break;
@@ -103,6 +127,12 @@ bool TaskRunner::dispatch(const QString &id) {
             case rust::WorkflowOp::DispatchGarden:
                 Garden(c_, root_).run();
                 break;
+            case rust::WorkflowOp::DispatchPythonActivity: {
+                ScriptRuntime activity(c_, root_, data_, true);
+                activity.builtin = [&](const QString &task) { return dispatch(task); };
+                activity.run({{"id", "activity:" + id}, {"fields", QJsonArray{}}});
+                break;
+            }
             case rust::WorkflowOp::DispatchMergeEcho:
                 EchoOperations(c_, data_ + "/screenshots").merge();
                 break;

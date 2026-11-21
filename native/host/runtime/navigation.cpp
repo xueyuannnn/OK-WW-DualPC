@@ -66,6 +66,7 @@ struct NavigationBridge {
     QPointF point;
     QVector<TextLine> lines;
     QVector<Match> rows;
+    QVector<Match> waypoints;
     QString key(int index) {
         const QStringList names{"esc", "alt", "ctrl", "a", "backspace"};
         if (index == 5)
@@ -306,6 +307,28 @@ struct NavigationBridge {
                             .indexOf(name);
                     break;
                 }
+                case rust::WorkflowOp::WaypointCandidates: {
+                    waypoints.clear();
+                    const auto area = gameBox(c.frame, .1, .1, .9, .9);
+                    for (const auto &name : {"map_way_point", "map_way_point_big"})
+                        waypoints += c.templates.find(c.frame, name, {.threshold = .6, .search = area});
+                    out[0] = waypoints.size();
+                    break;
+                }
+                case rust::WorkflowOp::WaypointGeometry: {
+                    const auto point = waypoints.at(int(a[0])).center();
+                    out[0] = point.x(); out[1] = point.y();
+                    break;
+                }
+                case rust::WorkflowOp::WaypointFrameSize:
+                    out[0] = c.frame.cols; out[1] = c.frame.rows;
+                    break;
+                case rust::WorkflowOp::SelectWaypointCandidate:
+                    best = waypoints.at(int(a[0]));
+                    break;
+                case rust::WorkflowOp::CloseWaypointSelection:
+                    c.clickRelative(.06, .5, 1.);
+                    break;
                 case rust::WorkflowOp::ClearWaypoint: {
                     best.reset();
                     break;
@@ -440,7 +463,7 @@ struct NavigationBridge {
                     break;
                 }
                 case rust::WorkflowOp::FindNextInterface: {
-                    next = c.findAny({"fast_travel_custom", "gray_teleport", "remove_custom", "team_close"});
+                    next = c.findAny({"fast_travel_custom", "gray_teleport", "remove_custom", "team_start_challenge", "team_close"});
                     out[0] = next.has_value();
                     break;
                 }
@@ -460,7 +483,7 @@ struct NavigationBridge {
                     break;
                 }
                 case rust::WorkflowOp::NextIsTeamClose: {
-                    out[0] = next->name == "team_close";
+                    out[0] = next->name == "team_close" || next->name == "team_start_challenge";
                     break;
                 }
                 case rust::WorkflowOp::Throw: {

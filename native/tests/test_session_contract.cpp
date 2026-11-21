@@ -52,6 +52,7 @@ struct Probe {
     void event(O op,double v=0){events.append(QJsonArray{int(op),v,time});}
     void invoke(O op,const double *a,double *out,const std::exception_ptr &error){
         switch(op){
+        case O::CloudMode:case O::StreamedImage:out[0]=false;break;
         case O::GetBool:out[0]=booleans.at(int(a[0]));break;
         case O::SetBool:booleans.at(int(a[0]))=a[1]!=0;events.append(QJsonArray{int(op),a[0],a[1],time});break;
         case O::GetTime:out[0]=times.at(int(a[0]));break;

@@ -659,6 +659,11 @@ QWidget *Window::devicePage() {
     localCaptureLayout->addRow(localCaptureHint);
     captureForms_->addWidget(localCapture);
     captureLayout->addWidget(captureForms_);
+    auto overlayHint = new QLabel("建议关闭 NVIDIA 帧率统计及其他性能悬浮层，避免遮挡体力、队伍和技能信息，影响识别。");
+    overlayHint->setObjectName("captureOverlayHint");
+    overlayHint->setWordWrap(true);
+    overlayHint->setProperty("caption", true);
+    captureLayout->addWidget(overlayHint);
     auto remoteFullscreenHint=new QLabel("若使用远程软件，请开启远程软件的全屏模式，并确保游戏画面为 16:9 全屏。");
     remoteFullscreenHint->setObjectName("remoteFullscreenHint");
     remoteFullscreenHint->setWordWrap(true);

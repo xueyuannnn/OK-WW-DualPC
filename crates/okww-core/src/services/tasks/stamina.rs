@@ -229,8 +229,25 @@ impl Host {
         ])
     }
     fn read_stamina(&self) -> Result<[f64; 3]> {
-        self.wait_for(|| self.flag(Op::ReadStaminaText, &[]), 10.)?;
-        let values = self.call(Op::StaminaTextValues, &[])?;
+        let observed = Cell::new([-1.; 3]);
+        self.wait_for_interval(
+            || {
+                self.action(Op::ReadStaminaText, &[])?;
+                let mut values = self.call(Op::StaminaTextValues, &[])?;
+                if values[0] < 0. {
+                    self.action(Op::ReadStaminaScaledText, &[])?;
+                    values = self.call(Op::StaminaTextValues, &[])?;
+                }
+                observed.set(values);
+                Ok(values[0] >= 0. && values[1] >= 0. && values[2] == values[0] + values[1])
+            },
+            10.,
+            0.2,
+        )?;
+        let values = observed.get();
+        if values[0] < 0. {
+            self.action(Op::StaminaReadDiagnostic, &[])?;
+        }
         if values[0] >= 0. && self.flag(Op::HasInfo, &[])? {
             self.action(Op::CurrentStaminaInfo, &[values[0]])?;
             self.action(Op::ReserveStaminaInfo, &[values[1]])?;

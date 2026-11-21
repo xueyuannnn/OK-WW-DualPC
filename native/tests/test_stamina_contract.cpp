@@ -208,6 +208,18 @@ class StaminaContracts : public QObject {
         QFETCH(int, scene);
         const auto expected = stamina_actions_test::cube<false>(scene),
                    actual = stamina_actions_test::cube<true>(scene);
+        if(scene%23==0) {
+            // No complete counter: the new reader retries observation, while
+            // the old reader could return on an unrelated inventory digit.
+            for(const auto &key:QStringList{"confirmations","current","stock","error","used","pending","remaining","journal"})
+                QCOMPARE(actual.value(key),expected.value(key));
+            for(const auto &event:actual["events"].toArray())
+                QVERIFY(!event.toObject().contains("op"));
+            const auto time=actual["time"].toDouble();
+            QVERIFY(time <= (scene&64 ? 2.25 : 10.25));
+            if(!(scene&64))QVERIFY(time>=10.);
+            return;
+        }
         QVERIFY2(actual == expected,
                  qPrintable(
                      QString::fromUtf8(QJsonDocument(QJsonObject{{"expected", expected}, {"actual", actual}})
@@ -272,6 +284,20 @@ class StaminaContracts : public QObject {
     void reading() {
         QFETCH(int, scene);
         const auto expected = readTrace(scene, false), actual = readTrace(scene, true);
+        const int first=scene%8;
+        if(scene%17!=0 && (first==0 || first==3 || first==4)) {
+            if(first==3 && (scene&8)) {
+                QCOMPARE(actual["error"].toString(),QString::fromUtf8(Cancelled().what()));
+                QVERIFY(!actual.contains("values"));
+                QVERIFY(qAbs(actual["time"].toDouble()-.2)<1e-8);
+            } else {
+                const int current=first==0?12:0,reserve=(scene&2)?60:0;
+                QCOMPARE(actual["values"].toArray(),QJsonArray({current,reserve,current+reserve}));
+                QCOMPARE(actual["error"].toString(),QString{});
+                QVERIFY(qAbs(actual["time"].toDouble()-(first==3?.2:0.))<1e-8);
+            }
+            return;
+        }
         QVERIFY2(actual == expected,
                  qPrintable(
                      QString::fromUtf8(QJsonDocument(QJsonObject{{"expected", expected}, {"actual", actual}})

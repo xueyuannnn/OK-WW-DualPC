@@ -95,6 +95,52 @@ QJsonObject observation(int scene, bool rust) {
 class DailyContracts : public QObject {
     Q_OBJECT
   private slots:
+    void missingStaminaRecoversOnlyNavigationAndNeverRepeatsMaterialActions() {
+        for(int scenario=0;scenario<3;++scenario) {
+            int reads=0,opens=0,retries=0,cubes=0,farms=0;
+            QJsonArray modes;
+            const auto run=[&] {
+                rust::workflowRun(rust::WorkflowMethod::DailyCompleteStamina,{},
+                    [&](rust::WorkflowOp op,const double *a,double *out) {
+                        switch(op) {
+                        case rust::WorkflowOp::DailyNoProgress:out[0]=0;break;
+                        case rust::WorkflowOp::DailyUseCubes:
+                        case rust::WorkflowOp::HasDailyCubeBudget:
+                        case rust::WorkflowOp::HasInfo:out[0]=1;break;
+                        case rust::WorkflowOp::CreateDailyCubeBudget:
+                        case rust::WorkflowOp::DailyCubeUsageInfo:
+                        case rust::WorkflowOp::OpenDailyProgress:
+                        case rust::WorkflowOp::ReadDailyDomainQuota:
+                        case rust::WorkflowOp::CreateDailyStaminaFarm:break;
+                        case rust::WorkflowOp::ReadDailyDomainKind:
+                        case rust::WorkflowOp::DailyDomainSpent:out[0]=0;break;
+                        case rust::WorkflowOp::ReadDailyDomainCost:out[0]=60;break;
+                        case rust::WorkflowOp::LoadDailyProgress:out[0]=0;out[1]=0;out[2]=0;break;
+                        case rust::WorkflowOp::DailyDomainQuotaNumber:
+                        case rust::WorkflowOp::DailyPreferDouble:out[0]=1;break;
+                        case rust::WorkflowOp::DailyDomainQuota:out[0]=20;break;
+                        case rust::WorkflowOp::DailyOpenBossBook:++opens;modes.append(bool(a[0]));break;
+                        case rust::WorkflowOp::ReadDailyStamina:
+                            ++reads;
+                            if(scenario==2 && reads==2)throw Cancelled();
+                            out[0]=out[2]=(scenario==0 && reads>=3)?240:-1;
+                            out[1]=out[0]>=0?0:-1;break;
+                        case rust::WorkflowOp::DailyStaminaRetryInfo:++retries;break;
+                        case rust::WorkflowOp::UseDailyCubeBudget:++cubes;out[0]=1;break;
+                        case rust::WorkflowOp::FarmDailyStamina:++farms;QCOMPARE(int(a[0]),120);throw Cancelled();
+                        case rust::WorkflowOp::DailyActionFailure:throw NavigationFailure("counter unavailable");
+                        default:fail("Unexpected pre-spend recovery operation");
+                        }
+                    });
+            };
+            if(scenario==1)QVERIFY_THROWS_EXCEPTION(NavigationFailure,run());
+            else QVERIFY_THROWS_EXCEPTION(Cancelled,run());
+            QCOMPARE(cubes,0);QCOMPARE(farms,scenario==0?1:0);
+            QCOMPARE(reads,scenario==2?2:3);QCOMPARE(opens,reads);QCOMPARE(retries,scenario==2?1:2);
+            QCOMPARE(modes.first(),QJsonValue(true));
+            for(int i=1;i<modes.size();++i)QCOMPARE(modes[i],QJsonValue(false));
+        }
+    }
     void staminaRechecksThePageBeforeSpendingAgain_data() {
         QTest::addColumn<QString>("scenario");
         for (const auto &name : {"claim-refresh", "delayed-page", "complete-on-claim", "unchanged", "unreadable", "cancel",

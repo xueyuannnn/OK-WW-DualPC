@@ -210,6 +210,14 @@ StaminaValues staminaValues(const QVector<TextLine> &lines) {
 }
 StaminaValues readStamina(TaskContext &c) {
     QVector<TextLine> lines;
+    QJsonArray samples;
+    const auto record = [&](const QString &mode) {
+        QJsonArray entries;
+        for(const auto &line:lines)entries.append(line.json());
+        samples.append(QJsonObject{{"mode",mode},{"frame_sequence",QString::number(c.frameVersion)},
+                                   {"lines",entries}});
+        if(samples.size()>8)samples.removeFirst();
+    };
     const auto values = rust::workflowRun(rust::WorkflowMethod::ReadStamina, {},
                                           [&](rust::WorkflowOp op, const double *a, double *out) {
                                               switch (op) {
@@ -235,7 +243,18 @@ StaminaValues readStamina(TaskContext &c) {
                                               }
                                               case rust::WorkflowOp::ReadStaminaText: {
                                                   lines = c.text(.49, 0, .92, .1);
+                                                  record("original");
                                                   out[0] = bool(matchingText(lines, "\\d"));
+                                                  break;
+                                              }
+                                              case rust::WorkflowOp::ReadStaminaScaledText: {
+                                                  lines = c.textScaled(gameBox(c.frame,.49,0,.92,.1),.6,2);
+                                                  record("scaled");
+                                                  break;
+                                              }
+                                              case rust::WorkflowOp::StaminaReadDiagnostic: {
+                                                  if(c.diagnostic)c.diagnostic("未识别到完整体力计数",{{"region",QJsonArray{.49,0,.92,.1}},
+                                                      {"stamina_samples",samples},{"observation_only",true}});
                                                   break;
                                               }
                                               case rust::WorkflowOp::StaminaTextValues: {

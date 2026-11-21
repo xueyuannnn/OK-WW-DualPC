@@ -341,8 +341,20 @@ impl Host {
             if remaining == Some(0) {
                 return Ok(());
             }
-            self.action(Op::DailyOpenBossBook, &[])?;
-            let [current, reserve, mut total] = self.call(Op::ReadDailyStamina, &[])?;
+            // Reopen and reread navigation only. Never replay a cube or reward
+            // action when its result has not been confirmed.
+            let mut values = [-1.; 3];
+            for attempt in 0..3 {
+                self.action(Op::DailyOpenBossBook, &[f64::from(attempt == 0)])?;
+                values = self.call(Op::ReadDailyStamina, &[])?;
+                if values[0] >= 0. && values[1] >= 0. && values[2] >= 0. {
+                    break;
+                }
+                if attempt < 2 {
+                    self.action(Op::DailyStaminaRetryInfo, &[f64::from(attempt + 1)])?;
+                }
+            }
+            let [current, reserve, mut total] = values;
             if current < 0. || reserve < 0. || total < 0. {
                 self.action(Op::DailyActionFailure, &[8.])?;
             }
@@ -421,7 +433,7 @@ impl Host {
         if requested == 0 {
             return Ok(());
         }
-        self.action(Op::DailyOpenBossBook, &[])?;
+        self.action(Op::DailyOpenBossBook, &[1.])?;
         let total = self.call(Op::ReadDailyStamina, &[])?[2];
         let limit = self.scalar(
             Op::DailyDomainCountLimit,

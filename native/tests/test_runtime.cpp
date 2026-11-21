@@ -62,6 +62,62 @@ class MacroProbe final : public TeamMacro {
 class RuntimeTests : public QObject {
     Q_OBJECT
   private slots:
+    void staminaWaitsPastOverlayDigitsForACompleteCounter() {
+        Harness h;QTemporaryDir directory;const auto root=QString(OKWW_SOURCE_ROOT);
+        Templates templates(root+"/assets/coco_annotations.json");
+        Profile profile(directory.path(),root+"/native/resources/catalog.json");
+        profile.set("Monthly Card Config","Check Monthly Card",false);
+        Input input(h.config,{1920,1080},true,h.transport,h.execution);
+        auto image=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(20,20,20));
+        int original=0,scaled=0;
+        TaskContext c(h.execution,input,templates,profile,[&]{return image;},
+            [&](const cv::Mat &frame,QRect,double) {
+                if(frame.cols!=1920){++scaled;return QVector<TextLine>{};}
+                ++original;
+                if(h.clock.time<.4)return QVector<TextLine>{{"60",{1700,10,40,25},.99}};
+                return QVector<TextLine>{{"120/240",{1500,30,120,30},.99},{"60",{1420,30,50,30},.99}};
+            });
+        c.frame=image;
+        const auto values=readStamina(c);
+        QCOMPARE(values.current,120);QCOMPARE(values.reserve,60);QCOMPARE(values.total,180);
+        QVERIFY(h.clock.time>=.4);QVERIFY(original>=3);QVERIFY(scaled>=2);QVERIFY(h.events.isEmpty());
+    }
+    void staminaScaledFallbackKeepsCoordinatesAndAcceptsZero() {
+        for(int current:{0,120}) {
+            Harness h;QTemporaryDir directory;const auto root=QString(OKWW_SOURCE_ROOT);
+            Templates templates(root+"/assets/coco_annotations.json");
+            Profile profile(directory.path(),root+"/native/resources/catalog.json");
+            profile.set("Monthly Card Config","Check Monthly Card",false);
+            Input input(h.config,{1920,1080},true,h.transport,h.execution);
+            auto image=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(20,20,20));
+            TaskContext c(h.execution,input,templates,profile,[&]{return image;},
+                [&](const cv::Mat &frame,QRect,double) {
+                    if(frame.cols==1920)return QVector<TextLine>{{"FPS60",{1700,10,80,30},.99}};
+                    return QVector<TextLine>{{QString::number(current)+"/240",{100,10,150,40},.99},{"60",{10,10,40,40},.99}};
+                });
+            c.frame=image;const auto values=readStamina(c);
+            QCOMPARE(values.current,current);QCOMPARE(values.reserve,60);QCOMPARE(values.total,current+60);
+            QVERIFY(h.clock.time<.2);QVERIFY(h.events.isEmpty());
+        }
+    }
+    void staminaMissingCounterProducesBoundedReadOnlyEvidenceAndCanBeCancelled() {
+        for(bool cancel:{false,true}) {
+            Harness h;QTemporaryDir directory;const auto root=QString(OKWW_SOURCE_ROOT);
+            Templates templates(root+"/assets/coco_annotations.json");
+            Profile profile(directory.path(),root+"/native/resources/catalog.json");
+            profile.set("Monthly Card Config","Check Monthly Card",false);
+            Input input(h.config,{1920,1080},true,h.transport,h.execution);
+            auto image=cv::Mat(1080,1920,CV_8UC3,cv::Scalar(20,20,20));
+            TaskContext c(h.execution,input,templates,profile,[&]{return image;},
+                [](const cv::Mat &,QRect,double){return QVector<TextLine>{{"FPS60",{10,10,50,20},.99}};});
+            c.frame=image;int reports=0;
+            c.diagnostic=[&](QString,QJsonObject event){++reports;QVERIFY(event["observation_only"].toBool());QVERIFY(event["stamina_samples"].toArray().size()<=8);};
+            if(cancel)h.clock.tick=[&]{if(h.clock.time>=.4)h.gate.stop();};
+            if(cancel){QVERIFY_THROWS_EXCEPTION(Cancelled,readStamina(c));QCOMPARE(reports,0);}
+            else {QCOMPARE(readStamina(c).current,-1);QCOMPARE(reports,1);QVERIFY(h.clock.time>=10);QVERIFY(h.clock.time<11);}
+            QVERIFY(h.events.isEmpty());
+        }
+    }
     void cloudDisconnectRequiresTheCloudModeAndAnExplicitErrorWithButton() {
         for(int scenario=0;scenario<4;++scenario) {
             Harness h;QTemporaryDir directory;

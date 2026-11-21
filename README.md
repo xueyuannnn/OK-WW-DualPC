@@ -4,7 +4,7 @@
 
 双机模式通过采集卡读取画面、KMBox Net 发送键鼠操作；也可使用本机 DXGI / Win32 截图和 SendInput 输入。业务内核使用 Rust，负责内置任务、角色连招、识别策略和设备控制；C++ 保留 Qt 界面及底层 SDK 适配，工坊、通用脚本和活动流程使用独立 Python 环境。
 
-基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.15**，支持 Windows x64。
+基于 [OK-WW](https://github.com/ok-oldking/ok-wuthering-waves)、[OK-WW Enhanced](https://github.com/zzc-tongji/ok-ww-enhanced) 和 [ok-script](https://github.com/ok-oldking/ok-script) 开发。当前版本为 **0.2.0-beta.16**，支持 Windows 10／11 x64。
 
 [下载完整包](https://github.com/xueyuannnn/okww-dualpc/releases) · [使用说明](docs/usage.md) · [问题反馈](https://github.com/xueyuannnn/okww-dualpc/issues)
 
@@ -45,7 +45,7 @@ GitHub 提供的是普通包，不含个人配置。EXE 文件名是更新器沿
 
 | 模块 | 支持范围 |
 | --- | --- |
-| 系统 | Windows x64 |
+| 系统 | Windows 10／11 x64；不支持 Windows 7／8.x |
 | 视频采集 | 采集卡（DirectShow、Media Foundation）、DXGI、Win32 |
 | 键鼠输入 | KMBox Net、本机 SendInput |
 | 图像参数 | 按采集卡驱动枚举结果选择 |

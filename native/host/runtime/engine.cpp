@@ -2232,6 +2232,10 @@ void Engine::switchTeamCode(QJsonObject request) {
                             teams->setAllModes(request["mode"].toString());
                             break;
                         }
+                        case rust::EngineOp::TeamImport: {
+                            teams->importTeam(request["path"].toString());
+                            break;
+                        }
                         case rust::EngineOp::ReplyOk: {
                             reply["ok"] = true;
                             break;

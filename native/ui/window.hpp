@@ -152,6 +152,8 @@ class Window final : public QMainWindow {
     bool settleCodeEdits();
     void saveCurrentCode();
     void switchTeamCode(QJsonObject request);
+    void importTeamArchive(const QString &path, std::function<void(QJsonObject)> done,
+                           std::function<void(QString)> failed);
     void requestTeamCode(const QString &source = {});
     void restoreCodeSelection();
     void refreshScheduleTable();

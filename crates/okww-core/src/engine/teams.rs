@@ -68,10 +68,11 @@ impl Host {
     pub(super) fn team_work(&self) -> EngineResult {
         self.action(Op::StartTeamTimer, &[])?;
         let result = (|| {
-            if Command::try_from(self.call(Op::RequestCommand, &[])? as i32)? == Command::TeamMode {
-                self.action(Op::SetTeamMode, &[])?;
-            } else {
-                self.action(Op::SetAllTeamModes, &[])?;
+            match Command::try_from(self.call(Op::RequestCommand, &[])? as i32)? {
+                Command::TeamMode => self.action(Op::SetTeamMode, &[])?,
+                Command::TeamAllMode => self.action(Op::SetAllTeamModes, &[])?,
+                Command::TeamImport => self.action(Op::TeamImport, &[])?,
+                _ => return self.fail(9.),
             }
             self.action(Op::ReplyOk, &[])
         })();

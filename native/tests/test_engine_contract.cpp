@@ -217,7 +217,8 @@ class EngineContractTests final:public QObject{
     }
     void commandMatchesFrozenCpp(){
         QFETCH(int,scenario);QFETCH(int,command);
-        const auto expected=test::commandTrace(scenario,command,false),actual=test::commandTrace(scenario,command,true);
+        // Import now uses the same guarded background job as a mode switch.
+        const auto expected=test::commandTrace(scenario,command==15?16:command,false),actual=test::commandTrace(scenario,command,true);
         QVERIFY2(actual==expected,qPrintable(QString::fromUtf8(QJsonDocument(QJsonObject{{"expected",expected},{"actual",actual}}).toJson(QJsonDocument::Compact))));
     }
     void catalogueMatchesFrozenCpp_data(){

@@ -276,15 +276,21 @@ class WorkshopLibrary:
         return self.finish(self.catalog())
 
     def fetch_item(self, item):
-        if self.cached(item):
-            return dict(item, error='')
-        if time.monotonic() > self.deadline:
-            raise ValueError('本次同步达到两分钟限制，请点击下载全部继续')
-        content = self.fetch(item['url'], 20_000_000)
+        cached = self.cached(item)
+        if cached:
+            content = self.archive_path(item['sha256']).read_bytes()
+        else:
+            if time.monotonic() > self.deadline:
+                raise ValueError('本次同步达到两分钟限制，请点击下载全部继续')
+            content = self.fetch(item['url'], 20_000_000)
         manifest = archive_manifest(content)
         expected = sorted(str(item.get('team', '')).replace(' ', '').split(','))
         if expected != sorted(manifest['team'].replace(' ', '').split(',')):
             raise ValueError('队伍包与工坊索引中的角色不一致')
+        if cached:
+            # The ZIP is authoritative. Older or interrupted index writes may
+            # have retained its checksum without the manifest.
+            return dict(item, manifest=manifest, error='')
         sha = hashlib.sha256(content).hexdigest()
         path = self.archive_path(sha)
         path.parent.mkdir(parents=True, exist_ok=True)

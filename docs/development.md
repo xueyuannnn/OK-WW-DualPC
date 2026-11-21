@@ -2,7 +2,7 @@
 
 ## 环境
 
-- Windows x64，Visual Studio 2022 的 C++ 桌面开发组件与 Windows SDK。
+- Windows 10／11 x64，Visual Studio 2022 的 C++ 桌面开发组件与 Windows SDK。
 - Rust 1.100.0，使用 `x86_64-pc-windows-msvc` 工具链，版本固定在 `rust-toolchain.toml`。
 - Qt 6.8 或更新版本的 MSVC 2022 x64 SDK，包含 Qt Test。
 - OpenCV 4.12 x64 SDK。

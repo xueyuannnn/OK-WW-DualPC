@@ -17,7 +17,7 @@ impl Host {
     fn command_body(&self) -> EngineResult<bool> {
         let command = Command::try_from(self.call(Op::RequestCommand, &[])? as i32)?;
         match command {
-            Command::TeamMode | Command::TeamAllMode => {
+            Command::TeamMode | Command::TeamAllMode | Command::TeamImport => {
                 self.action(Op::SwitchTeam, &[])?;
                 return Ok(false);
             }
@@ -88,7 +88,6 @@ impl Host {
             | Command::TeamCreate
             | Command::TeamDelete
             | Command::TeamSave
-            | Command::TeamImport
             | Command::Team => {
                 if self.flag(Op::TeamBusy, &[])? {
                     return self.fail(6.).map(|_| false);
@@ -103,7 +102,6 @@ impl Host {
                             Command::TeamCreate => self.action(Op::TeamCreate, &[])?,
                             Command::TeamDelete => self.action(Op::TeamDelete, &[])?,
                             Command::TeamSave => self.action(Op::TeamSave, &[])?,
-                            Command::TeamImport => self.action(Op::TeamImport, &[])?,
                             _ => return self.fail(9.).map(|_| false),
                         }
                         self.action(Op::InvalidateParty, &[])?;

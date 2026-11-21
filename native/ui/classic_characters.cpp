@@ -98,6 +98,28 @@ void Window::switchTeamCode(QJsonObject request) {
         showTeam();
     });
 }
+void Window::importTeamArchive(const QString &path, std::function<void(QJsonObject)> done,
+                               std::function<void(QString)> failed) {
+    if (teamOperation_) {
+        failed("正在处理队伍代码，请等待当前操作完成。");
+        return;
+    }
+    teamOperation_ = true;
+    showTeam();
+    log("正在导入工坊队伍并校验代码…");
+    send({{"op", "team_import"}, {"path", path}}, [this, done](auto catalog) {
+        teamOperation_ = false;
+        setCatalog(catalog);
+        log(QString("工坊队伍已导入并启用，用时 %1 ms；下次启动重新识别队伍。")
+                .arg(catalog["team_switch_ms"].toInt()));
+        done(catalog);
+    }, [this, failed](const QString &error) {
+        teamOperation_ = false;
+        showTeam();
+        log("工坊导入失败：" + error);
+        failed(error);
+    });
+}
 QWidget *Window::buildClassicCharacters() {
     auto page = new QWidget;
     auto layout = new QVBoxLayout(page);
@@ -191,7 +213,11 @@ QWidget *Window::buildClassicCharacters() {
         const auto path = QFileDialog::getOpenFileName(this, "导入 OK-WW / OK-WW-E 工坊队伍", {},
                                                        "Python 工坊队伍 (*.zip);;原生队伍包 (*.okww-team)");
         if (!path.isEmpty())
-            send({{"op", "team_import"}, {"path", path}}, [this](auto c) { setCatalog(c); });
+            importTeamArchive(path, [this](auto) {
+                QMessageBox::information(this,"队伍已导入","已导入并启用工坊代码，可在队伍列表查看或切换回内置代码。");
+            }, [this](const QString &error) {
+                QMessageBox::warning(this,"队伍未导入",error);
+            });
     });
     importTeam->setToolTip("直接选择工坊下载的队伍 ZIP，无需解压或转换为 C++。\n"
                            "导入后可切换内置 / 工坊代码，支持的键鼠操作通过所选盒子输出。\n"

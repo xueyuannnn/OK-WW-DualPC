@@ -144,7 +144,7 @@ void Window::workshopRequest(QJsonObject request, std::function<void(QJsonObject
             workshopBusy_ = false;
             workshopProgressTimer_.stop();
             ++workshopRevision_;
-            const auto error = result["_error"].toString(result["error"].toString());
+            const auto error = result.value("_error").toString(result.value("error").toString());
             QString message = "工坊操作已完成";
             if (!error.isEmpty())
                 message = "工坊刷新未完成";
@@ -192,7 +192,7 @@ void Window::updateWorkshop(bool startup) {
         return;
     }
     workshopRequest({{"op", "library_refresh"}, {"due", !startup}}, [this](auto result) {
-        const auto error = result["_error"].toString(result["error"].toString());
+        const auto error = result.value("_error").toString(result.value("error").toString());
         if (!error.isEmpty())
             log("角色工坊：" + error);
         else if (result["auto_update"].toBool())
@@ -393,15 +393,19 @@ void Window::openWorkshop() {
     classic::setFluentIcon(importButton, "Download", true);
     auto close = new QPushButton("关闭");
     auto notice = new QLabel("已缓存方案可离线导入 · 原始署名与代码保留");
-    notice->setObjectName("caption");
+    notice->setObjectName("workshopImportStatus");
+    notice->setWordWrap(true);
+    notice->setTextFormat(Qt::PlainText);
+    notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
     bottom->addWidget(notice, 1);
     bottom->addWidget(importButton);
     bottom->addWidget(close);
     layout->addLayout(bottom);
     auto current = std::make_shared<QJsonObject>();
+    auto importing = std::make_shared<bool>(false);
     auto feedbackEntry = std::make_shared<QJsonObject>();
     const auto describe = [this, root = root_, current, table, detail, detailTitle, detailMeta, portraits, importButton,
-                           compatibility, feedbackEntry] {
+                           compatibility, feedbackEntry, importing] {
         *feedbackEntry = QJsonObject{};
         compatibility->hide();
         const auto selected = table->item(table->currentRow(), 0);
@@ -434,7 +438,7 @@ void Window::openWorkshop() {
             detailTitle->setToolTip(entry["team_display"].toString());
             detailMeta->setText(QString("作者：%1  ·  v%2  ·  %3").arg(entry["author"].toString(), entry["version"].toString(), status));
             detail->setHtml(QString("<p style='line-height:155%;margin:0'>%1</p>").arg(text(description)));
-            importButton->setEnabled(entry["compatible"].toBool(true) && !workshopBusy_);
+            importButton->setEnabled(entry["compatible"].toBool(true) && !workshopBusy_ && !*importing && !teamOperation_);
             if (!entry["compatible"].toBool(true)) {
                 *feedbackEntry = entry;
                 compatibility->show();
@@ -582,41 +586,72 @@ void Window::openWorkshop() {
         hint->setText("正在下载代码包，完成后可离线选择…");
         workshopRequest({{"op", "library_download"}}, show);
     });
-    connect(importButton, &QPushButton::clicked, &dialog, [this, guard, table, hint] {
+    auto finishImport = [guard, importing, importButton, describe] {
+        *importing = false;
+        if (!guard) return;
+        importButton->setText("导入选中版本");
+        describe();
+    };
+    auto importFailure = [this, guard, hint, notice, finishImport](const QString &error) {
+        finishImport();
+        log("工坊导入失败：" + error);
+        if (!guard) return;
+        notice->setText("导入失败：" + error);
+        hint->setText(notice->text());
+        QMessageBox::warning(guard, "队伍未导入", error);
+    };
+    connect(importButton, &QPushButton::clicked, &dialog,
+            [this, guard, table, hint, notice, importButton, importing, finishImport, importFailure] {
+        if (*importing) return;
         if (automation_ || pendingStart_ || !nativeEngine_ || !nativeEngine_->idle()) {
-            hint->setText("请先暂停任务，再导入工坊版本。");
+            importFailure("请先暂停自动任务和实时触发，再导入工坊版本；设备连接可以保持。");
             return;
         }
         const auto item = table->item(table->currentRow(), 0);
-        if (!item)
+        if (!item) {
+            importFailure("请先在左侧选择一个工坊方案。");
             return;
+        }
+        *importing = true;
+        importButton->setEnabled(false);
+        importButton->setText("正在校验…");
+        notice->setText("正在校验所选工坊包，请稍候…");
         workshopRequest(
             {{"op", "library_select"}, {"entry", item->data(Qt::UserRole).toString()}},
-            [this, guard, hint](auto result) {
-                if (!guard)
+            [this, guard, hint, notice, importButton, finishImport, importFailure](auto result) {
+                if (!guard) {
+                    finishImport();
                     return;
+                }
                 if (result.contains("_error")) {
-                    hint->setText(result["_error"].toString());
+                    importFailure(result["_error"].toString());
                     return;
                 }
                 const auto m = result["manifest"].toObject();
+                if (m.isEmpty() || result["path"].toString().isEmpty()) {
+                    importFailure("工坊包未返回完整队伍信息，请重新刷新后重试。");
+                    return;
+                }
                 const auto text =
                     QString(
                         "%1\n作者：%2 · 版本：%3\n\n导入并启用此工坊代码？相同队伍原有代码会保存一份备份。")
                         .arg(result["team_display"].toString(m["team"].toString()), m["author"].toString(), m["version"].toString());
-                if (QMessageBox::question(guard, "导入工坊队伍", text) != QMessageBox::Yes)
+                if (QMessageBox::question(guard, "导入工坊队伍", text) != QMessageBox::Yes) {
+                    notice->setText("已取消导入，当前队伍未改变。");
+                    finishImport();
                     return;
-                send(
-                    {{"op", "team_import"}, {"path", result["path"]}},
-                    [this, guard, hint](auto catalog) {
-                        setCatalog(catalog);
-                        if (guard)
+                }
+                importButton->setText("正在导入…");
+                notice->setText("正在导入并校验队伍代码，可等待完成或查看运行日志。");
+                importTeamArchive(result["path"].toString(),
+                    [guard, hint, notice, finishImport](auto) {
+                        finishImport();
+                        if (guard) {
+                            notice->setText("队伍已导入并启用，可关闭工坊查看队伍代码。");
                             hint->setText("队伍已导入，当前使用此版本的 Python 工坊代码。");
+                        }
                     },
-                    [guard, hint](auto error) {
-                        if (guard)
-                            hint->setText(error);
-                    });
+                    importFailure);
             });
     });
     workshopRequest({{"op", "library"}}, show);

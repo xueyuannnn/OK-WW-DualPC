@@ -225,6 +225,33 @@ class EngineTests final : public QObject {
         QVERIFY(!backend.snapshot()["armed"].toBool());
         QCOMPARE(partyInvalidations, 1);
     }
+    void failedWorkshopImportKeepsTheUiResponsiveAndReleasesTheBusyState() {
+        const QString root=OKWW_SOURCE_ROOT;
+        QTemporaryDir data;
+        Backend backend(false);Engine engine(backend,root,data.path());
+        QMap<int,QJsonObject> replies;
+        connect(&engine,&Engine::message,&engine,[&](QJsonObject event) {
+            if(event["id"].isDouble())replies[event["id"].toInt()]=event;
+        });
+        engine.load();
+        int heartbeats=0;QTimer timer;timer.setInterval(10);
+        connect(&timer,&QTimer::timeout,&engine,[&]{++heartbeats;});timer.start();
+        QElapsedTimer elapsed;elapsed.start();
+        engine.command({{"op","team_import"},{"id",201},{"path",data.path()+"/missing.zip"}});
+        QVERIFY2(elapsed.elapsed()<250,"Import blocked the event loop");
+        QVERIFY(!engine.idle());
+        engine.command({{"op","catalog"},{"id",202}});
+        QVERIFY(replies[202]["ok"].toBool());
+        engine.command({{"op","start"},{"id",203}});
+        QVERIFY(!replies[203]["ok"].toBool());
+        engine.command({{"op","team_import"},{"id",204},{"path",data.path()+"/second.zip"}});
+        QVERIFY(!replies[204]["ok"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(replies.contains(201),15000);
+        QVERIFY(!replies[201]["ok"].toBool());
+        QVERIFY(!replies[201]["error"].toString().isEmpty());
+        QVERIFY(heartbeats>0);QVERIFY(engine.idle());
+        QVERIFY(!backend.snapshot()["armed"].toBool());
+    }
     void liveTriggerSettingsSaveWithoutInterruptingTheCurrentIteration() {
         const QString root = OKWW_SOURCE_ROOT;
         QTemporaryDir data;

@@ -947,6 +947,62 @@ class ClassicUiTests final : public QObject {
                 window->grab().save(artifacts + '/' + theme + "-compact.png");
         }
     }
+    void workshopCachedImportCompletesThroughTheConfirmationDialog_data() {
+        QTest::addColumn<bool>("missingManifest");
+        QTest::newRow("complete-cache")<<false;
+        QTest::newRow("recover-missing-manifest")<<true;
+    }
+    void workshopCachedImportCompletesThroughTheConfirmationDialog() {
+        QFETCH(bool,missingManifest);
+        QTemporaryDir data;
+        const auto archive=QByteArray::fromBase64(
+            "UEsDBBQAAAAIAIKWdV0rXkJOYwAAAIcAAAAJAAAAdGVhbS5qc29uq1bKS8xNVbJSUPJPS8vJzEtVyMwtyC8qUdJRUEpJLU4uyiwoyczPw1SgUJJaDFaVWFqSkV8EUhACFSlLLSqG6jHUMwCJlKQm5oK4TomZVRmZOgq+QANS04CMsNSizLxEpVoAUEsDBBQAAAAIAIKWdV2qGkIHPwAAAFAAAAAJAAAAQmFpemhpLnB5SyvKz1UoLkrWS85ILNJzSsysyshUyMwtyC8qUYDyEosV/Isy0zPzEnO4knMSi4uhEhowUU0rLgUgKABKcQEAUEsDBBQAAAAIAIKWdV1/G95CPgAAAFMAAAAKAAAATW9ydGVmaS5weUsrys9VKC5K1kvOSCzS880vKklNy1TIzC0AshRg3MRiBf+izPTMvMQcruScxOJimIwGTFjTiksBCAqAclwAUEsDBBQAAAAIAIKWdV2jFt7IPQAAAFAAAAAJAAAAVmVyaW5hLnB5SyvKz1UoLkrWS85ILNILSy3KzEtUyMwtyC8qUYDyEosV/Isy04HMHK7knMTiYqiEBkxU04pLAQgKgFJcAFBLAQIUABQAAAAIAIKWdV0rXkJOYwAAAIcAAAAJAAAAAAAAAAAAAACAAQAAAAB0ZWFtLmpzb25QSwECFAAUAAAACACClnVdqhpCBz8AAABQAAAACQAAAAAAAAAAAAAAgAGKAAAAQmFpemhpLnB5UEsBAhQAFAAAAAgAgpZ1XX8b3kI+AAAAUwAAAAoAAAAAAAAAAAAAAIAB8AAAAE1vcnRlZmkucHlQSwECFAAUAAAACACClnVdoxbeyD0AAABQAAAACQAAAAAAAAAAAAAAgAFWAQAAVmVyaW5hLnB5UEsFBgAAAAAEAAQA3QAAALoBAAAAAA==");
+        const auto sha=QString::fromLatin1(QCryptographicHash::hash(archive,QCryptographicHash::Sha256).toHex());
+        const auto cache=data.path()+"/workshop-library";
+        QVERIFY(QDir().mkpath(cache+"/archives"));
+        QFile file(cache+"/archives/"+sha+".zip");QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(archive),qint64(archive.size()));file.close();
+        writeJson(cache+"/settings.json",{{"auto_update",false}});
+        QJsonObject entry{
+            {"id","offline-import"},{"sha256",sha},{"name","Offline import"},
+            {"description","Offline import test"},{"team","Baizhi, Mortefi, Verina"},
+            {"author","Test"},{"version","1.0"}};
+        if(!missingManifest)entry["manifest"]=QJsonObject{
+            {"name","Offline import"},{"description","Offline import test"},
+            {"team","Baizhi, Mortefi, Verina"},{"author","Test"},{"version","1.0"}};
+        writeJson(cache+"/index.json",{{"entries",QJsonArray{entry}}});
+        auto window=create(data);QTRY_VERIFY(card(*window,"DailyTask2"));navigate(*window,"characters");
+        bool clicked=false,confirmed=false,imported=false;QString lastStatus,modalStatus;
+        QTimer timer;timer.setInterval(20);
+        connect(&timer,&QTimer::timeout,window.get(),[&] {
+            for(auto widget:QApplication::topLevelWidgets()) {
+                auto question=qobject_cast<QMessageBox *>(widget);
+                if(!question || !question->isVisible())continue;
+                modalStatus=question->windowTitle()+": "+question->text();
+                if(question->text().contains("导入并启用此工坊代码")) {
+                    confirmed=true;question->button(QMessageBox::Yes)->click();
+                } else {
+                    question->reject();
+                }
+                return;
+            }
+            auto dialog=window->findChild<QDialog *>("workshopDialog");if(!dialog)return;
+            lastStatus=dialog->findChild<QLabel *>("workshopStatus")->text();
+            auto table=dialog->findChild<QTableWidget *>("workshopTable");
+            auto button=dialog->findChild<QPushButton *>("workshopImport");
+            if(!clicked && table->rowCount()==1 && button->isEnabled()) {clicked=true;button->click();return;}
+            if(lastStatus.contains("队伍已导入")) {imported=true;timer.stop();dialog->accept();}
+        });
+        timer.start();
+        QTimer::singleShot(15000,window.get(),[&] {
+            if(auto modal=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))modal->reject();
+            if(auto dialog=window->findChild<QDialog *>("workshopDialog"))dialog->reject();
+        });
+        window->findChild<QPushButton *>("openWorkshop")->click();
+        QVERIFY(clicked);QVERIFY2(confirmed,qPrintable(modalStatus+"\n"+lastStatus));QVERIFY2(imported,qPrintable(modalStatus+"\n"+lastStatus));
+        const auto config=data.path()+"/configs-dualpc/custom_teams/Baizhi__Mortefi__Verina/team.json";
+        QVERIFY(QFile::exists(config));QCOMPARE(readJson(config)["code_mode"].toString(),QString("import"));
+    }
     void workshopFirstUseGuidesRefreshAndShowsLiveCountsAndFailureCause() {
         QTemporaryDir data;
         QDir().mkpath(data.path() + "/workshop-library");

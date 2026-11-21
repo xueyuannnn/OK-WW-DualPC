@@ -1,5 +1,9 @@
 # 使用说明
 
+## 系统要求
+
+当前完整包支持 Windows 10／11 x64，不支持 Windows 7／8.x。界面使用 Qt 6.8，Qt 官方的 Windows 支持范围从 Windows 10 1809 起；旧系统出现 `CreateDXGIFactory2` 入口缺失时，需要更换受支持的系统，替换单个 DLL 不能让当前完整包兼容 Win7。详见 [Qt 官方说明](https://doc.qt.io/qt-6.8/windows.html)。
+
 ## 软件更新
 
 在「关于 → 版本更新」检查本项目的 GitHub Releases，可查看新版本摘要，再点击「下载并更新」。默认启动时自动检查，并包含预览版；这两项均可关闭。检查不会上传配置或导入的代码。

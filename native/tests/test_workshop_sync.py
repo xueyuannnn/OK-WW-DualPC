@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -105,6 +106,40 @@ def test_full_refresh_is_offline_ready_without_changing_active_teams(tmp_path):
     assert len(calls) == 2
     library.refresh(due=True)
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize('saved_manifest', [None, {'author': 'stale metadata'}])
+def test_cached_selection_recovers_the_manifest_from_the_zip_without_network(tmp_path, saved_manifest):
+    def offline(*_):
+        raise AssertionError('A verified cached package must not be downloaded again')
+    library = WorkshopLibrary(tmp_path, offline)
+    content = archive()
+    sha = hashlib.sha256(content).hexdigest()
+    path = library.archive_path(sha)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    entry = dict(id='cached', team='Baizhi, Mortefi, Verina', sha256=sha)
+    if saved_manifest is not None:
+        entry['manifest'] = saved_manifest
+    library.write('index.json', dict(entries=[entry]))
+    assert library.catalog()['downloaded'] == 1
+    selected = library.select('cached')
+    assert selected['manifest'] == archive_manifest(content)
+    assert Path(selected['path']) == path.resolve()
+    assert library.read('index.json', {})['entries'][0]['manifest'] == selected['manifest']
+
+
+def test_cached_selection_rejects_a_mismatched_team_instead_of_trusting_saved_metadata(tmp_path):
+    library = WorkshopLibrary(tmp_path, lambda *_: pytest.fail('Must not use network'))
+    content = archive()
+    sha = hashlib.sha256(content).hexdigest()
+    path = library.archive_path(sha)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    library.write('index.json', dict(entries=[dict(id='wrong', sha256=sha,
+        team='Baizhi, Mortefi, Jiyan', manifest={'team': 'Baizhi, Mortefi, Jiyan'})]))
+    with pytest.raises(ValueError, match='角色不一致'):
+        library.select('wrong')
 
 
 def test_failed_update_preserves_local_library_and_can_retry(tmp_path):

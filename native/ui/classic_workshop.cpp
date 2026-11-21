@@ -85,20 +85,82 @@ class WorkshopDelegate final : public QStyledItemDelegate {
     }
 };
 } // namespace
+QString Window::workshopActivityText(const QJsonObject &activity) const {
+    if (!activity["busy"].toBool())
+        return activity["error"].toString().isEmpty() ? activity["message"].toString() :
+            "刷新未完成：" + activity["error"].toString();
+    auto text = activity["message"].toString();
+    if (activity["total"].toInt() > 0)
+        text += QString("  %1 / %2 · 已缓存 %3 · 失败 %4")
+            .arg(activity["completed"].toInt()).arg(activity["total"].toInt())
+            .arg(activity["downloaded"].toInt()).arg(activity["failed"].toInt());
+    text += QString("  · 已用时 %1 秒").arg(activity["elapsed_seconds"].toInt());
+    if (activity["elapsed_seconds"].toInt() >= 15)
+        text += "\n首次下载取决于网络，可关闭此窗口，后台会继续刷新；已缓存方案可以查看。";
+    return text;
+}
+void Window::notifyWorkshopActivity() {
+    QJsonObject activity;
+    try {
+        const auto path = data_ + "/workshop-library/sync-status.json";
+        if (QFile::exists(path)) {
+            auto status = readJson(path);
+            if (status["operation_id"] == workshopOperation_)
+                activity = status;
+        }
+    } catch (const std::exception &) { // A temporary status read must not interrupt synchronization.
+    }
+    activity["busy"] = true;
+    activity["elapsed_seconds"] = int(workshopElapsed_.elapsed() / 1000);
+    if (activity["message"].toString().isEmpty())
+        activity["message"] = "正在准备工坊刷新…";
+    workshopActivity_ = activity;
+    emit workshopActivityChanged(activity);
+}
 void Window::workshopRequest(QJsonObject request, std::function<void(QJsonObject)> done) {
     const bool readOnly = request["op"] == "library";
     if (workshopBusy_ && !readOnly) {
         done({{"_error", "工坊正在同步，请稍候再试。"}});
         return;
     }
-    if (!readOnly)
+    if (!readOnly) {
         workshopBusy_ = true;
+        workshopOperation_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        request["operation_id"] = workshopOperation_;
+        workshopElapsed_.restart();
+        disconnect(&workshopProgressTimer_, nullptr, this, nullptr);
+        connect(&workshopProgressTimer_, &QTimer::timeout, this, &Window::notifyWorkshopActivity);
+        workshopProgressTimer_.start(500);
+        notifyWorkshopActivity();
+    }
     auto watcher = new QFutureWatcher<QJsonObject>(this);
-    connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, done, readOnly] {
-        const auto result = watcher->result();
+    const auto revision = workshopRevision_;
+    connect(watcher, &QFutureWatcher<QJsonObject>::finished, this, [this, watcher, done, readOnly, revision] {
+        auto result = watcher->result();
+        if (readOnly && revision != workshopRevision_ && !workshopCatalog_.isEmpty())
+            result = workshopCatalog_;
         watcher->deleteLater();
-        if (!readOnly)
+        if (!readOnly) {
             workshopBusy_ = false;
+            workshopProgressTimer_.stop();
+            ++workshopRevision_;
+            const auto error = result["_error"].toString(result["error"].toString());
+            QString message = "工坊操作已完成";
+            if (!error.isEmpty())
+                message = "工坊刷新未完成";
+            else if (result.contains("entries"))
+                message = QString("工坊已更新 · 已缓存 %1 / %2 份")
+                    .arg(result["downloaded"].toInt()).arg(result["total"].toInt());
+            workshopActivity_ = {{"busy", false}, {"error", error},
+                {"message", message},
+                {"elapsed_seconds", int(workshopElapsed_.elapsed()/1000)}};
+            emit workshopActivityChanged(workshopActivity_);
+            if (!error.isEmpty()) log("角色工坊：" + error);
+        }
+        if (result.contains("entries")) {
+            workshopCatalog_ = result;
+            emit workshopCatalogUpdated(result);
+        }
         done(result);
     });
     watcher->setFuture(QtConcurrent::run([root = root_, data = data_, request] {
@@ -109,7 +171,7 @@ void Window::workshopRequest(QJsonObject request, std::function<void(QJsonObject
         }
     }));
 }
-void Window::updateWorkshop() {
+void Window::updateWorkshop(bool startup) {
     if (closing_ || workshopBusy_)
         return;
     try {
@@ -120,13 +182,16 @@ void Window::updateWorkshop() {
         const auto indexPath = data_ + "/workshop-library/index.json";
         const auto index = QFile::exists(indexPath) ? readJson(indexPath) : QJsonObject{};
         const auto hours = std::clamp(settings["interval_hours"].toInt(24), 1, 720);
-        if (QDateTime::currentSecsSinceEpoch() - index["attempted_at"].toDouble() < hours * 3600.)
+        const auto wait = index["error"].toString().isEmpty() ? hours * 3600. : 300.;
+        if (!startup && QDateTime::currentSecsSinceEpoch() - index["attempted_at"].toDouble() < wait)
             return;
     } catch (const std::exception &error) {
         log("角色工坊设置读取失败：" + errorText(error));
+        workshopActivity_ = {{"busy", false}, {"error", "工坊设置读取失败：" + errorText(error)}};
+        emit workshopActivityChanged(workshopActivity_);
         return;
     }
-    workshopRequest({{"op", "library_refresh"}, {"due", true}}, [this](auto result) {
+    workshopRequest({{"op", "library_refresh"}, {"due", !startup}}, [this](auto result) {
         const auto error = result["_error"].toString(result["error"].toString());
         if (!error.isEmpty())
             log("角色工坊：" + error);
@@ -144,6 +209,35 @@ void Window::openWorkshop() {
     auto layout = classic::dialogLayout(dialog, "角色代码工坊",
         "选择队伍  →  阅读方案与适用条件  →  导入使用", {1220, 820});
     QPointer<QDialog> guard(&dialog);
+    auto statusCard = new QFrame;
+    statusCard->setObjectName("card");
+    auto statusLayout = new QVBoxLayout(statusCard);
+    statusLayout->setContentsMargins(16, 12, 16, 12);
+    auto statusRow = new QHBoxLayout;
+    auto statusTitle = new QLabel("正在读取工坊…");
+    statusTitle->setObjectName("workshopSyncTitle");
+    auto statusFont = statusTitle->font(); statusFont.setBold(true); statusFont.setPixelSize(15);
+    statusTitle->setFont(statusFont);
+    auto guide = new QPushButton("立即刷新");
+    guide->setEnabled(false);
+    guide->setObjectName("workshopRefreshGuide");
+    guide->setProperty("primary", true);
+    statusRow->addWidget(statusTitle, 1);
+    statusRow->addWidget(guide);
+    statusLayout->addLayout(statusRow);
+    auto hint = new QLabel("首次使用会自动联网刷新，已缓存方案可离线查看。");
+    hint->setObjectName("workshopStatus");
+    hint->setTextFormat(Qt::PlainText);
+    hint->setWordWrap(true);
+    hint->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    hint->setMaximumHeight(100);
+    statusLayout->addWidget(hint);
+    auto progress = new QProgressBar;
+    progress->setObjectName("workshopSyncProgress");
+    progress->setRange(0, 0);
+    progress->setVisible(workshopBusy_);
+    statusLayout->addWidget(progress);
+    layout->addWidget(statusCard);
     auto settings = new classic::ExpandCard("联网与更新设置", "自动同步新的方案，已导入队伍保持当前版本");
     settings->setHeaderIcon("Sync");
     auto settingsLayout = new QVBoxLayout(settings->body());
@@ -160,7 +254,9 @@ void Window::openWorkshop() {
     auto save = new QPushButton("保存设置");
     save->setObjectName("workshopSave");
     auto refresh = new QPushButton("检查并同步");
-    auto download = new QPushButton("下载全部 / 重试");
+    refresh->setObjectName("workshopRefresh");
+    auto download = new QPushButton("重试未完成");
+    download->setObjectName("workshopDownload");
     options->addWidget(automatic);
     auto interval = new QSpinBox;
     interval->setObjectName("workshopInterval");
@@ -290,11 +386,6 @@ void Window::openWorkshop() {
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
     layout->addWidget(split, 1);
-    auto hint = new QLabel("正在读取本地代码库…");
-    hint->setObjectName("workshopStatus");
-    hint->setProperty("subtleStatus", true);
-    hint->setWordWrap(true);
-    layout->addWidget(hint);
     auto bottom = new QHBoxLayout;
     auto importButton = new QPushButton("导入选中版本");
     importButton->setObjectName("workshopImport");
@@ -309,7 +400,7 @@ void Window::openWorkshop() {
     layout->addLayout(bottom);
     auto current = std::make_shared<QJsonObject>();
     auto feedbackEntry = std::make_shared<QJsonObject>();
-    const auto describe = [root = root_, current, table, detail, detailTitle, detailMeta, portraits, importButton,
+    const auto describe = [this, root = root_, current, table, detail, detailTitle, detailMeta, portraits, importButton,
                            compatibility, feedbackEntry] {
         *feedbackEntry = QJsonObject{};
         compatibility->hide();
@@ -335,13 +426,15 @@ void Window::openWorkshop() {
                 if (slot < roles.size()) portraits[slot]->setMember(root, roles[slot], slot < names.size() ? names[slot] : roles[slot]);
             }
             auto description = entry["description_display"].toString(entry["description"].toString());
+            if (!entry["error"].toString().isEmpty())
+                description += "\n\n下载未完成：" + entry["error"].toString();
             auto title = description.section('\n', 0, 0).trimmed();
             if (title.isEmpty() || title.startsWith("作者暂未")) title = entry["name_display"].toString(entry["name"].toString());
             detailTitle->setText(entry["team_display"].toString().replace(" / ", " · "));
             detailTitle->setToolTip(entry["team_display"].toString());
             detailMeta->setText(QString("作者：%1  ·  v%2  ·  %3").arg(entry["author"].toString(), entry["version"].toString(), status));
             detail->setHtml(QString("<p style='line-height:155%;margin:0'>%1</p>").arg(text(description)));
-            importButton->setEnabled(entry["compatible"].toBool(true));
+            importButton->setEnabled(entry["compatible"].toBool(true) && !workshopBusy_);
             if (!entry["compatible"].toBool(true)) {
                 *feedbackEntry = entry;
                 compatibility->show();
@@ -387,13 +480,33 @@ void Window::openWorkshop() {
         count->setText(QString("%1 份方案").arg(table->rowCount()));
         describe();
     };
-    auto show = [guard, current, render, source, automatic, interval, hint](QJsonObject result) {
+    auto activity = [this, guard, statusTitle, hint, progress, guide, refresh, download, save, source, automatic, interval, importButton, describe](QJsonObject state) {
+        if (!guard) return;
+        const bool busy = state["busy"].toBool();
+        const QList<QWidget *> controls{guide, refresh, download, save, source, automatic, interval};
+        for (auto control : controls)
+            control->setEnabled(!busy);
+        if (busy) importButton->setEnabled(false);
+        else describe();
+        progress->setVisible(busy);
+        const int total = state["total"].toInt();
+        progress->setRange(0, total);
+        progress->setValue(state["completed"].toInt());
+        statusTitle->setText(busy ? "正在刷新工坊" : state["error"].toString().isEmpty() ? "角色代码工坊" : "刷新未完成");
+        guide->setText(busy ? "正在刷新…" : state["error"].toString().isEmpty() ? "立即刷新" : "重新刷新");
+        if (busy || !state["error"].toString().isEmpty()) {
+            hint->setText(workshopActivityText(state));
+            hint->setToolTip(hint->text());
+        }
+    };
+    auto show = [this, guard, current, render, source, automatic, interval, hint, statusTitle, guide, activity](QJsonObject result) {
         if (!guard)
             return;
         if (result.contains("_error")) {
-            hint->setText(result["_error"].toString());
+            activity({{"error", result["_error"]}});
             return;
         }
+        if (!workshopBusy_) activity({});
         *current = result;
         source->setText(result["source"].toString());
         automatic->setChecked(result["auto_update"].toBool());
@@ -406,8 +519,20 @@ void Window::openWorkshop() {
                           .arg(result["downloaded"].toInt())
                           .arg(result["total"].toInt())
                           .arg(checkedText) + (result["error"].toString().isEmpty() ? "" : "\n" + result["error"].toString()));
+        hint->setToolTip(hint->text());
+        if (result["last_checked"].toString().isEmpty() && result["error"].toString().isEmpty()) {
+            statusTitle->setText("首次使用 · 刷新工坊列表");
+            hint->setText("尚未联网刷新。点击“立即刷新”获取队伍方案，下载后即可离线导入。\n开启“联网自动同步”后，每次启动软件会后台检查，运行中按设置周期更新。");
+        } else {
+            statusTitle->setText(result["error"].toString().isEmpty() ? "工坊方案已就绪" : "刷新未完成");
+        }
+        guide->setText(result["error"].toString().isEmpty() ? "立即刷新" : "重新刷新");
         render();
+        if (workshopBusy_ || !workshopActivity_["error"].toString().isEmpty()) activity(workshopActivity_);
     };
+    connect(this, &Window::workshopActivityChanged, &dialog, activity);
+    connect(this, &Window::workshopCatalogUpdated, &dialog, show);
+    if (workshopBusy_) activity(workshopActivity_);
     connect(search, &QLineEdit::textChanged, &dialog, [render] { render(); });
     connect(filter, &QComboBox::currentIndexChanged, &dialog, [render] { render(); });
     connect(table, &QTableWidget::itemSelectionChanged, &dialog, describe);
@@ -445,15 +570,14 @@ void Window::openWorkshop() {
                          {"source", source->text()},
                          {"auto_update", automatic->isChecked()},
                          {"interval_hours", interval->value()}},
-                        [this, guard, show](auto result) {
-                            if (!guard)
-                                return;
+                        [this, show](auto result) {
                             if (result.contains("_error"))
                                 show(result);
                             else
                                 workshopRequest({{"op", "library_refresh"}}, show);
                         });
     });
+    connect(guide, &QPushButton::clicked, refresh, &QPushButton::click);
     connect(download, &QPushButton::clicked, &dialog, [this, hint, show] {
         hint->setText("正在下载代码包，完成后可离线选择…");
         workshopRequest({{"op", "library_download"}}, show);

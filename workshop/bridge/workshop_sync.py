@@ -14,6 +14,9 @@ from urllib.request import Request, urlopen
 import zipfile
 import tempfile
 import threading
+import socket
+import ssl
+from urllib.error import HTTPError, URLError
 
 from scripts_store import atomic_text
 
@@ -21,6 +24,24 @@ from scripts_store import atomic_text
 # endpoint is currently unavailable; this mirror preserves the original authors.
 DEFAULT_SOURCE = 'https://raw.githubusercontent.com/yamadafz/ok-ww-char-code/main/teams.json'
 HOSTS = {'raw.githubusercontent.com', 'okwwcharcode.ok-script.com', 'cfokwwchar.ok-script.com'}
+
+
+def failure_reason(error):
+    """Keep the actionable cause, including server status and local I/O errors."""
+    if isinstance(error, HTTPError):
+        return f'服务器返回 HTTP {error.code}：{error.reason}（{urlparse(error.url).hostname}）'
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLError):
+        return 'HTTPS 证书验证失败，请检查系统时间和网络代理：' + str(reason)
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return '连接超时，请检查网络或代理后重试'
+    if isinstance(reason, socket.gaierror):
+        return '域名解析失败，请检查网络、DNS 或代理：' + str(reason)
+    if isinstance(error, PermissionError):
+        return '无法写入工坊缓存，请检查目录权限或文件占用：' + str(error)
+    if isinstance(error, (json.JSONDecodeError, UnicodeDecodeError)):
+        return '工坊索引格式无效，服务器可能返回了错误页面：' + str(error)
+    return str(reason) or type(error).__name__
 
 
 def source_url(value):
@@ -110,7 +131,7 @@ def entries(payload):
 
 
 class WorkshopLibrary:
-    def __init__(self, data, fetch=download, supported=None, characters=None):
+    def __init__(self, data, fetch=download, supported=None, characters=None, operation_id=None):
         self.root = Path(data) / 'workshop-library'
         self.fetch = fetch
         self.supported = {name.casefold() for name in supported} if supported is not None else None
@@ -118,6 +139,20 @@ class WorkshopLibrary:
         self.storage_lock = threading.Lock()
         self.deadline = float('inf')
         self.stored_bytes = 0
+        self.operation_id = operation_id
+        self.started_at = time.time()
+
+    def progress(self, phase, message, **values):
+        if self.operation_id:
+            self.write('sync-status.json', dict(operation_id=self.operation_id, phase=phase,
+                message=message, started_at=self.started_at, updated_at=time.time(), **values))
+
+    def finish(self, result):
+        error = result.get('error', '')
+        self.progress('failed' if error else 'complete', error or '工坊刷新完成',
+            done=True, completed=result['downloaded'], total=result['total'],
+            downloaded=result['downloaded'], error=error)
+        return result
 
     def read(self, name, fallback):
         path = self.root / name
@@ -213,16 +248,19 @@ class WorkshopLibrary:
                     item['description'] = '【待适配角色：' + '、'.join(missing) + '】' + item['source_description']
                     item['description_display'] = '【角色待适配】' + item['description_display']
         return dict(self.settings(), entries=values, last_checked=index.get('last_checked', ''),
+                    attempted_at=index.get('attempted_at', 0),
                     error=index.get('error', ''), downloaded=sum(item['downloaded'] for item in values),
                     total=len(values))
 
     def refresh(self, due=False):
         settings = self.settings()
         previous = self.read('index.json', {})
-        if due and (not settings['auto_update'] or time.time() - previous.get('attempted_at', 0) < settings['interval_hours'] * 3600):
+        retry_seconds = 300 if previous.get('error') else settings['interval_hours'] * 3600
+        if due and (not settings['auto_update'] or time.time() - previous.get('attempted_at', 0) < retry_seconds):
             return self.catalog()
         index = dict(previous, attempted_at=time.time())
         try:
+            self.progress('index', '正在连接工坊源并读取方案列表…', done=False)
             values = entries(json.loads(self.fetch(source_url(settings['source']), 8_000_000)))
             values += [item for item in previous.get('entries', []) if item.get('local')]
             old = {item['id']: item for item in previous.get('entries', [])}
@@ -231,15 +269,15 @@ class WorkshopLibrary:
                     item.update({k: old[item['id']][k] for k in ('sha256', 'manifest') if k in old[item['id']]})
             index.update(entries=values, error='', last_checked=time.strftime('%Y-%m-%d %H:%M:%S'))
             self.write('index.json', index)
-            self.download_all()
+            return self.download_all()
         except Exception as error:
-            index['error'] = '同步未完成，已保留本地代码库：' + str(error)
+            index['error'] = '同步未完成，已保留本地代码库：' + failure_reason(error)
             self.write('index.json', index)
-        return self.catalog()
+        return self.finish(self.catalog())
 
     def fetch_item(self, item):
         if self.cached(item):
-            return item
+            return dict(item, error='')
         if time.monotonic() > self.deadline:
             raise ValueError('本次同步达到两分钟限制，请点击下载全部继续')
         content = self.fetch(item['url'], 20_000_000)
@@ -267,25 +305,48 @@ class WorkshopLibrary:
 
     def download_all(self):
         index = self.read('index.json', {})
+        if not index.get('last_checked') and not index.get('entries') and index.get('error'):
+            raise ValueError('尚未获取工坊列表，请点击“重新刷新”。' + index['error'])
         values = index.get('entries', [])
-        pending = [(i, item) for i, item in enumerate(values) if not self.cached(item)]
+        pending = []
+        for i, item in enumerate(values):
+            if self.cached(item):
+                values[i] = dict(item, error='')
+            else:
+                pending.append((i, item))
         self.stored_bytes = sum(path.stat().st_size for path in (self.root/'archives').glob('*.zip'))
         self.deadline = time.monotonic() + 120
         if self.stored_bytes > 500_000_000:
             raise ValueError('本地代码库超过 500 MB，请先检查工坊源')
+        completed = len(values) - len(pending)
+        downloaded, failed = completed, 0
+        saved_at = time.monotonic()
+        self.progress('download', '正在下载并校验队伍代码…', done=False,
+                      completed=completed, total=len(values), downloaded=downloaded, failed=failed)
         with ThreadPoolExecutor(max_workers=4) as pool:
             jobs = {pool.submit(self.fetch_item, item): i for i, item in pending}
             for job in as_completed(jobs):
                 i = jobs[job]
                 try:
                     values[i] = job.result()
+                    downloaded += 1
                 except Exception as error:
-                    values[i]['error'] = str(error)
+                    values[i]['error'] = failure_reason(error)
+                    failed += 1
+                completed += 1
+                # Persist each completed archive so a timeout or app exit can resume.
+                if time.monotonic() - saved_at >= .5 or completed == len(values):
+                    index['entries'] = values
+                    self.write('index.json', index)
+                    saved_at = time.monotonic()
+                self.progress('download', '正在下载并校验队伍代码…', done=False,
+                              completed=completed, total=len(values), downloaded=downloaded, failed=failed)
         index['entries'] = values
         failed = sum(bool(item.get('error')) for item in values)
-        index['error'] = f'{failed} 个队伍包下载失败，可稍后重试；其余内容已保存' if failed else ''
+        failures = [f"{item.get('name') or item.get('team')}：{item['error']}" for item in values if item.get('error')]
+        index['error'] = (f'{failed} 个队伍包下载失败，其余内容已保存。点击“重试未完成”继续。\n' + '\n'.join(failures[:3])) if failed else ''
         self.write('index.json', index)
-        return self.catalog()
+        return self.finish(self.catalog())
 
     def select(self, ident):
         index = self.read('index.json', {})
@@ -310,7 +371,7 @@ def command(data, q, root=None):
                 characters = json.loads(file.read_text(encoding='utf-8'))['characters']
                 supported = [c['id'] for c in characters]
                 break
-    library = WorkshopLibrary(data, supported=supported, characters=characters)
+    library = WorkshopLibrary(data, supported=supported, characters=characters, operation_id=q.get('operation_id'))
     op = q['op']
     if op != 'library':
         library.seed_local()

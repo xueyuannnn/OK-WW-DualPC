@@ -202,6 +202,21 @@ QWidget *Window::buildClassicCharacters() {
     importHint->setObjectName("caption");
     importHint->setWordWrap(true);
     teams->addWidget(importHint);
+#ifdef OKWW_NATIVE_ONLY
+    auto syncHint = new QLabel("首次使用请打开工坊查看刷新状态，下载后可离线导入。");
+    syncHint->setObjectName("workshopSyncSummary");
+    syncHint->setWordWrap(true);
+    teams->addWidget(syncHint);
+    auto syncStatus = [this, syncHint, workshop](const QJsonObject &state) {
+        const auto text = workshopActivityText(state);
+        syncHint->setText(text.section('\n', 0, 0).left(160));
+        syncHint->setToolTip(text);
+        workshop->setText(state["busy"].toBool() ? "工坊 · 正在刷新…" :
+            state["error"].toString().isEmpty() ? "工坊" : "工坊 · 刷新失败");
+    };
+    connect(this, &Window::workshopActivityChanged, syncHint, syncStatus);
+    if (!workshopActivity_.isEmpty()) syncStatus(workshopActivity_);
+#endif
     auto third = new QHBoxLayout;
     third->addWidget(action("导出队伍", "Share", this, [this] {
         const auto team = selectedTeam();

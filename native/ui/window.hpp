@@ -163,10 +163,17 @@ class Window final : public QMainWindow {
     std::function<void()> refreshTemplates_;
     QWidget *scriptsPage();
     void openWorkshop();
-    void updateWorkshop();
+    Q_INVOKABLE void updateWorkshop(bool startup = false);
+    void notifyWorkshopActivity();
+    QString workshopActivityText(const QJsonObject &activity) const;
     void workshopRequest(QJsonObject request, std::function<void(QJsonObject)> done);
     bool workshopBusy_ = false;
     QTimer workshopTimer_;
+    QTimer workshopProgressTimer_;
+    QElapsedTimer workshopElapsed_;
+    QString workshopOperation_;
+    QJsonObject workshopActivity_, workshopCatalog_;
+    quint64 workshopRevision_ = 0;
     void refreshScripts();
     void showScript(const QString &id);
     void withSavedScript(std::function<void()> action);
@@ -267,6 +274,8 @@ class Window final : public QMainWindow {
     bool scheduledStart(QString task, bool exitAfter, double limitSeconds);
 #endif
   signals:
+    void workshopActivityChanged(const QJsonObject &activity);
+    void workshopCatalogUpdated(const QJsonObject &catalog);
     void exitAccepted();
     void taskStartAccepted(const QString &task);
     void startupFailed(const QString &error);

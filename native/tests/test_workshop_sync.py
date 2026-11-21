@@ -10,6 +10,67 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'workshop' / 'bridg
 from workshop_sync import DEFAULT_SOURCE, WorkshopLibrary, archive_manifest, entries, source_url
 
 
+def test_refresh_reports_download_counts_and_can_resume_only_failed_archives(tmp_path):
+    payload = index()
+    payload['teams'][0]['codes'].append(dict(payload['teams'][0]['codes'][0], name='Second',
+        rawUrl='https://cfokwwchar.ok-script.com/codes/second.zip'))
+    observed, calls = [], []
+    unavailable = [True]
+    def fetch(url, limit):
+        calls.append(url)
+        observed.append(library.read('sync-status.json', {}))
+        if url.endswith('teams.json'):
+            return json.dumps(payload).encode()
+        if unavailable[0] and url.endswith('second.zip'):
+            raise TimeoutError()
+        return archive()
+    library = WorkshopLibrary(tmp_path, fetch, operation_id='first-run')
+    result = library.refresh()
+    assert result['downloaded'] == 1
+    assert '连接超时' in result['error'] and 'Second' in result['error']
+    assert observed[0]['phase'] == 'index'
+    assert any(v.get('total') == 2 and v.get('phase') == 'download' for v in observed)
+    status = library.read('sync-status.json', {})
+    assert status['done'] and status['phase'] == 'failed' and status['completed'] == 1
+    assert status['operation_id'] == 'first-run'
+    unavailable[0] = False
+    calls.clear()
+    retried = library.download_all()
+    assert retried['downloaded'] == 2 and not retried['error']
+    assert calls == ['https://cfokwwchar.ok-script.com/codes/second.zip']
+    assert library.read('sync-status.json', {})['phase'] == 'complete'
+
+
+def test_failed_auto_refresh_retries_after_five_minutes_and_startup_can_force_check(tmp_path, monkeypatch):
+    clock = [1800000000.]
+    monkeypatch.setattr('workshop_sync.time.time', lambda: clock[0])
+    calls = []
+    def fetch(url, limit):
+        calls.append(url)
+        raise OSError('offline test')
+    library = WorkshopLibrary(tmp_path, fetch, operation_id='startup')
+    library.refresh(due=True)
+    clock[0] += 299
+    library.refresh(due=True)
+    assert len(calls) == 1
+    clock[0] += 1
+    library.refresh(due=True)
+    assert len(calls) == 2
+    library.refresh(due=False)  # New software session checks even within the normal interval.
+    assert len(calls) == 3
+    assert 'offline test' in library.read('sync-status.json', {})['error']
+
+
+def test_network_failures_include_http_dns_and_certificate_causes():
+    import socket
+    import ssl
+    from urllib.error import HTTPError, URLError
+    from workshop_sync import failure_reason
+    assert 'HTTP 404' in failure_reason(HTTPError(DEFAULT_SOURCE, 404, 'Not Found', {}, None))
+    assert '域名解析失败' in failure_reason(URLError(socket.gaierror('DNS test')))
+    assert '证书验证失败' in failure_reason(URLError(ssl.SSLCertVerificationError('certificate test')))
+
+
 def archive(version='1.0', invalid=False):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w') as value:

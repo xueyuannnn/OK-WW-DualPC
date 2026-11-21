@@ -203,9 +203,9 @@ Window::Window(QString root, QString data, QString python,
     QTimer::singleShot(0, this, &Window::startEngine);
 #ifdef OKWW_NATIVE_ONLY
     if (qEnvironmentVariable("QT_QPA_PLATFORM") != "offscreen") {
-        QTimer::singleShot(3000, this, &Window::updateWorkshop);
+        QTimer::singleShot(3000, this, [this] { updateWorkshop(true); });
         workshopTimer_.setInterval(60000);
-        connect(&workshopTimer_, &QTimer::timeout, this, &Window::updateWorkshop);
+        connect(&workshopTimer_, &QTimer::timeout, this, [this] { updateWorkshop(); });
         workshopTimer_.start();
     }
 #endif

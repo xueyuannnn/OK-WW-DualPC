@@ -920,6 +920,65 @@ class ClassicUiTests final : public QObject {
                 window->grab().save(artifacts + '/' + theme + "-compact.png");
         }
     }
+    void workshopFirstUseGuidesRefreshAndShowsLiveCountsAndFailureCause() {
+        QTemporaryDir data;
+        QDir().mkpath(data.path() + "/workshop-library");
+        writeJson(data.path() + "/workshop-library/settings.json", {{"auto_update", false}});
+        auto window = create(data);
+        QTRY_VERIFY(card(*window, "DailyTask2"));
+        bool checked = false;
+        QTimer timer;
+        connect(&timer, &QTimer::timeout, window.get(), [&] {
+            auto dialog = window->findChild<QDialog *>("workshopDialog");
+            if (!dialog) return;
+            auto source = dialog->findChild<QLineEdit *>("workshopSource");
+            if (source->text().isEmpty()) return;
+            auto title = dialog->findChild<QLabel *>("workshopSyncTitle");
+            auto status = dialog->findChild<QLabel *>("workshopStatus");
+            auto progress = dialog->findChild<QProgressBar *>("workshopSyncProgress");
+            auto guide = dialog->findChild<QPushButton *>("workshopRefreshGuide");
+            checked = title->text().contains("首次使用") && status->text().contains("立即刷新") && guide->isEnabled();
+            const QJsonObject busy{{"busy", true}, {"message", "正在下载并校验队伍代码…"},
+                {"completed", 7}, {"downloaded", 6}, {"failed", 1}, {"total", 20}, {"elapsed_seconds", 18}};
+            QMetaObject::invokeMethod(window.get(), "workshopActivityChanged", Q_ARG(QJsonObject, busy));
+            checked &= progress->isVisible() && progress->value() == 7 && progress->maximum() == 20 &&
+                status->text().contains("7 / 20") && status->text().contains("18 秒") &&
+                !guide->isEnabled() && !dialog->findChild<QPushButton *>("workshopDownload")->isEnabled();
+            const auto artifacts = qEnvironmentVariable("OKWW_UI_ARTIFACTS");
+            if (!artifacts.isEmpty()) dialog->grab().save(artifacts + "/workshop-refresh.png");
+            const QJsonObject failed{{"busy", false}, {"error", "连接超时，请检查网络或代理后重试"}};
+            QMetaObject::invokeMethod(window.get(), "workshopActivityChanged", Q_ARG(QJsonObject, failed));
+            checked &= guide->isEnabled() && !progress->isVisible() && status->text().contains("连接超时") &&
+                window->findChild<QLabel *>("workshopSyncSummary")->text().contains("连接超时");
+            if (!artifacts.isEmpty()) dialog->grab().save(artifacts + "/workshop-refresh-failed.png");
+            timer.stop();
+            dialog->accept();
+        });
+        timer.start(30);
+        QTimer::singleShot(5000, window.get(), [&] {
+            if (auto dialog = window->findChild<QDialog *>("workshopDialog")) dialog->reject();
+        });
+        window->findChild<QPushButton *>("openWorkshop")->click();
+        QVERIFY(checked);
+        QVERIFY(!QFile::exists(data.path() + "/workshop-library/index.json"));
+    }
+    void workshopStartupChecksDespiteRecentAttemptAndReportsInvalidSource() {
+        QTemporaryDir data;
+        QDir().mkpath(data.path() + "/workshop-library");
+        writeJson(data.path() + "/workshop-library/settings.json", {{"auto_update", true},
+            {"source", "http://invalid/teams.json"}}); // Reject locally; never contact a server.
+        writeJson(data.path() + "/workshop-library/index.json", {{"attempted_at", double(QDateTime::currentSecsSinceEpoch())}});
+        auto window = create(data);
+        QSignalSpy activity(window.get(), &Window::workshopActivityChanged);
+        QVERIFY(QMetaObject::invokeMethod(window.get(), "updateWorkshop", Q_ARG(bool, true)));
+        QVERIFY(!activity.isEmpty());
+        QVERIFY(activity.first()[0].toJsonObject()["busy"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(activity.count() >= 2 && !activity.last()[0].toJsonObject()["busy"].toBool(), 10000);
+        QVERIFY(activity.last()[0].toJsonObject()["error"].toString().contains("HTTPS 地址"));
+        QVERIFY(window->findChild<QPushButton *>("openWorkshop")->text().contains("刷新失败"));
+        const auto index = readJson(data.path() + "/workshop-library/index.json");
+        QVERIFY(index["error"].toString().contains("HTTPS 地址"));
+    }
     void workshopShowsCachedVersionsWithoutNetworkOrChangingCurrentTeams() {
         QTemporaryDir data;
         QDir().mkpath(data.path() + "/workshop-library");
